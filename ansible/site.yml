@@ -1,0 +1,8 @@
+---
+- name: Otacon - Bootstrap Pi
+  hosts: localhost
+  become: true
+
+  roles:
+    - bootstrap
+    - tailscale

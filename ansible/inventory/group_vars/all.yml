@@ -1,0 +1,16 @@
+---
+pi_user: nick
+pi_home: /home/nick
+repo_dir: "{{ pi_home }}/code/otacon"
+
+# Packages installed at system level (bootstrap only)
+bootstrap_packages:
+  - android-sdk-platform-tools
+  - git
+  - curl
+  - jq
+
+# udev vendor IDs for Android devices
+android_usb_vendors:
+  - "04e8"  # Samsung
+  - "18d1"  # Google

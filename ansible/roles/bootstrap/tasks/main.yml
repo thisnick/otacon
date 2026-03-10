@@ -1,0 +1,63 @@
+---
+- name: Update apt cache
+  apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Install bootstrap packages
+  apt:
+    name: "{{ bootstrap_packages }}"
+    state: present
+
+- name: Add Docker GPG key
+  shell: |
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+    chmod a+r /etc/apt/keyrings/docker.asc
+  args:
+    creates: /etc/apt/keyrings/docker.asc
+
+- name: Add Docker apt repository
+  shell: |
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo $VERSION_CODENAME) stable" > /etc/apt/sources.list.d/docker.list
+  args:
+    creates: /etc/apt/sources.list.d/docker.list
+
+- name: Install Docker
+  apt:
+    name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-buildx-plugin
+      - docker-compose-plugin
+    state: present
+    update_cache: true
+
+- name: Add pi user to docker group
+  user:
+    name: "{{ pi_user }}"
+    groups: docker
+    append: true
+
+- name: Enable Docker service
+  systemd:
+    name: docker
+    enabled: true
+    state: started
+
+- name: Add udev rules for Android USB devices
+  copy:
+    dest: /etc/udev/rules.d/51-android.rules
+    content: |
+      {% for vendor in android_usb_vendors %}
+      SUBSYSTEM=="usb", ATTR{idVendor}=="{{ vendor }}", MODE="0666", GROUP="plugdev"
+      {% endfor %}
+    mode: "0644"
+  notify: reload udev
+
+- name: Ensure pi user in plugdev group
+  user:
+    name: "{{ pi_user }}"
+    groups: plugdev
+    append: true

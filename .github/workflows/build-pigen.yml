@@ -1,0 +1,29 @@
+name: Build Pi Image
+
+on:
+  workflow_dispatch:
+  release:
+    types: [created]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build pi-gen image
+        run: |
+          bash pigen/build.sh ci
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: otacon-pi-image
+          path: pigen/deploy/*.img.xz
+
+      - name: Attach image to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload ${{ github.event.release.tag_name }} \
+            pigen/deploy/*.img.xz

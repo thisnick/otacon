@@ -1,0 +1,63 @@
+FROM debian:trixie-slim AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    meson \
+    ninja-build \
+    pkg-config \
+    git \
+    libavcodec-dev \
+    libavdevice-dev \
+    libavformat-dev \
+    libavutil-dev \
+    libswresample-dev \
+    libusb-1.0-0-dev \
+    libsdl2-dev \
+    android-sdk-platform-tools \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG SCRCPY_VERSION=3.3.4
+RUN git clone --depth 1 --branch v${SCRCPY_VERSION} https://github.com/Genymobile/scrcpy.git /src/scrcpy
+WORKDIR /src/scrcpy
+RUN meson setup builddir --buildtype=release -Dprebuilt_server=/opt/scrcpy-server.jar \
+    && ninja -C builddir \
+    && ninja -C builddir install
+
+# Download scrcpy server jar
+ADD https://github.com/Genymobile/scrcpy/releases/download/v${SCRCPY_VERSION}/scrcpy-server-v${SCRCPY_VERSION} /usr/local/share/scrcpy/scrcpy-server
+
+FROM debian:trixie-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    xvfb \
+    x11vnc \
+    android-sdk-platform-tools \
+    libsdl2-2.0-0 \
+    libavcodec61 \
+    libavdevice61 \
+    libavformat61 \
+    libavutil59 \
+    libswresample5 \
+    libusb-1.0-0 \
+    supervisor \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /usr/local/bin/scrcpy /usr/local/bin/scrcpy
+COPY --from=builder /usr/local/share/scrcpy/ /usr/local/share/scrcpy/
+
+ENV DISPLAY_NUM=50
+ENV DISPLAY_RESOLUTION=1080x2408x24
+ENV SCRCPY_MAX_FPS=15
+ENV SCRCPY_BITRATE=2M
+ENV VNC_PORT=5900
+ENV VNC_CLIP=984x2193+0+0
+ENV VNC_SCALE=0.5
+
+COPY config/supervisord-phone-mirror.conf /etc/supervisor/conf.d/phone-mirror.conf
+COPY scripts/phone-mirror-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+EXPOSE ${VNC_PORT}
+
+ENTRYPOINT ["/entrypoint.sh"]

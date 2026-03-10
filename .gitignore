@@ -1,0 +1,32 @@
+# Secrets
+.env
+secrets/
+*.key
+*.keystore
+*.jks
+
+# Ansible
+*.retry
+
+# Android
+android/device-owner/.gradle/
+android/device-owner/build/
+android/device-owner/app/build/
+android/device-owner/local.properties
+*.apk
+
+# Rust
+target/
+
+# Docker
+.docker/
+
+# Pi-gen
+pigen/pi-gen/
+pigen/deploy/
+pigen/work/
+
+# OS
+.DS_Store
+*.swp
+nohup.out

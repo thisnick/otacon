@@ -1,0 +1,36 @@
+FROM rust:1-slim-bookworm AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --depth 1 https://github.com/Genymobile/gnirehtet.git /src/gnirehtet
+WORKDIR /src/gnirehtet/relay-rust
+RUN cargo build --release
+
+FROM debian:trixie-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    android-sdk-platform-tools \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /src/gnirehtet/relay-rust/target/release/gnirehtet /usr/local/bin/gnirehtet
+
+# Download the APK from a release
+ARG GNIREHTET_VERSION=2.5.1
+ADD https://github.com/Genymobile/gnirehtet/releases/download/v${GNIREHTET_VERSION}/gnirehtet-rust-linux64-v${GNIREHTET_VERSION}.zip /tmp/gnirehtet.zip
+RUN apt-get update && apt-get install -y --no-install-recommends unzip \
+    && unzip /tmp/gnirehtet.zip -d /tmp/gnirehtet \
+    && find /tmp/gnirehtet -name "*.apk" -exec cp {} /usr/local/share/gnirehtet.apk \; \
+    && rm -rf /tmp/gnirehtet.zip /tmp/gnirehtet \
+    && apt-get purge -y unzip && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV GNIREHTET_DNS=8.8.8.8,8.8.4.4
+
+COPY scripts/gnirehtet-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
