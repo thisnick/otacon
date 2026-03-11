@@ -5,19 +5,21 @@ set -euo pipefail
 
 echo "=== Otacon Bootstrap ==="
 
-# Install Ansible if not present
-if ! command -v ansible-playbook &>/dev/null; then
-    echo "Installing Ansible..."
-    sudo apt-get update
-    sudo apt-get install -y ansible
-fi
+# Install git and Ansible if not present
+sudo apt-get update
+for pkg in git ansible; do
+    if ! command -v "${pkg}" &>/dev/null; then
+        echo "Installing ${pkg}..."
+        sudo apt-get install -y "${pkg}"
+    fi
+done
 
 # Clone repo if not present
 REPO_DIR="${HOME}/code/otacon"
 if [ ! -d "${REPO_DIR}" ]; then
     echo "Cloning otacon repo..."
     mkdir -p "${HOME}/code"
-    git clone https://github.com/YOUR_USER/otacon.git "${REPO_DIR}"
+    git clone https://github.com/thisnick/otacon.git "${REPO_DIR}"
 fi
 
 # Run Ansible

@@ -18,9 +18,13 @@ if [ ! -d "${PIGEN_DIR}" ]; then
     git clone --depth 1 https://github.com/RPi-Distro/pi-gen.git "${PIGEN_DIR}"
 fi
 
-# Copy our custom stage
+# Copy our custom stage (includes reference to ../ansible via 00-run.sh)
 rm -rf "${PIGEN_DIR}/stage-otacon"
 cp -r "${SCRIPT_DIR}/stage-otacon" "${PIGEN_DIR}/stage-otacon"
+
+# Copy ansible directory so the pi-gen stage can access it
+rm -rf "${PIGEN_DIR}/ansible"
+cp -r "${SCRIPT_DIR}/../ansible" "${PIGEN_DIR}/ansible"
 
 # Write pi-gen config
 cp "${SCRIPT_DIR}/config" "${PIGEN_DIR}/config"
