@@ -22,9 +22,8 @@ fi
 rm -rf "${PIGEN_DIR}/stage-otacon"
 cp -r "${SCRIPT_DIR}/stage-otacon" "${PIGEN_DIR}/stage-otacon"
 
-# Copy ansible directory so the pi-gen stage can access it
-rm -rf "${PIGEN_DIR}/ansible"
-cp -r "${SCRIPT_DIR}/../ansible" "${PIGEN_DIR}/ansible"
+# Copy ansible playbook into stage for use during image build
+cp -r "${SCRIPT_DIR}/../ansible" "${PIGEN_DIR}/stage-otacon/ansible"
 
 # Write pi-gen config
 cp "${SCRIPT_DIR}/config" "${PIGEN_DIR}/config"

@@ -11,17 +11,13 @@ Infrastructure-as-code for a Raspberry Pi phone kiosk — mirrors an Android pho
 
 ## Quick Start
 
-### On an existing Pi
+All commands run from your Mac. Nothing needs to be run on the Pi directly.
+
+### Deploy to an existing Pi
 
 ```bash
-# Bootstrap (installs Docker, system config)
-bash scripts/bootstrap.sh
-
-# Start services
-docker compose up -d
-
-# Set up phone (requires factory-reset phone with no Google accounts)
-make phone-setup
+make push PI=tiny-pi    # Provision + build + transfer images + start
+make health PI=tiny-pi  # Verify everything is running
 ```
 
 ### From scratch (flash an image)
@@ -29,42 +25,38 @@ make phone-setup
 ```bash
 make pigen                        # Build image
 make pigen-flash DEVICE=/dev/sdX  # Flash to SD card
-# Boot Pi, connect phone, run phone-setup
+# Boot Pi, then: make push PI=<hostname>
 ```
 
-## Development
-
-### Deploy from Mac to Pi
+### Set up a phone
 
 ```bash
-make sync PI=tiny-pi        # Ansible changes only
-make deploy-ssh PI=tiny-pi  # Docker image changes
-make push PI=tiny-pi        # Everything
+make phone-setup   # Lock down connected phone (requires factory-reset, no Google accounts)
+make phone-reset   # Remove phone lockdown
 ```
-
-### Build artifacts
-
-| Artifact | Local | CI |
-|----------|-------|----|
-| Docker images | `make build` | Push to main → ghcr.io |
-| Android APK | `cd android/device-owner && ./gradlew assembleRelease` | Push to main or release |
-| Pi image | `make pigen` | Manual trigger or release |
 
 ## Make Targets
 
+All targets accept `PI=<hostname>` (default: `tiny-pi`).
+
 ```
-make build            Build Docker images locally
-make up               Start all services
-make down             Stop all services
-make logs             Tail service logs
-make deploy-ssh       Build + deploy Docker images to Pi via SSH
-make sync             Sync Ansible to Pi + run provision
-make push             Sync everything to Pi
-make provision        Run Ansible bootstrap (on Pi)
-make provision-check  Ansible dry-run
-make phone-setup      Lock down connected phone
-make phone-reset      Remove phone lockdown
-make health           Check all services
-make pigen            Build Pi image
-make pigen-flash      Flash Pi image to SD card
+Deploy:
+  make push             Provision Pi, build + transfer images, start services
+  make provision        Run Ansible provisioning only
+  make deploy-docker    Build + transfer Docker images only
+
+Services (on Pi via SSH):
+  make up               Start containers
+  make down             Stop containers
+  make logs             Tail container logs
+  make health           Check all services are running
+
+Build (local):
+  make build            Build Docker images locally
+  make pigen            Build flashable Pi image
+  make pigen-flash      Flash Pi image (DEVICE=/dev/sdX)
+
+Phone:
+  make phone-setup      Lock down connected phone
+  make phone-reset      Remove phone lockdown
 ```

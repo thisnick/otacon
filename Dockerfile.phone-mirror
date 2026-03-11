@@ -18,14 +18,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 ARG SCRCPY_VERSION=3.3.4
+
+# Download scrcpy server jar (needed by meson build)
+ADD https://github.com/Genymobile/scrcpy/releases/download/v${SCRCPY_VERSION}/scrcpy-server-v${SCRCPY_VERSION} /opt/scrcpy-server.jar
+
 RUN git clone --depth 1 --branch v${SCRCPY_VERSION} https://github.com/Genymobile/scrcpy.git /src/scrcpy
 WORKDIR /src/scrcpy
 RUN meson setup builddir --buildtype=release -Dprebuilt_server=/opt/scrcpy-server.jar \
     && ninja -C builddir \
     && ninja -C builddir install
-
-# Download scrcpy server jar
-ADD https://github.com/Genymobile/scrcpy/releases/download/v${SCRCPY_VERSION}/scrcpy-server-v${SCRCPY_VERSION} /usr/local/share/scrcpy/scrcpy-server
 
 FROM debian:trixie-slim
 

@@ -1,7 +1,7 @@
 ---
+pigen_chroot: false
 pi_user: nick
 pi_home: /home/nick
-repo_dir: "{{ pi_home }}/code/otacon"
 
 # Packages installed at system level (bootstrap only)
 bootstrap_packages:

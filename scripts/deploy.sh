@@ -1,44 +1,70 @@
 #!/bin/bash
 # Deploy from dev machine (Mac/Linux) to Pi via SSH.
-# Usage: ./scripts/deploy.sh [pi-host]
+# Usage: ./scripts/deploy.sh [pi-host] [ansible|docker|full]
 set -euo pipefail
 
 PI_HOST="${1:-${PI_HOST:-tiny-pi}}"
 PI_USER="${PI_USER:-nick}"
 REMOTE="${PI_USER}@${PI_HOST}"
-REMOTE_DIR="~/code/otacon"
+REMOTE_DIR="~/otacon"
 
 echo "=== Deploying to ${REMOTE} ==="
 
+# SSH multiplexing: one connection, one YubiKey touch
+SSH_SOCK="/tmp/otacon-deploy-${PI_HOST}"
+echo "Establishing SSH connection (touch YubiKey)..."
+ssh -NM -S "${SSH_SOCK}" "${REMOTE}" &
+SSH_MUX_PID=$!
+while ! command ssh -S "${SSH_SOCK}" -O check "${REMOTE}" 2>/dev/null; do sleep 0.1; done
+export RSYNC_RSH="ssh -S ${SSH_SOCK}"
+export ANSIBLE_SSH_ARGS="-o ControlPath=${SSH_SOCK}"
+ssh() { command ssh -S "${SSH_SOCK}" "$@"; }
+trap 'command ssh -S "${SSH_SOCK}" -O exit "${REMOTE}" 2>/dev/null' EXIT
+
 MODE="${2:-full}"
+
+provision() {
+    echo "Provisioning..."
+    cd ansible && ansible-playbook site.yml -e "pi_host=${PI_HOST}"
+    cd ..
+}
+
+deploy_compose() {
+    echo "Syncing docker-compose.yml..."
+    ssh "${REMOTE}" "mkdir -p ${REMOTE_DIR}"
+    rsync -az docker-compose.yml "${REMOTE}:${REMOTE_DIR}/docker-compose.yml"
+}
+
+transfer_images() {
+    echo "Building Docker images..."
+    docker compose build
+    for service in $(docker compose config --services); do
+        image=$(docker compose config --format json | jq -r ".services.\"${service}\".image")
+        local_id=$(docker image inspect --format '{{.Id}}' "${image}" 2>/dev/null || echo "")
+        remote_id=$(ssh "${REMOTE}" "docker image inspect --format '{{.Id}}' '${image}' 2>/dev/null" || echo "")
+        if [ "${local_id}" = "${remote_id}" ] && [ -n "${local_id}" ]; then
+            echo "Skipping ${image} (unchanged)"
+        else
+            echo "Transferring ${image}..."
+            docker save "${image}" | gzip | ssh "${REMOTE}" "gunzip | docker load"
+        fi
+    done
+}
 
 case "${MODE}" in
     ansible)
-        echo "Syncing Ansible only..."
-        rsync -az --delete \
-            --exclude '.git' \
-            ./ansible/ "${REMOTE}:${REMOTE_DIR}/ansible/"
-        ssh "${REMOTE}" "cd ${REMOTE_DIR} && make provision"
+        provision
         ;;
     docker)
-        echo "Building and deploying Docker images..."
-        docker compose build
-        for service in $(docker compose config --services); do
-            image=$(docker compose config --format json | jq -r ".services.\"${service}\".image")
-            echo "Pushing ${image}..."
-            docker save "${image}" | ssh "${REMOTE}" docker load
-        done
+        transfer_images
+        deploy_compose
         ssh "${REMOTE}" "cd ${REMOTE_DIR} && docker compose up -d"
         ;;
     full)
-        echo "Syncing full repo..."
-        rsync -az --delete \
-            --exclude '.git' \
-            --exclude 'target' \
-            --exclude '.gradle' \
-            --exclude 'build' \
-            ./ "${REMOTE}:${REMOTE_DIR}/"
-        ssh "${REMOTE}" "cd ${REMOTE_DIR} && make provision && docker compose up -d"
+        provision
+        transfer_images
+        deploy_compose
+        ssh "${REMOTE}" "cd ${REMOTE_DIR} && docker compose up -d"
         ;;
     *)
         echo "Usage: $0 [pi-host] [ansible|docker|full]"

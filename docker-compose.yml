@@ -1,5 +1,6 @@
 services:
   phone-mirror:
+    platform: linux/arm64
     build:
       context: .
       dockerfile: Dockerfile.phone-mirror
@@ -19,6 +20,7 @@ services:
       - VNC_SCALE=${VNC_SCALE:-0.5}
 
   gnirehtet:
+    platform: linux/arm64
     build:
       context: .
       dockerfile: Dockerfile.gnirehtet

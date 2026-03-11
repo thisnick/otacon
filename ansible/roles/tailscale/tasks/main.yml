@@ -13,4 +13,9 @@
   systemd:
     name: tailscaled
     enabled: true
+
+- name: Start Tailscale service
+  systemd:
+    name: tailscaled
     state: started
+  when: not pigen_chroot

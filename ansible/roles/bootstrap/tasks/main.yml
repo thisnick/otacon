@@ -44,7 +44,12 @@
   systemd:
     name: docker
     enabled: true
+
+- name: Start Docker service
+  systemd:
+    name: docker
     state: started
+  when: not pigen_chroot
 
 - name: Add udev rules for Android USB devices
   copy:

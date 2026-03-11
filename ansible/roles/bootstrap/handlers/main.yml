@@ -1,3 +1,4 @@
 ---
 - name: reload udev
   command: udevadm control --reload-rules
+  when: not pigen_chroot

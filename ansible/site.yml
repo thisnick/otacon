@@ -1,6 +1,6 @@
 ---
 - name: Otacon - Bootstrap Pi
-  hosts: localhost
+  hosts: all
   become: true
 
   roles:

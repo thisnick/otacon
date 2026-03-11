@@ -1,38 +1,34 @@
-.PHONY: build up down logs deploy-ssh sync push provision provision-check \
+.PHONY: build up down logs push provision deploy-docker \
        phone-setup phone-reset health pigen pigen-flash
 
 PI_HOST ?= tiny-pi
 PI_USER ?= nick
+REMOTE := $(PI_USER)@$(PI_HOST)
+REMOTE_DIR := ~/otacon
+SSH_CMD := ssh $(REMOTE)
 
-# Docker
+# Docker (build locally, manage on Pi)
 build:
 	docker compose build
 
 up:
-	docker compose up -d
+	$(SSH_CMD) "cd $(REMOTE_DIR) && docker compose up -d"
 
 down:
-	docker compose down
+	$(SSH_CMD) "cd $(REMOTE_DIR) && docker compose down"
 
 logs:
-	docker compose logs -f
+	$(SSH_CMD) "cd $(REMOTE_DIR) && docker compose logs -f"
 
-# Deploy (dev — run from Mac)
-sync:
-	./scripts/deploy.sh $(PI_HOST) ansible
-
-deploy-ssh:
-	./scripts/deploy.sh $(PI_HOST) docker
-
+# Deploy (all from Mac)
 push:
 	./scripts/deploy.sh $(PI_HOST) full
 
-# Ansible (run on Pi)
 provision:
-	cd ansible && ansible-playbook site.yml -c local
+	./scripts/deploy.sh $(PI_HOST) ansible
 
-provision-check:
-	cd ansible && ansible-playbook site.yml -c local --check --diff
+deploy-docker:
+	./scripts/deploy.sh $(PI_HOST) docker
 
 # Phone
 phone-setup:
@@ -41,9 +37,16 @@ phone-setup:
 phone-reset:
 	bash scripts/phone-reset.sh
 
-# Health
+# Health (single SSH call to Pi)
 health:
-	bash scripts/health-check.sh
+	@$(SSH_CMD) '\
+		check() { if eval "$$2" >/dev/null 2>&1; then echo "  [OK] $$1"; else echo "  [FAIL] $$1"; fi; }; \
+		echo "=== Otacon Health Check ==="; \
+		check "Docker" "docker info"; \
+		check "phone-mirror" "cd $(REMOTE_DIR) && docker compose ps --status running | grep -q phone-mirror"; \
+		check "gnirehtet" "cd $(REMOTE_DIR) && docker compose ps --status running | grep -q gnirehtet"; \
+		check "ADB device" "adb devices | grep -q device\$$"; \
+		check "VNC port" "nc -z localhost $${VNC_PORT:-5900}"'
 
 # Pi-gen
 pigen:
