@@ -33,22 +33,15 @@ deploy_compose() {
     echo "Syncing docker-compose.yml..."
     ssh "${REMOTE}" "mkdir -p ${REMOTE_DIR}"
     rsync -az docker-compose.yml "${REMOTE}:${REMOTE_DIR}/docker-compose.yml"
+    ssh "${REMOTE}" "echo 'OTACON_REPO=otacon-dev' > ${REMOTE_DIR}/.env"
 }
 
 transfer_images() {
-    echo "Building Docker images..."
-    docker compose build
-    for service in $(docker compose config --services); do
-        image=$(docker compose config --format json | jq -r ".services.\"${service}\".image")
-        local_id=$(docker image inspect --format '{{.Id}}' "${image}" 2>/dev/null || echo "")
-        remote_id=$(ssh "${REMOTE}" "docker image inspect --format '{{.Id}}' '${image}' 2>/dev/null" || echo "")
-        if [ "${local_id}" = "${remote_id}" ] && [ -n "${local_id}" ]; then
-            echo "Skipping ${image} (unchanged)"
-        else
-            echo "Transferring ${image}..."
-            docker save "${image}" | gzip | ssh "${REMOTE}" "gunzip | docker load"
-        fi
-    done
+    echo "Building and pushing Docker images..."
+    OTACON_REPO=otacon-dev docker compose build
+    OTACON_REPO=otacon-dev docker compose push
+    echo "Pulling images on Pi..."
+    ssh "${REMOTE}" "cd ${REMOTE_DIR} && docker compose pull"
 }
 
 case "${MODE}" in
@@ -56,14 +49,14 @@ case "${MODE}" in
         provision
         ;;
     docker)
-        transfer_images
         deploy_compose
+        transfer_images
         ssh "${REMOTE}" "cd ${REMOTE_DIR} && docker compose up -d"
         ;;
     full)
         provision
-        transfer_images
         deploy_compose
+        transfer_images
         ssh "${REMOTE}" "cd ${REMOTE_DIR} && docker compose up -d"
         ;;
     *)

@@ -9,6 +9,18 @@ Infrastructure-as-code for a Raspberry Pi phone kiosk — mirrors an Android pho
 - **Android app** — Device Owner app that locks down WiFi, Bluetooth, GPS, factory reset, etc.
 - **Pi-gen** — builds flashable Raspberry Pi images with everything pre-configured
 
+## One-time setup
+
+```bash
+# Mac: log in to push dev images
+docker login ghcr.io    # GitHub PAT with write:packages scope
+
+# Pi: log in to pull dev images
+make setup-pi PI=tiny-pi  # GitHub PAT with read:packages scope
+```
+
+Dev images push to `ghcr.io/thisnick/otacon-dev/*` (private). CI pushes to `ghcr.io/thisnick/otacon/*` (public).
+
 ## Quick Start
 
 All commands run from your Mac. Nothing needs to be run on the Pi directly.
@@ -16,7 +28,7 @@ All commands run from your Mac. Nothing needs to be run on the Pi directly.
 ### Deploy to an existing Pi
 
 ```bash
-make push PI=tiny-pi    # Provision + build + transfer images + start
+make push PI=tiny-pi    # Provision + build + push + pull + start
 make health PI=tiny-pi  # Verify everything is running
 ```
 
@@ -41,9 +53,12 @@ All targets accept `PI=<hostname>` (default: `tiny-pi`).
 
 ```
 Deploy:
-  make push             Provision Pi, build + transfer images, start services
+  make push             Provision Pi, build + push images, pull on Pi, start
   make provision        Run Ansible provisioning only
-  make deploy-docker    Build + transfer Docker images only
+  make deploy-docker    Build + push + pull Docker images only
+
+Setup:
+  make setup-pi         Log Pi into ghcr.io (one-time)
 
 Services (on Pi via SSH):
   make up               Start containers

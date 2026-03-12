@@ -1,4 +1,4 @@
-.PHONY: build up down logs push provision deploy-docker \
+.PHONY: build up down logs push provision deploy-docker setup-pi \
        phone-setup phone-reset health pigen pigen-flash
 
 PI_HOST ?= tiny-pi
@@ -29,6 +29,10 @@ provision:
 
 deploy-docker:
 	./scripts/deploy.sh $(PI_HOST) docker
+
+# One-time Pi setup (ghcr.io login for pulling dev images)
+setup-pi:
+	ssh -t $(REMOTE) "docker login ghcr.io"
 
 # Phone
 phone-setup:
