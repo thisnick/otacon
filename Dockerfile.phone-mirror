@@ -33,7 +33,7 @@ FROM debian:trixie-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb \
     x11vnc \
-    android-sdk-platform-tools \
+    adb \
     libsdl2-2.0-0 \
     libavcodec61 \
     libavdevice61 \
@@ -47,6 +47,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=builder /usr/local/bin/scrcpy /usr/local/bin/scrcpy
 COPY --from=builder /usr/local/share/scrcpy/ /usr/local/share/scrcpy/
 
+ENV PATH="/usr/lib/android-sdk/platform-tools:${PATH}"
 ENV DISPLAY_NUM=50
 ENV DISPLAY_RESOLUTION=1080x2408x24
 ENV SCRCPY_MAX_FPS=15

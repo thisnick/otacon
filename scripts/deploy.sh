@@ -41,7 +41,7 @@ transfer_images() {
     OTACON_REPO=otacon-dev docker compose build
     OTACON_REPO=otacon-dev docker compose push
     echo "Pulling images on Pi..."
-    ssh "${REMOTE}" "cd ${REMOTE_DIR} && docker compose pull"
+    ssh "${REMOTE}" "cd ${REMOTE_DIR} && docker compose pull && docker image prune -f"
 }
 
 case "${MODE}" in

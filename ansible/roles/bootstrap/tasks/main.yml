@@ -51,6 +51,17 @@
     state: started
   when: not pigen_chroot
 
+- name: Disable WiFi kernel module
+  copy:
+    dest: /etc/modprobe.d/disable-wifi.conf
+    content: "blacklist brcmfmac\n"
+    mode: "0644"
+
+- name: Bring down WiFi interface
+  command: ip link set wlan0 down
+  ignore_errors: true
+  when: not pigen_chroot
+
 - name: Add udev rules for Android USB devices
   copy:
     dest: /etc/udev/rules.d/51-android.rules

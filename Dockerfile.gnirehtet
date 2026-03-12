@@ -11,7 +11,7 @@ RUN cargo build --release
 FROM debian:trixie-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    android-sdk-platform-tools \
+    adb \
     ca-certificates \
     curl \
     && rm -rf /var/lib/apt/lists/*
@@ -28,6 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends unzip \
     && apt-get purge -y unzip && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
+ENV PATH="/usr/lib/android-sdk/platform-tools:${PATH}"
 ENV GNIREHTET_DNS=8.8.8.8,8.8.4.4
 
 COPY scripts/gnirehtet-entrypoint.sh /entrypoint.sh
