@@ -2,3 +2,8 @@
 - name: reload udev
   command: udevadm control --reload-rules
   when: not pigen_chroot
+
+- name: reload systemd
+  systemd:
+    daemon_reload: true
+  when: not pigen_chroot

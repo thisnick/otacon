@@ -77,3 +77,34 @@
     name: "{{ pi_user }}"
     groups: plugdev
     append: true
+
+- name: Create adb server systemd service
+  copy:
+    dest: /etc/systemd/system/adb-server.service
+    content: |
+      [Unit]
+      Description=ADB Server
+      After=network.target
+
+      [Service]
+      ExecStart=/usr/bin/adb -a start-server
+      ExecStop=/usr/bin/adb kill-server
+      Restart=on-failure
+      User={{ pi_user }}
+      Environment=ADB_VENDOR_KEYS=/home/{{ pi_user }}/.android/
+
+      [Install]
+      WantedBy=multi-user.target
+    mode: "0644"
+  notify: reload systemd
+
+- name: Enable adb server service
+  systemd:
+    name: adb-server
+    enabled: true
+
+- name: Start adb server service
+  systemd:
+    name: adb-server
+    state: started
+  when: not pigen_chroot
