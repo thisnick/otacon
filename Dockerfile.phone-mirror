@@ -33,6 +33,7 @@ FROM debian:trixie-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb \
     x11vnc \
+    xrdp \
     adb \
     libsdl2-2.0-0 \
     libavcodec61 \
@@ -52,14 +53,16 @@ ENV DISPLAY_NUM=50
 ENV DISPLAY_RESOLUTION=1080x2408x24
 ENV SCRCPY_MAX_FPS=15
 ENV SCRCPY_BITRATE=2M
-ENV VNC_PORT=5900
 ENV VNC_CLIP=984x2193+0+0
 ENV VNC_SCALE=0.5
+ENV RDP_PORT=3389
 
 COPY config/supervisord-phone-mirror.conf /etc/supervisor/conf.d/phone-mirror.conf
+COPY config/xrdp.ini /etc/xrdp/xrdp.ini
+COPY config/sesman.ini /etc/xrdp/sesman.ini
 COPY scripts/phone-mirror-entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-EXPOSE ${VNC_PORT}
+EXPOSE ${RDP_PORT}
 
 ENTRYPOINT ["/entrypoint.sh"]

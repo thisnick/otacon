@@ -26,6 +26,9 @@ pigen/pi-gen/
 pigen/deploy/
 pigen/work/
 
+# Node (changesets)
+node_modules/
+
 # OS
 .DS_Store
 *.swp

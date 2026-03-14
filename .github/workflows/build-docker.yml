@@ -1,13 +1,8 @@
 name: Build Docker Images
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'Dockerfile.*'
-      - 'docker-compose.yml'
-      - 'scripts/*-entrypoint.sh'
-      - 'config/**'
+  release:
+    types: [created]
 
 env:
   REGISTRY: ghcr.io
@@ -46,6 +41,6 @@ jobs:
           push: true
           tags: |
             ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.service.name }}:latest
-            ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.service.name }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.service.name }}:${{ github.event.release.tag_name }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

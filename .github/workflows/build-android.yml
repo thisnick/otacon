@@ -1,10 +1,6 @@
 name: Build Android APK
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'android/**'
   release:
     types: [created]
 
@@ -33,7 +29,6 @@ jobs:
           path: android/device-owner/app/build/outputs/apk/release/*.apk
 
       - name: Attach APK to release
-        if: github.event_name == 'release'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

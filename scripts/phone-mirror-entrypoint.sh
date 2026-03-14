@@ -11,5 +11,5 @@ done
 SERIAL=$(/usr/bin/adb devices | grep 'device$' | head -1 | awk '{print $1}')
 echo "Found device: ${SERIAL}"
 
-# Start supervisord (manages Xvfb, scrcpy, x11vnc)
+# Start supervisord (manages Xvfb, scrcpy, x11vnc, xrdp)
 exec /usr/bin/supervisord -c /etc/supervisor/conf.d/phone-mirror.conf

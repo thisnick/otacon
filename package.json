@@ -1,0 +1,13 @@
+{
+  "name": "otacon",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Infrastructure-as-code for a Raspberry Pi phone kiosk",
+  "scripts": {
+    "changeset": "changeset",
+    "version": "changeset version"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.30.0"
+  }
+}
