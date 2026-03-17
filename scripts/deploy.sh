@@ -33,7 +33,10 @@ deploy_compose() {
     echo "Syncing docker-compose.yml..."
     ssh "${REMOTE}" "mkdir -p ${REMOTE_DIR}"
     rsync -az docker-compose.yml "${REMOTE}:${REMOTE_DIR}/docker-compose.yml"
-    ssh "${REMOTE}" "echo 'OTACON_REPO=otacon-dev' > ${REMOTE_DIR}/.env"
+    ssh "${REMOTE}" "cat > ${REMOTE_DIR}/.env <<EOF
+OTACON_REPO=otacon-dev
+VNC_PASSWORD=${VNC_PASSWORD:?Set VNC_PASSWORD before deploying}
+EOF"
 }
 
 transfer_images() {

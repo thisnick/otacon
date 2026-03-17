@@ -50,7 +50,7 @@ health:
 		check "phone-mirror" "cd $(REMOTE_DIR) && docker compose ps --status running | grep -q phone-mirror"; \
 		check "gnirehtet" "cd $(REMOTE_DIR) && docker compose ps --status running | grep -q gnirehtet"; \
 		check "ADB device" "adb devices | grep -q device\$$"; \
-		check "RDP port" "nc -z localhost $${RDP_PORT:-3389}"'
+		check "VNC port" "nc -z localhost $${VNC_PORT:-5900}"'
 
 # Pi-gen
 pigen:

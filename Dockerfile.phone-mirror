@@ -31,9 +31,8 @@ RUN meson setup builddir --buildtype=release -Dprebuilt_server=/opt/scrcpy-serve
 FROM debian:trixie-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    xvfb \
-    x11vnc \
-    xrdp \
+    tigervnc-standalone-server \
+    tigervnc-tools \
     adb \
     libsdl2-2.0-0 \
     libavcodec61 \
@@ -43,6 +42,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libswresample5 \
     libusb-1.0-0 \
     supervisor \
+    bc \
+    x11-xserver-utils \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /usr/local/bin/scrcpy /usr/local/bin/scrcpy
@@ -50,19 +51,17 @@ COPY --from=builder /usr/local/share/scrcpy/ /usr/local/share/scrcpy/
 
 ENV PATH="/usr/lib/android-sdk/platform-tools:${PATH}"
 ENV DISPLAY_NUM=50
-ENV DISPLAY_RESOLUTION=1080x2408x24
+ENV DISPLAY_RESOLUTION=540x1204
 ENV SCRCPY_MAX_FPS=15
 ENV SCRCPY_BITRATE=2M
-ENV VNC_CLIP=984x2193+0+0
-ENV VNC_SCALE=0.5
-ENV RDP_PORT=3389
+ENV SCRCPY_MAX_SIZE=1204
+ENV VNC_PORT=5900
+ENV VNC_PASSWORD=
 
 COPY config/supervisord-phone-mirror.conf /etc/supervisor/conf.d/phone-mirror.conf
-COPY config/xrdp.ini /etc/xrdp/xrdp.ini
-COPY config/sesman.ini /etc/xrdp/sesman.ini
 COPY scripts/phone-mirror-entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-EXPOSE ${RDP_PORT}
+EXPOSE ${VNC_PORT}
 
 ENTRYPOINT ["/entrypoint.sh"]

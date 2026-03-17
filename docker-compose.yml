@@ -10,14 +10,15 @@ services:
     privileged: true
     volumes:
       - /dev/bus/usb:/dev/bus/usb
+      - ${HOME}/.android:/root/.android:ro
     environment:
       - DISPLAY_NUM=${DISPLAY_NUM:-50}
-      - DISPLAY_RESOLUTION=${DISPLAY_RESOLUTION:-1080x2408x24}
+      - DISPLAY_RESOLUTION=${DISPLAY_RESOLUTION:-540x1204}
       - SCRCPY_MAX_FPS=${SCRCPY_MAX_FPS:-15}
       - SCRCPY_BITRATE=${SCRCPY_BITRATE:-2M}
-      - VNC_CLIP=${VNC_CLIP:-984x2193+0+0}
-      - VNC_SCALE=${VNC_SCALE:-0.5}
-      - RDP_PORT=${RDP_PORT:-3389}
+      - SCRCPY_MAX_SIZE=${SCRCPY_MAX_SIZE:-1204}
+      - VNC_PORT=${VNC_PORT:-5900}
+      - VNC_PASSWORD=${VNC_PASSWORD}
 
   gnirehtet:
     platform: linux/arm64
