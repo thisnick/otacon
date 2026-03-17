@@ -1,0 +1,20 @@
+# Otacon Pi Startup Configuration
+# One-time bootstrap file. Consumed on first boot and securely deleted.
+# Generate with: make pigen-config DEVICE=/Volumes/bootfs
+# Or copy this to /boot/firmware/otacon/startup.conf on the SD card.
+
+# Required: Tailscale pre-auth key
+# Generate at https://login.tailscale.com/admin/settings/keys
+TS_AUTH_KEY=tskey-auth-xxxxx
+
+# Optional: Tailscale hostname (default: otacon-pi)
+#TS_HOSTNAME=otacon-pi
+
+# Optional: VNC password for phone mirror
+#VNC_PASSWORD=
+
+# Optional: Docker image repo (otacon-dev for dev, otacon for prod)
+#OTACON_REPO=otacon-dev
+
+# Optional: Disable traditional SSH (Tailscale SSH replaces it)
+#TS_DISABLE_SSH=true

@@ -19,3 +19,21 @@
     name: tailscaled
     state: started
   when: not pigen_chroot
+
+- name: Install firstboot script
+  copy:
+    src: otacon-firstboot.sh
+    dest: /usr/local/bin/otacon-firstboot.sh
+    mode: "0755"
+
+- name: Install firstboot service
+  copy:
+    src: otacon-firstboot.service
+    dest: /etc/systemd/system/otacon-firstboot.service
+    mode: "0644"
+  notify: reload systemd
+
+- name: Enable firstboot service
+  systemd:
+    name: otacon-firstboot
+    enabled: true

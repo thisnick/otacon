@@ -1,0 +1,13 @@
+[Unit]
+Description=Otacon first-boot startup configuration
+After=network-online.target tailscaled.service
+Wants=network-online.target tailscaled.service
+ConditionPathExists=/boot/firmware/otacon/startup.conf
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/otacon-firstboot.sh
+RemainAfterExit=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,7 +1,7 @@
 .PHONY: build up down logs push provision deploy-docker setup-pi \
-       phone-setup phone-reset health pigen pigen-flash
+       phone-setup phone-reset health pigen pigen-flash pigen-config
 
-PI_HOST ?= tiny-pi
+PI_HOST ?= otacon-pi
 PI_USER ?= nick
 REMOTE := $(PI_USER)@$(PI_HOST)
 REMOTE_DIR := ~/otacon
@@ -60,3 +60,12 @@ pigen-flash:
 	@echo "Usage: make pigen-flash DEVICE=/dev/sdX"
 	@test -n "$(DEVICE)" || (echo "ERROR: Set DEVICE="; exit 1)
 	bash pigen/build.sh flash $(DEVICE)
+
+pigen-config:
+	@test -n "$(DEVICE)" || (echo "ERROR: Set DEVICE= to boot partition mount point"; exit 1)
+	@mkdir -p "$(DEVICE)/otacon"
+	@echo "TS_AUTH_KEY=$${TS_AUTH_KEY:?Set TS_AUTH_KEY}" > "$(DEVICE)/otacon/startup.conf"
+	@[ -n "$${TS_HOSTNAME}" ] && echo "TS_HOSTNAME=$${TS_HOSTNAME}" >> "$(DEVICE)/otacon/startup.conf" || true
+	@[ -n "$${VNC_PASSWORD}" ] && echo "VNC_PASSWORD=$${VNC_PASSWORD}" >> "$(DEVICE)/otacon/startup.conf" || true
+	@[ -n "$${OTACON_REPO}" ] && echo "OTACON_REPO=$${OTACON_REPO}" >> "$(DEVICE)/otacon/startup.conf" || true
+	@echo "Wrote $(DEVICE)/otacon/startup.conf"

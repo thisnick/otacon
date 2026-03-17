@@ -3,7 +3,7 @@
 # Usage: ./scripts/deploy.sh [pi-host] [ansible|docker|full]
 set -euo pipefail
 
-PI_HOST="${1:-${PI_HOST:-tiny-pi}}"
+PI_HOST="${1:-${PI_HOST:-otacon-pi}}"
 PI_USER="${PI_USER:-nick}"
 REMOTE="${PI_USER}@${PI_HOST}"
 REMOTE_DIR="~/otacon"
@@ -30,19 +30,21 @@ provision() {
 }
 
 deploy_compose() {
-    echo "Syncing docker-compose.yml..."
+    echo "Syncing docker-compose.yml and .env..."
     ssh "${REMOTE}" "mkdir -p ${REMOTE_DIR}"
     rsync -az docker-compose.yml "${REMOTE}:${REMOTE_DIR}/docker-compose.yml"
-    ssh "${REMOTE}" "cat > ${REMOTE_DIR}/.env <<EOF
-OTACON_REPO=otacon-dev
-VNC_PASSWORD=${VNC_PASSWORD:?Set VNC_PASSWORD before deploying}
-EOF"
+    # Filter .env to Pi-relevant vars (exclude Mac-only and Tailscale vars)
+    grep -Ev '^(PI_HOST|PI_USER|TS_AUTH_KEY)=' .env \
+        | grep -Ev '^\s*#|^\s*$' \
+        > /tmp/otacon-pi-env
+    rsync -az /tmp/otacon-pi-env "${REMOTE}:${REMOTE_DIR}/.env"
+    rm -f /tmp/otacon-pi-env
 }
 
 transfer_images() {
     echo "Building and pushing Docker images..."
-    OTACON_REPO=otacon-dev docker compose build
-    OTACON_REPO=otacon-dev docker compose push
+    docker compose build
+    docker compose push
     echo "Pulling images on Pi..."
     ssh "${REMOTE}" "cd ${REMOTE_DIR} && docker compose pull && docker image prune -f"
 }
