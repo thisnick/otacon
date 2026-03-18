@@ -43,5 +43,11 @@ export DISPLAY_RESOLUTION="${DISPLAY_W}x${DISPLAY_H}"
 export DISPLAY=:${DISPLAY_NUM}
 echo "Display resolution: ${DISPLAY_RESOLUTION}"
 
-# Start supervisord (manages Xvnc, scrcpy)
-exec /usr/bin/supervisord -c /etc/supervisor/conf.d/phone-mirror.conf
+# Install gnirehtet APK if not already installed
+if ! adb shell pm list packages | grep -q com.genymobile.gnirehtet; then
+    echo "Installing gnirehtet APK..."
+    adb install -r /usr/local/share/gnirehtet.apk
+fi
+
+# Start supervisord (manages Xvnc, scrcpy, gnirehtet, audio-server)
+exec /usr/bin/supervisord -c /etc/supervisor/conf.d/otacon.conf

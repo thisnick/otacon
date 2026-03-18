@@ -10,6 +10,11 @@ if [ -n "$TS_AUTH_KEY" ]; then
         --hostname="${TS_HOSTNAME:-$(hostname)}"
 fi
 
+# Generate TLS certs
+if [ -x /usr/local/bin/tailscale-cert-renew.sh ]; then
+    /usr/local/bin/tailscale-cert-renew.sh || true
+fi
+
 # Write Docker .env for first boot (before deploy.sh takes over)
 ENV_FILE="/home/nick/otacon/.env"
 mkdir -p "$(dirname "$ENV_FILE")"

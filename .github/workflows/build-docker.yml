@@ -10,13 +10,6 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        service:
-          - name: phone-mirror
-            dockerfile: Dockerfile.phone-mirror
-          - name: gnirehtet
-            dockerfile: Dockerfile.gnirehtet
     permissions:
       contents: read
       packages: write
@@ -36,11 +29,11 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
-          file: ${{ matrix.service.dockerfile }}
+          file: Dockerfile.otacon
           platforms: linux/arm64
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.service.name }}:latest
-            ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.service.name }}:${{ github.event.release.tag_name }}
+            ${{ env.REGISTRY }}/${{ github.repository }}/otacon:latest
+            ${{ env.REGISTRY }}/${{ github.repository }}/otacon:${{ github.event.release.tag_name }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

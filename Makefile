@@ -47,10 +47,10 @@ health:
 		check() { if eval "$$2" >/dev/null 2>&1; then echo "  [OK] $$1"; else echo "  [FAIL] $$1"; fi; }; \
 		echo "=== Otacon Health Check ==="; \
 		check "Docker" "docker info"; \
-		check "phone-mirror" "cd $(REMOTE_DIR) && docker compose ps --status running | grep -q phone-mirror"; \
-		check "gnirehtet" "cd $(REMOTE_DIR) && docker compose ps --status running | grep -q gnirehtet"; \
+		check "otacon" "cd $(REMOTE_DIR) && docker compose ps --status running | grep -q otacon"; \
 		check "ADB device" "adb devices | grep -q device\$$"; \
-		check "VNC port" "nc -z localhost $${VNC_PORT:-5900}"'
+		check "VNC port" "nc -z localhost $${VNC_PORT:-5900}"; \
+		check "Audio port" "nc -z localhost $${AUDIO_PORT:-8080}"'
 
 # Pi-gen
 pigen:

@@ -1,0 +1,115 @@
+# Stage 1: Build scrcpy
+FROM debian:trixie-slim AS scrcpy-builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    meson \
+    ninja-build \
+    pkg-config \
+    git \
+    libavcodec-dev \
+    libavdevice-dev \
+    libavformat-dev \
+    libavutil-dev \
+    libswresample-dev \
+    libusb-1.0-0-dev \
+    libsdl2-dev \
+    android-sdk-platform-tools \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG SCRCPY_VERSION=3.3.4
+
+ADD https://github.com/Genymobile/scrcpy/releases/download/v${SCRCPY_VERSION}/scrcpy-server-v${SCRCPY_VERSION} /opt/scrcpy-server.jar
+
+RUN git clone --depth 1 --branch v${SCRCPY_VERSION} https://github.com/Genymobile/scrcpy.git /src/scrcpy
+WORKDIR /src/scrcpy
+RUN meson setup builddir --buildtype=release -Dprebuilt_server=/opt/scrcpy-server.jar \
+    && ninja -C builddir \
+    && ninja -C builddir install
+
+# Stage 2: Build gnirehtet
+FROM rust:1-slim-bookworm AS gnirehtet-builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --depth 1 https://github.com/Genymobile/gnirehtet.git /src/gnirehtet
+WORKDIR /src/gnirehtet/relay-rust
+RUN cargo build --release
+
+# Stage 3: Build audio server
+FROM rust:1-slim-bookworm AS audio-builder
+
+WORKDIR /src/server
+COPY src/server/Cargo.toml src/server/Cargo.lock* ./
+COPY src/server/src/ ./src/
+COPY src/server/static/ ./static/
+RUN cargo build --release
+
+# Stage 4: Runtime
+FROM debian:trixie-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Phone mirror
+    tigervnc-standalone-server \
+    tigervnc-tools \
+    adb \
+    libsdl2-2.0-0 \
+    libavcodec61 \
+    libavdevice61 \
+    libavformat61 \
+    libavutil59 \
+    libswresample5 \
+    libusb-1.0-0 \
+    supervisor \
+    bc \
+    x11-xserver-utils \
+    # Gnirehtet
+    ca-certificates \
+    curl \
+    # Audio
+    alsa-utils \
+    lame \
+    && rm -rf /var/lib/apt/lists/*
+
+# scrcpy
+COPY --from=scrcpy-builder /usr/local/bin/scrcpy /usr/local/bin/scrcpy
+COPY --from=scrcpy-builder /usr/local/share/scrcpy/ /usr/local/share/scrcpy/
+
+# gnirehtet
+COPY --from=gnirehtet-builder /src/gnirehtet/relay-rust/target/release/gnirehtet /usr/local/bin/gnirehtet
+
+ARG GNIREHTET_VERSION=2.5.1
+ADD https://github.com/Genymobile/gnirehtet/releases/download/v${GNIREHTET_VERSION}/gnirehtet-rust-linux64-v${GNIREHTET_VERSION}.zip /tmp/gnirehtet.zip
+RUN apt-get update && apt-get install -y --no-install-recommends unzip \
+    && unzip /tmp/gnirehtet.zip -d /tmp/gnirehtet \
+    && find /tmp/gnirehtet -name "*.apk" -exec cp {} /usr/local/share/gnirehtet.apk \; \
+    && rm -rf /tmp/gnirehtet.zip /tmp/gnirehtet \
+    && apt-get purge -y unzip && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
+# Audio server
+COPY --from=audio-builder /src/server/target/release/otacon-server /usr/local/bin/otacon-server
+
+ENV PATH="/usr/lib/android-sdk/platform-tools:${PATH}"
+ENV DISPLAY_NUM=50
+ENV DISPLAY_RESOLUTION=540x1204
+ENV SCRCPY_MAX_FPS=15
+ENV SCRCPY_BITRATE=2M
+ENV SCRCPY_MAX_SIZE=1204
+ENV VNC_PORT=5900
+ENV VNC_PASSWORD=
+ENV GNIREHTET_DNS=8.8.8.8,8.8.4.4
+ENV AUDIO_PORT=8080
+ENV ALSA_CAPTURE_DEVICE=plughw:Device,0
+ENV ALSA_PLAYBACK_DEVICE=plughw:Device,0
+
+COPY config/supervisord-otacon.conf /etc/supervisor/conf.d/otacon.conf
+COPY scripts/otacon-entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+EXPOSE 5900 8080
+
+ENTRYPOINT ["/entrypoint.sh"]

@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Otacon Audio</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #e0e0e0; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+  .container { width: 320px; padding: 24px; }
+  h1 { font-size: 18px; margin-bottom: 16px; color: #a0a0c0; }
+  .status { font-size: 13px; margin-bottom: 20px; color: #808080; }
+  .status.connected { color: #4caf50; }
+  .status.error { color: #f44336; }
+  .controls { display: flex; flex-direction: column; gap: 12px; }
+  button { padding: 12px; border: 1px solid #333; border-radius: 6px; background: #262640; color: #e0e0e0; font-size: 14px; cursor: pointer; transition: background 0.15s; }
+  button:hover { background: #333355; }
+  button.active { background: #2e5030; border-color: #4caf50; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .level { height: 4px; background: #333; border-radius: 2px; margin-top: 4px; overflow: hidden; }
+  .level-bar { height: 100%; width: 0%; background: #4caf50; transition: width 0.05s; }
+  .section { margin-bottom: 16px; }
+  .section-label { font-size: 11px; text-transform: uppercase; color: #606080; margin-bottom: 6px; letter-spacing: 0.5px; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Otacon Audio</h1>
+  <div class="status" id="status">Disconnected</div>
+
+  <div class="section">
+    <div class="section-label">Phone Audio (Listen)</div>
+    <button id="listenBtn" onclick="toggleListen()">Listen</button>
+    <div class="level"><div class="level-bar" id="listenLevel"></div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-label">Microphone (Send)</div>
+    <button id="micBtn" onclick="toggleMic()">Mic</button>
+    <div class="level"><div class="level-bar" id="micLevel"></div></div>
+  </div>
+</div>
+
+<script>
+const SAMPLE_RATE = 44100;
+const CHANNELS = 1;
+const FRAME_SIZE = 4096;
+
+let ws = null;
+let audioCtx = null;
+let listening = false;
+let micActive = false;
+let micStream = null;
+let micProcessor = null;
+
+function setStatus(text, cls) {
+  const el = document.getElementById('status');
+  el.textContent = text;
+  el.className = 'status ' + (cls || '');
+}
+
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/ws`);
+  ws.binaryType = 'arraybuffer';
+
+  ws.onopen = () => setStatus('Connected', 'connected');
+  ws.onclose = () => {
+    setStatus('Disconnected');
+    listening = false;
+    micActive = false;
+    updateButtons();
+    setTimeout(connect, 2000);
+  };
+  ws.onerror = () => setStatus('Connection error', 'error');
+
+  ws.onmessage = (e) => {
+    if (!listening || !audioCtx) return;
+    const pcm = new Int16Array(e.data);
+    const float = new Float32Array(pcm.length);
+    for (let i = 0; i < pcm.length; i++) {
+      float[i] = pcm[i] / 32768;
+    }
+
+    const buffer = audioCtx.createBuffer(CHANNELS, float.length, SAMPLE_RATE);
+    buffer.copyToChannel(float, 0);
+    const source = audioCtx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(audioCtx.destination);
+    // Schedule playback; use a simple queue based on frame timing
+    if (!connect._nextTime || connect._nextTime < audioCtx.currentTime) {
+      connect._nextTime = audioCtx.currentTime + 0.05;
+    }
+    source.start(connect._nextTime);
+    connect._nextTime += float.length / SAMPLE_RATE;
+
+    // Update level meter
+    let sum = 0;
+    for (let i = 0; i < float.length; i++) sum += float[i] * float[i];
+    const rms = Math.sqrt(sum / float.length);
+    document.getElementById('listenLevel').style.width = Math.min(100, rms * 300) + '%';
+  };
+}
+
+function toggleListen() {
+  if (!listening) {
+    audioCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
+    listening = true;
+  } else {
+    listening = false;
+    if (audioCtx) { audioCtx.close(); audioCtx = null; }
+    connect._nextTime = 0;
+    document.getElementById('listenLevel').style.width = '0%';
+  }
+  updateButtons();
+}
+
+async function toggleMic() {
+  if (!micActive) {
+    try {
+      micStream = await navigator.mediaDevices.getUserMedia({
+        audio: { sampleRate: SAMPLE_RATE, channelCount: CHANNELS, echoCancellation: true }
+      });
+      const ctx = new AudioContext({ sampleRate: SAMPLE_RATE });
+      const source = ctx.createMediaStreamSource(micStream);
+
+      // ScriptProcessorNode for PCM extraction (simple, widely supported)
+      micProcessor = ctx.createScriptProcessor(FRAME_SIZE / 2, 1, 1);
+      micProcessor._ctx = ctx;
+      micProcessor.onaudioprocess = (e) => {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        const float = e.inputBuffer.getChannelData(0);
+        const pcm = new Int16Array(float.length);
+        for (let i = 0; i < float.length; i++) {
+          pcm[i] = Math.max(-32768, Math.min(32767, float[i] * 32768));
+        }
+        ws.send(pcm.buffer);
+
+        // Update level meter
+        let sum = 0;
+        for (let i = 0; i < float.length; i++) sum += float[i] * float[i];
+        const rms = Math.sqrt(sum / float.length);
+        document.getElementById('micLevel').style.width = Math.min(100, rms * 300) + '%';
+      };
+
+      source.connect(micProcessor);
+      micProcessor.connect(ctx.destination);
+      micActive = true;
+    } catch (e) {
+      setStatus('Mic access denied', 'error');
+      return;
+    }
+  } else {
+    if (micProcessor) {
+      micProcessor.disconnect();
+      micProcessor._ctx.close();
+      micProcessor = null;
+    }
+    if (micStream) {
+      micStream.getTracks().forEach(t => t.stop());
+      micStream = null;
+    }
+    micActive = false;
+    document.getElementById('micLevel').style.width = '0%';
+  }
+  updateButtons();
+}
+
+function updateButtons() {
+  const lb = document.getElementById('listenBtn');
+  const mb = document.getElementById('micBtn');
+  lb.textContent = listening ? 'Stop Listening' : 'Listen';
+  lb.className = listening ? 'active' : '';
+  mb.textContent = micActive ? 'Stop Mic' : 'Mic';
+  mb.className = micActive ? 'active' : '';
+}
+
+connect();
+</script>
+</body>
+</html>

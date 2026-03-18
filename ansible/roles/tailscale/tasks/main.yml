@@ -20,6 +20,45 @@
     state: started
   when: not pigen_chroot
 
+- name: Create cert directory
+  file:
+    path: /etc/tailscale/certs
+    state: directory
+    mode: "0755"
+
+- name: Install cert renewal script
+  copy:
+    src: tailscale-cert-renew.sh
+    dest: /usr/local/bin/tailscale-cert-renew.sh
+    mode: "0755"
+
+- name: Install cert renewal service
+  copy:
+    src: tailscale-cert-renew.service
+    dest: /etc/systemd/system/tailscale-cert-renew.service
+    mode: "0644"
+  notify: reload systemd
+
+- name: Install cert renewal timer
+  copy:
+    src: tailscale-cert-renew.timer
+    dest: /etc/systemd/system/tailscale-cert-renew.timer
+    mode: "0644"
+  notify: reload systemd
+
+- name: Enable cert renewal timer
+  systemd:
+    name: tailscale-cert-renew.timer
+    enabled: true
+    state: started
+  when: not pigen_chroot
+
+- name: Generate initial TLS certs
+  command: /usr/local/bin/tailscale-cert-renew.sh
+  args:
+    creates: /etc/tailscale/certs/otacon-pi.crt
+  when: not pigen_chroot
+
 - name: Install firstboot script
   copy:
     src: otacon-firstboot.sh

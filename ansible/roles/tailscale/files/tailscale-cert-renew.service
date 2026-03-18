@@ -1,0 +1,8 @@
+[Unit]
+Description=Renew Tailscale TLS certificates
+After=tailscaled.service
+Requires=tailscaled.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/tailscale-cert-renew.sh

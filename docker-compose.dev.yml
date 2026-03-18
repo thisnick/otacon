@@ -1,13 +1,7 @@
 # Dev overrides — use with: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 services:
-  phone-mirror:
+  otacon:
     build:
       context: .
-      dockerfile: Dockerfile.phone-mirror
-    image: otacon/phone-mirror:dev
-
-  gnirehtet:
-    build:
-      context: .
-      dockerfile: Dockerfile.gnirehtet
-    image: otacon/gnirehtet:dev
+      dockerfile: Dockerfile.otacon
+    image: otacon/otacon:dev
