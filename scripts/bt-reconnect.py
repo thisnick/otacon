@@ -4,7 +4,13 @@ bt-reconnect.py — Event-driven Bluetooth reconnect daemon.
 
 Watches org.bluez.Device1 PropertiesChanged signals via D-Bus.
 When a paired device disconnects, reconnects with exponential backoff.
-Connect() is called asynchronously so the event loop never blocks.
+ConnectProfile() is called asynchronously so the event loop never blocks.
+
+Uses ConnectProfile(A2DP_SOURCE_UUID) instead of Connect() to force BR/EDR.
+Connect() consults PreferredBearer, which BlueZ sets to "last-seen" after pairing
+and then picks LE (since phones BLE-advertise constantly). LE connect fails locally
+and bluetoothd hangs for 25 s before returning NoReply. ConnectProfile with a
+BR/EDR-only UUID bypasses this entirely and connects in ~4 s.
 """
 import dbus
 import dbus.mainloop.glib
@@ -20,12 +26,17 @@ logging.basicConfig(
 )
 log = logging.getLogger('bt-reconnect')
 
-INITIAL_DELAY_MS  = 3000    # first reconnect attempt after disconnect
-MAX_DELAY_MS      = 60000   # cap backoff at 60s
-STARTUP_DELAY_MS  = 2000    # delay before first connect attempt at startup
+INITIAL_DELAY_MS   = 3000   # first reconnect attempt after disconnect
+MAX_DELAY_MS       = 60000  # cap backoff at 60s
+STARTUP_DELAY_MS   = 2000   # delay before first connect attempt at startup
 INPROGRESS_WAIT_MS = 30000  # wait this long when a connect is already in-flight
 
-# Track per-device whether a Connect() call is currently in flight
+# A2DP Audio Source UUID — phone's role when streaming media to us.
+# BR/EDR-only profile: forces bluetoothd to use classic BT, bypassing the
+# PreferredBearer=last-seen issue that causes BlueZ to try LE and hang.
+A2DP_SOURCE_UUID = '0000110a-0000-1000-8000-00805f9b34fb'
+
+# Track per-device whether a ConnectProfile() call is currently in flight
 _connecting = set()
 
 
@@ -53,7 +64,7 @@ def attempt_connect(bus, path, delay_ms):
         GLib.timeout_add(INPROGRESS_WAIT_MS, attempt_connect, bus, path, delay_ms)
         return
 
-    log.info(f'{path}: connecting...')
+    log.info(f'{path}: connecting (BR/EDR)...')
     _connecting.add(path)
     dev = dbus.Interface(bus.get_object('org.bluez', path), 'org.bluez.Device1')
 
@@ -72,7 +83,7 @@ def attempt_connect(bus, path, delay_ms):
             log.warning(f'{path}: connect failed ({name}), retry in {wait // 1000}s')
         GLib.timeout_add(wait, attempt_connect, bus, path, wait)
 
-    dev.Connect(reply_handler=on_success, error_handler=on_error)
+    dev.ConnectProfile(A2DP_SOURCE_UUID, reply_handler=on_success, error_handler=on_error)
 
 
 def schedule_reconnect(bus, path, delay_ms=INITIAL_DELAY_MS):
