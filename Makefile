@@ -81,4 +81,6 @@ pigen-config:
 	@[ -n "$${TS_HOSTNAME}" ] && echo "TS_HOSTNAME=$${TS_HOSTNAME}" >> "$(DEVICE)/otacon/startup.conf" || true
 	@[ -n "$${VNC_PASSWORD}" ] && echo "VNC_PASSWORD=$${VNC_PASSWORD}" >> "$(DEVICE)/otacon/startup.conf" || true
 	@[ -n "$${OTACON_REPO}" ] && echo "OTACON_REPO=$${OTACON_REPO}" >> "$(DEVICE)/otacon/startup.conf" || true
+	@[ -n "$${WIFI_AP_SSID}" ] && echo "WIFI_AP_SSID=$${WIFI_AP_SSID}" >> "$(DEVICE)/otacon/startup.conf" || true
+	@[ -n "$${WIFI_AP_PASSWORD}" ] && echo "WIFI_AP_PASSWORD=$${WIFI_AP_PASSWORD}" >> "$(DEVICE)/otacon/startup.conf" || true
 	@echo "Wrote $(DEVICE)/otacon/startup.conf"

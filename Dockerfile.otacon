@@ -28,18 +28,7 @@ RUN meson setup builddir --buildtype=release -Dprebuilt_server=/opt/scrcpy-serve
     && ninja -C builddir \
     && ninja -C builddir install
 
-# Stage 2: Build gnirehtet
-FROM rust:1-slim-bookworm AS gnirehtet-builder
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN git clone --depth 1 https://github.com/Genymobile/gnirehtet.git /src/gnirehtet
-WORKDIR /src/gnirehtet/relay-rust
-RUN cargo build --release
-
-# Stage 3: Build audio server
+# Stage 2: Build audio server
 FROM rust:1-slim-bookworm AS audio-builder
 
 WORKDIR /src/server
@@ -48,7 +37,7 @@ COPY src/server/src/ ./src/
 COPY src/server/static/ ./static/
 RUN cargo build --release
 
-# Stage 4: Runtime
+# Stage 3: Runtime
 FROM debian:trixie-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -66,9 +55,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     supervisor \
     bc \
     x11-xserver-utils \
-    # Gnirehtet
-    ca-certificates \
-    curl \
+    # WiFi AP
+    hostapd \
+    dnsmasq \
+    iptables \
+    iproute2 \
     # Audio
     alsa-utils \
     lame \
@@ -86,18 +77,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=scrcpy-builder /usr/local/bin/scrcpy /usr/local/bin/scrcpy
 COPY --from=scrcpy-builder /usr/local/share/scrcpy/ /usr/local/share/scrcpy/
 
-# gnirehtet
-COPY --from=gnirehtet-builder /src/gnirehtet/relay-rust/target/release/gnirehtet /usr/local/bin/gnirehtet
-
-ARG GNIREHTET_VERSION=2.5.1
-ADD https://github.com/Genymobile/gnirehtet/releases/download/v${GNIREHTET_VERSION}/gnirehtet-rust-linux64-v${GNIREHTET_VERSION}.zip /tmp/gnirehtet.zip
-RUN apt-get update && apt-get install -y --no-install-recommends unzip \
-    && unzip /tmp/gnirehtet.zip -d /tmp/gnirehtet \
-    && find /tmp/gnirehtet -name "*.apk" -exec cp {} /usr/local/share/gnirehtet.apk \; \
-    && rm -rf /tmp/gnirehtet.zip /tmp/gnirehtet \
-    && apt-get purge -y unzip && apt-get autoremove -y \
-    && rm -rf /var/lib/apt/lists/*
-
 # Audio server
 COPY --from=audio-builder /src/server/target/release/otacon-server /usr/local/bin/otacon-server
 
@@ -109,7 +88,8 @@ ENV SCRCPY_BITRATE=2M
 ENV SCRCPY_MAX_SIZE=1204
 ENV VNC_PORT=5900
 ENV VNC_PASSWORD=
-ENV GNIREHTET_DNS=8.8.8.8,8.8.4.4
+ENV WIFI_AP_SSID=
+ENV WIFI_AP_PASSWORD=
 ENV AUDIO_PORT=8080
 ENV ALSA_CAPTURE_DEVICE=plughw:Device,0
 ENV ALSA_PLAYBACK_DEVICE=plughw:Device,0
@@ -126,7 +106,7 @@ COPY scripts/otacon-entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh /opt/bluetooth-pair.sh /opt/bluetooth-agent.py \
     /opt/bluetooth-status.sh /opt/bluetooth-connect.sh
 
-RUN mkdir -p /run/dbus
+RUN mkdir -p /run/dbus /etc/hostapd
 
 EXPOSE 5900 8080
 

@@ -54,3 +54,22 @@ Or use `DISALLOW_LOCK_SCREEN` restriction.
 
 - Dismiss any unexpected system popups automatically
 - Suppress low battery warning, update prompts, etc.
+
+## TODO: WiFi auto-connect (headless, no ADB)
+
+Currently the Pi connects the phone to the AP via ADB:
+```bash
+adb shell cmd wifi connect-network "${WIFI_AP_SSID}" wpa2 "${WIFI_AP_PASSWORD}"
+```
+This saves credentials permanently and auto-connects on future boots, but requires USB.
+
+For fully headless boot (no USB cable), Device Owner can add the network programmatically
+before `DISALLOW_CONFIG_WIFI` is applied:
+
+1. `dpm.setWifiEnabled(admin, true)` — ensure WiFi is on
+2. `dpm.addWifiNetworkPrivileged(admin, suggestion)` (API 33 / Android 13) — add the
+   Pi AP credentials silently without user interaction
+3. Apply `DISALLOW_CONFIG_WIFI` after — user cannot change or remove it
+
+This path requires Android 13+ and the Device Owner app to know the AP credentials
+(pass via intent or bake into the APK via BuildConfig).
