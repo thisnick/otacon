@@ -22,11 +22,13 @@ fi
 ps aux | grep -E "[a]play"               >/dev/null && ok "aplay (playback)" || info "aplay not running"
 
 RECON_PID=$(pgrep -f "bluetooth-connect.sh" 2>/dev/null || true)
+LOOP_PID=$(pgrep -f "bt-reconnect\|while true.*bluetooth-connect" 2>/dev/null | head -1 || true)
 if [ -n "$RECON_PID" ]; then
-    RECON_SECS=$(ps -o etimes= -p "$RECON_PID" 2>/dev/null | tr -d ' ' || echo "?")
-    ok "bt-reconnect: running (${RECON_SECS}s)"
+    ok   "bt-reconnect: connecting..."
+elif [ -n "$LOOP_PID" ]; then
+    info "bt-reconnect: waiting to retry"
 else
-    info "bt-reconnect: idle"
+    info "bt-reconnect: not running"
 fi
 
 echo
