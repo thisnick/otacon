@@ -4,7 +4,7 @@ bt-reconnect.py — Event-driven Bluetooth reconnect daemon.
 
 Watches org.bluez.Device1 PropertiesChanged signals via D-Bus.
 When a paired device disconnects, reconnects with exponential backoff.
-Also connects any paired-but-disconnected devices on startup.
+Connect() is called asynchronously so the event loop never blocks.
 """
 import dbus
 import dbus.mainloop.glib
@@ -20,46 +20,65 @@ logging.basicConfig(
 )
 log = logging.getLogger('bt-reconnect')
 
-INITIAL_DELAY_MS  = 3000   # first reconnect attempt after disconnect
-MAX_DELAY_MS      = 60000  # cap backoff at 60s
-STARTUP_DELAY_MS  = 2000   # delay before first connect attempt at startup
+INITIAL_DELAY_MS  = 3000    # first reconnect attempt after disconnect
+MAX_DELAY_MS      = 60000   # cap backoff at 60s
+STARTUP_DELAY_MS  = 2000    # delay before first connect attempt at startup
+INPROGRESS_WAIT_MS = 30000  # wait this long when a connect is already in-flight
 
-
-def get_device_props(bus, path):
-    return dbus.Interface(
-        bus.get_object('org.bluez', path),
-        'org.freedesktop.DBus.Properties',
-    )
+# Track per-device whether a Connect() call is currently in flight
+_connecting = set()
 
 
 def is_connected(bus, path):
     try:
-        return bool(get_device_props(bus, path).Get('org.bluez.Device1', 'Connected'))
+        props = dbus.Interface(
+            bus.get_object('org.bluez', path),
+            'org.freedesktop.DBus.Properties',
+        )
+        return bool(props.Get('org.bluez.Device1', 'Connected'))
     except dbus.exceptions.DBusException:
         return False
 
 
 def attempt_connect(bus, path, delay_ms):
-    """Try to connect; if it fails, reschedule with doubled delay."""
+    """Async Connect(); on failure reschedule with doubled delay."""
     if is_connected(bus, path):
-        log.info(f'{path}: already connected, done')
+        log.info(f'{path}: connected')
+        _connecting.discard(path)
+        return
+
+    if path in _connecting:
+        # A call is already in flight; wait before trying again
+        log.info(f'{path}: connect in progress, waiting {INPROGRESS_WAIT_MS // 1000}s')
+        GLib.timeout_add(INPROGRESS_WAIT_MS, attempt_connect, bus, path, delay_ms)
         return
 
     log.info(f'{path}: connecting...')
-    try:
-        dev = dbus.Interface(bus.get_object('org.bluez', path), 'org.bluez.Device1')
-        dev.Connect()
+    _connecting.add(path)
+    dev = dbus.Interface(bus.get_object('org.bluez', path), 'org.bluez.Device1')
+
+    def on_success():
+        _connecting.discard(path)
         log.info(f'{path}: connected')
-    except dbus.exceptions.DBusException as e:
-        next_delay = min(delay_ms * 2, MAX_DELAY_MS)
-        log.warning(f'{path}: connect failed ({e.get_dbus_name()}), retry in {next_delay // 1000}s')
-        GLib.timeout_add(next_delay, attempt_connect, bus, path, next_delay)
+
+    def on_error(e):
+        _connecting.discard(path)
+        name = e.get_dbus_name()
+        if name == 'org.bluez.Error.InProgress':
+            wait = INPROGRESS_WAIT_MS
+            log.info(f'{path}: connect already in progress, retry in {wait // 1000}s')
+        else:
+            wait = min(delay_ms * 2, MAX_DELAY_MS)
+            log.warning(f'{path}: connect failed ({name}), retry in {wait // 1000}s')
+        GLib.timeout_add(wait, attempt_connect, bus, path, wait)
+
+    dev.Connect(reply_handler=on_success, error_handler=on_error)
 
 
 def schedule_reconnect(bus, path, delay_ms=INITIAL_DELAY_MS):
-    log.info(f'{path}: scheduling reconnect in {delay_ms // 1000}s')
+    log.info(f'{path}: reconnect scheduled in {delay_ms // 1000}s')
     GLib.timeout_add(delay_ms, attempt_connect, bus, path, delay_ms)
-    return False  # don't repeat the caller's timeout
+    return False
 
 
 def watch_device(bus, path):
@@ -71,6 +90,7 @@ def watch_device(bus, path):
             connected = bool(changed['Connected'])
             log.info(f'{path}: Connected → {connected}')
             if not connected:
+                _connecting.discard(path)
                 schedule_reconnect(bus, path)
 
     bus.add_signal_receiver(
@@ -91,7 +111,6 @@ def main():
         'org.freedesktop.DBus.ObjectManager',
     )
 
-    # Watch all currently-paired devices
     objects = mgr.GetManagedObjects()
     paired = [
         path for path, ifaces in objects.items()
@@ -107,7 +126,6 @@ def main():
     if not paired:
         log.info('No paired devices found — will watch for new pairings')
 
-    # Also pick up devices paired while we're running
     def on_interfaces_added(path, ifaces):
         if 'org.bluez.Device1' not in ifaces:
             return
