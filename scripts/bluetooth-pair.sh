@@ -35,19 +35,19 @@ if [ -z "$PHONE_BT_MAC" ] || [ "$PHONE_BT_MAC" = "null" ]; then
 fi
 echo "Phone BT MAC: $PHONE_BT_MAC"
 
-# 3. If already paired, test connection (detect stale keys)
+# 3. If already paired, test connection (detect stale keys or phone-side unpair)
 if bluetoothctl info "$PHONE_BT_MAC" 2>/dev/null | grep -q "Paired: yes"; then
     echo "Already paired — testing connection..."
     bluetoothctl trust "$PHONE_BT_MAC"
     CONNECT_OUT=$(bluetoothctl connect "$PHONE_BT_MAC" 2>&1 || true)
-    if echo "$CONNECT_OUT" | grep -q "br-connection-key-missing"; then
-        echo "Stale keys — removing device and re-pairing..."
+    if echo "$CONNECT_OUT" | grep -qi "successful\|already connected"; then
+        echo "Connected. bt-agent will activate HFP profile."
+        exit 0
+    else
+        echo "Connection failed (stale or phone-side unpair) — removing device and re-pairing..."
         bluetoothctl remove "$PHONE_BT_MAC" 2>/dev/null || true
         sleep 1
         # fall through to full pair flow
-    else
-        echo "Connected. bt-agent will activate HFP profile."
-        exit 0
     fi
 fi
 

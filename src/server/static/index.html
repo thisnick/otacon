@@ -29,9 +29,15 @@
   <div class="status" id="status">Disconnected</div>
 
   <div class="section">
-    <div class="section-label">Phone Audio (Listen)</div>
-    <button id="listenBtn" onclick="toggleListen()">Listen</button>
-    <div class="level"><div class="level-bar" id="listenLevel"></div></div>
+    <div class="section-label">Phone Call Audio (HFP)</div>
+    <button id="hfpListenBtn" onclick="toggleHfpListen()">Listen</button>
+    <div class="level"><div class="level-bar" id="hfpListenLevel"></div></div>
+  </div>
+
+  <div class="section">
+    <div class="section-label">Media Audio (A2DP)</div>
+    <button id="mediaListenBtn" onclick="toggleMediaListen()">Listen</button>
+    <div class="level"><div class="level-bar" id="mediaListenLevel"></div></div>
   </div>
 
   <div class="section">
@@ -42,17 +48,28 @@
 </div>
 
 <script>
-// Defaults — overridden by server config message
-let SAMPLE_RATE = 44100;
-let CHANNELS = 1;
-const FRAME_SIZE = 4096;
+// HFP state
+let HFP_SAMPLE_RATE = 16000;
+let HFP_CHANNELS = 1;
+let hfpWs = null;
+let hfpCtx = null;
+let hfpListening = false;
+let hfpNextTime = 0;
 
-let ws = null;
-let audioCtx = null;
-let listening = false;
+// Media (A2DP) state
+let MEDIA_SAMPLE_RATE = 44100;
+let MEDIA_CHANNELS = 2;
+let mediaWs = null;
+let mediaCtx = null;
+let mediaListening = false;
+let mediaNextTime = 0;
+
+// Mic state (sends over HFP WS)
 let micActive = false;
 let micStream = null;
 let micProcessor = null;
+
+const FRAME_SIZE = 4096;
 
 function setStatus(text, cls) {
   const el = document.getElementById('status');
@@ -60,99 +77,159 @@ function setStatus(text, cls) {
   el.className = 'status ' + (cls || '');
 }
 
-function connect() {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(`${proto}//${location.host}/ws`);
-  ws.binaryType = 'arraybuffer';
+// --- HFP WebSocket ---
 
-  ws.onopen = () => setStatus('Connected', 'connected');
-  ws.onclose = () => {
+function connectHfp() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  hfpWs = new WebSocket(`${proto}//${location.host}/ws`);
+  hfpWs.binaryType = 'arraybuffer';
+
+  hfpWs.onopen = () => setStatus('Connected', 'connected');
+  hfpWs.onclose = () => {
     setStatus('Disconnected');
-    listening = false;
+    hfpListening = false;
     micActive = false;
     updateButtons();
-    setTimeout(connect, 2000);
+    setTimeout(connectHfp, 2000);
   };
-  ws.onerror = () => setStatus('Connection error', 'error');
+  hfpWs.onerror = () => setStatus('Connection error', 'error');
 
-  ws.onmessage = (e) => {
-    // Handle text config messages from server
+  hfpWs.onmessage = (e) => {
     if (typeof e.data === 'string') {
       try {
         const msg = JSON.parse(e.data);
         if (msg.type === 'config') {
-          SAMPLE_RATE = msg.sampleRate || SAMPLE_RATE;
-          CHANNELS = msg.channels || CHANNELS;
-          console.log(`Audio config: ${SAMPLE_RATE}Hz, ${CHANNELS}ch`);
+          HFP_SAMPLE_RATE = msg.sampleRate || HFP_SAMPLE_RATE;
+          HFP_CHANNELS = msg.channels || HFP_CHANNELS;
+          console.log(`HFP config: ${HFP_SAMPLE_RATE}Hz, ${HFP_CHANNELS}ch`);
         }
       } catch (_) {}
       return;
     }
 
-    if (!listening || !audioCtx) return;
+    if (!hfpListening || !hfpCtx) return;
     const pcm = new Int16Array(e.data);
     const float = new Float32Array(pcm.length);
-    for (let i = 0; i < pcm.length; i++) {
-      float[i] = pcm[i] / 32768;
-    }
+    for (let i = 0; i < pcm.length; i++) float[i] = pcm[i] / 32768;
 
-    const buffer = audioCtx.createBuffer(CHANNELS, float.length, SAMPLE_RATE);
+    const buffer = hfpCtx.createBuffer(HFP_CHANNELS, float.length / HFP_CHANNELS, HFP_SAMPLE_RATE);
     buffer.copyToChannel(float, 0);
-    const source = audioCtx.createBufferSource();
+    const source = hfpCtx.createBufferSource();
     source.buffer = buffer;
-    source.connect(audioCtx.destination);
-    if (!connect._nextTime || connect._nextTime < audioCtx.currentTime) {
-      connect._nextTime = audioCtx.currentTime + 0.05;
-    }
-    source.start(connect._nextTime);
-    connect._nextTime += float.length / SAMPLE_RATE;
+    source.connect(hfpCtx.destination);
+    if (!hfpNextTime || hfpNextTime < hfpCtx.currentTime) hfpNextTime = hfpCtx.currentTime + 0.05;
+    source.start(hfpNextTime);
+    hfpNextTime += (float.length / HFP_CHANNELS) / HFP_SAMPLE_RATE;
 
-    // Update level meter
     let sum = 0;
     for (let i = 0; i < float.length; i++) sum += float[i] * float[i];
-    const rms = Math.sqrt(sum / float.length);
-    document.getElementById('listenLevel').style.width = Math.min(100, rms * 300) + '%';
+    document.getElementById('hfpListenLevel').style.width = Math.min(100, Math.sqrt(sum / float.length) * 300) + '%';
   };
 }
 
-function toggleListen() {
-  if (!listening) {
-    audioCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
-    listening = true;
+function toggleHfpListen() {
+  if (!hfpListening) {
+    hfpCtx = new AudioContext({ sampleRate: HFP_SAMPLE_RATE });
+    hfpListening = true;
   } else {
-    listening = false;
-    if (audioCtx) { audioCtx.close(); audioCtx = null; }
-    connect._nextTime = 0;
-    document.getElementById('listenLevel').style.width = '0%';
+    hfpListening = false;
+    if (hfpCtx) { hfpCtx.close(); hfpCtx = null; }
+    hfpNextTime = 0;
+    document.getElementById('hfpListenLevel').style.width = '0%';
   }
   updateButtons();
 }
+
+// --- Media (A2DP) WebSocket ---
+
+function connectMedia() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  mediaWs = new WebSocket(`${proto}//${location.host}/ws/media`);
+  mediaWs.binaryType = 'arraybuffer';
+
+  mediaWs.onclose = () => {
+    mediaListening = false;
+    updateButtons();
+    setTimeout(connectMedia, 2000);
+  };
+
+  mediaWs.onmessage = (e) => {
+    if (typeof e.data === 'string') {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'config') {
+          MEDIA_SAMPLE_RATE = msg.sampleRate || MEDIA_SAMPLE_RATE;
+          MEDIA_CHANNELS = msg.channels || MEDIA_CHANNELS;
+          console.log(`Media config: ${MEDIA_SAMPLE_RATE}Hz, ${MEDIA_CHANNELS}ch`);
+        }
+      } catch (_) {}
+      return;
+    }
+
+    if (!mediaListening || !mediaCtx) return;
+    const pcm = new Int16Array(e.data);
+    const samplesPerChannel = pcm.length / MEDIA_CHANNELS;
+    const buffer = mediaCtx.createBuffer(MEDIA_CHANNELS, samplesPerChannel, MEDIA_SAMPLE_RATE);
+
+    for (let ch = 0; ch < MEDIA_CHANNELS; ch++) {
+      const float = new Float32Array(samplesPerChannel);
+      for (let i = 0; i < samplesPerChannel; i++) float[i] = pcm[i * MEDIA_CHANNELS + ch] / 32768;
+      buffer.copyToChannel(float, ch);
+    }
+
+    const source = mediaCtx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(mediaCtx.destination);
+    if (!mediaNextTime || mediaNextTime < mediaCtx.currentTime) mediaNextTime = mediaCtx.currentTime + 0.05;
+    source.start(mediaNextTime);
+    mediaNextTime += samplesPerChannel / MEDIA_SAMPLE_RATE;
+
+    // Level meter from first channel
+    const ch0 = buffer.getChannelData(0);
+    let sum = 0;
+    for (let i = 0; i < ch0.length; i++) sum += ch0[i] * ch0[i];
+    document.getElementById('mediaListenLevel').style.width = Math.min(100, Math.sqrt(sum / ch0.length) * 300) + '%';
+  };
+}
+
+function toggleMediaListen() {
+  if (!mediaListening) {
+    mediaCtx = new AudioContext({ sampleRate: MEDIA_SAMPLE_RATE });
+    mediaListening = true;
+  } else {
+    mediaListening = false;
+    if (mediaCtx) { mediaCtx.close(); mediaCtx = null; }
+    mediaNextTime = 0;
+    document.getElementById('mediaListenLevel').style.width = '0%';
+  }
+  updateButtons();
+}
+
+// --- Mic (sends over HFP WS) ---
 
 async function toggleMic() {
   if (!micActive) {
     try {
       micStream = await navigator.mediaDevices.getUserMedia({
-        audio: { sampleRate: SAMPLE_RATE, channelCount: CHANNELS, echoCancellation: true }
+        audio: { sampleRate: HFP_SAMPLE_RATE, channelCount: HFP_CHANNELS, echoCancellation: true }
       });
-      const ctx = new AudioContext({ sampleRate: SAMPLE_RATE });
+      const ctx = new AudioContext({ sampleRate: HFP_SAMPLE_RATE });
       const source = ctx.createMediaStreamSource(micStream);
 
       micProcessor = ctx.createScriptProcessor(FRAME_SIZE / 2, 1, 1);
       micProcessor._ctx = ctx;
       micProcessor.onaudioprocess = (e) => {
-        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        if (!hfpWs || hfpWs.readyState !== WebSocket.OPEN) return;
         const float = e.inputBuffer.getChannelData(0);
         const pcm = new Int16Array(float.length);
         for (let i = 0; i < float.length; i++) {
           pcm[i] = Math.max(-32768, Math.min(32767, float[i] * 32768));
         }
-        ws.send(pcm.buffer);
+        hfpWs.send(pcm.buffer);
 
-        // Update level meter
         let sum = 0;
         for (let i = 0; i < float.length; i++) sum += float[i] * float[i];
-        const rms = Math.sqrt(sum / float.length);
-        document.getElementById('micLevel').style.width = Math.min(100, rms * 300) + '%';
+        document.getElementById('micLevel').style.width = Math.min(100, Math.sqrt(sum / float.length) * 300) + '%';
       };
 
       source.connect(micProcessor);
@@ -179,15 +256,21 @@ async function toggleMic() {
 }
 
 function updateButtons() {
-  const lb = document.getElementById('listenBtn');
-  const mb = document.getElementById('micBtn');
-  lb.textContent = listening ? 'Stop Listening' : 'Listen';
-  lb.className = listening ? 'active' : '';
-  mb.textContent = micActive ? 'Stop Mic' : 'Mic';
-  mb.className = micActive ? 'active' : '';
+  const hb = document.getElementById('hfpListenBtn');
+  hb.textContent = hfpListening ? 'Stop Listening' : 'Listen';
+  hb.className = hfpListening ? 'active' : '';
+
+  const mb = document.getElementById('mediaListenBtn');
+  mb.textContent = mediaListening ? 'Stop Listening' : 'Listen';
+  mb.className = mediaListening ? 'active' : '';
+
+  const mic = document.getElementById('micBtn');
+  mic.textContent = micActive ? 'Stop Mic' : 'Mic';
+  mic.className = micActive ? 'active' : '';
 }
 
-connect();
+connectHfp();
+connectMedia();
 </script>
 </body>
 </html>

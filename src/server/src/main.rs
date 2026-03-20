@@ -33,7 +33,10 @@ struct AudioConfig {
     backend: AudioBackend,
     sample_rate: u32,
     channels: u16,
+    a2dp_sample_rate: u32,
+    a2dp_channels: u16,
     capture_cmd: Vec<String>,
+    a2dp_capture_cmd: Option<Vec<String>>,
     playback_cmd: Vec<String>,
     mp3_cmd: String,
 }
@@ -63,11 +66,17 @@ impl AudioConfig {
                 // Default uses first connected device; override with BLUEALSA_DEVICE.
                 let device = env::var("BLUEALSA_DEVICE")
                     .unwrap_or_else(|_| "bluealsa:DEV=00:00:00:00:00:00,PROFILE=sco".into());
+                let a2dp_device = device.replace("PROFILE=sco", "PROFILE=a2dp");
+                let a2dp_sample_rate = 44100u32;
+                let a2dp_channels = 2u16;
                 AudioConfig {
                     backend: AudioBackend::Bluetooth,
                     sample_rate,
                     channels,
+                    a2dp_sample_rate,
+                    a2dp_channels,
                     capture_cmd: alsa_cmd("arecord", &device, sample_rate, channels),
+                    a2dp_capture_cmd: Some(alsa_cmd("arecord", &a2dp_device, a2dp_sample_rate, a2dp_channels)),
                     playback_cmd: alsa_cmd("aplay", &device, sample_rate, channels),
                     mp3_cmd: format!(
                         "arecord -D {device} -f S16_LE -r {sample_rate} -c {channels} -t raw | lame -r -s 16 -m m --bitrate 32 - -"
@@ -85,7 +94,10 @@ impl AudioConfig {
                     backend: AudioBackend::Alsa,
                     sample_rate,
                     channels,
+                    a2dp_sample_rate: 0,
+                    a2dp_channels: 0,
                     capture_cmd: alsa_cmd("arecord", &capture_device, sample_rate, channels),
+                    a2dp_capture_cmd: None,
                     playback_cmd: alsa_cmd("aplay", &playback_device, sample_rate, channels),
                     mp3_cmd: format!(
                         "arecord -D {capture_device} -f S16_LE -r {sample_rate} -c {channels} -t raw | lame -r -s 44.1 -m m --bitrate 128 - -"
@@ -99,6 +111,8 @@ impl AudioConfig {
 struct AppState {
     /// Broadcast channel for captured audio (Pi mic → clients)
     capture_tx: broadcast::Sender<Vec<u8>>,
+    /// Broadcast channel for A2DP media audio (phone → clients)
+    a2dp_tx: Option<broadcast::Sender<Vec<u8>>>,
     /// Mutex protecting the single playback sender slot
     playback_owner: Mutex<Option<u64>>,
     /// Audio configuration
@@ -121,8 +135,17 @@ async fn main() {
     let capture_cmd = audio_config.capture_cmd.clone();
     let mp3_cmd = audio_config.mp3_cmd.clone();
 
+    let a2dp_tx = if let Some(cmd) = audio_config.a2dp_capture_cmd.clone() {
+        let (tx, _) = broadcast::channel::<Vec<u8>>(64);
+        tokio::spawn(capture_audio(cmd, tx.clone()));
+        Some(tx)
+    } else {
+        None
+    };
+
     let state = Arc::new(AppState {
         capture_tx: capture_tx.clone(),
+        a2dp_tx,
         playback_owner: Mutex::new(None),
         audio_config,
     });
@@ -134,6 +157,10 @@ async fn main() {
         .route("/ws", get({
             let state = state.clone();
             move |ws| ws_handler(ws, state)
+        }))
+        .route("/ws/media", get({
+            let state = state.clone();
+            move |ws| ws_media_handler(ws, state)
         }))
         .route("/audio", get({
             move || mp3_stream_handler(mp3_cmd)
@@ -300,6 +327,32 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
     }
 
     eprintln!("WebSocket client {client_id} disconnected");
+}
+
+/// WebSocket handler: A2DP media audio (subscribe-only)
+async fn ws_media_handler(ws: WebSocketUpgrade, state: Arc<AppState>) -> Response {
+    ws.on_upgrade(move |socket| handle_ws_media(socket, state))
+}
+
+async fn handle_ws_media(socket: WebSocket, state: Arc<AppState>) {
+    let Some(ref a2dp_tx) = state.a2dp_tx else { return; };
+    let (mut ws_tx, _) = socket.split();
+    let mut rx = a2dp_tx.subscribe();
+
+    let config_msg = format!(
+        r#"{{"type":"config","sampleRate":{},"channels":{}}}"#,
+        state.audio_config.a2dp_sample_rate,
+        state.audio_config.a2dp_channels
+    );
+    if ws_tx.send(Message::Text(config_msg.into())).await.is_err() {
+        return;
+    }
+
+    while let Ok(data) = rx.recv().await {
+        if ws_tx.send(Message::Binary(data.into())).await.is_err() {
+            break;
+        }
+    }
 }
 
 /// Stream MP3 audio via HTTP (for VLC/ffplay)

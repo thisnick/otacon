@@ -27,4 +27,11 @@ fi
 NAME=$(bluetoothctl info "$PHONE_MAC" 2>/dev/null | grep "Name:" | head -1 | awk '{print $2}')
 echo "Connecting to $NAME ($PHONE_MAC)..."
 bluetoothctl connect "$PHONE_MAC" 2>/dev/null || true
+
+# Set phone media volume to max
+MAX_VOL=$(adb shell media volume --stream 3 2>/dev/null | grep -oP '(?<=max: )\d+' || echo "")
+if [ -n "$MAX_VOL" ]; then
+    adb shell media volume --stream 3 --set "$MAX_VOL" 2>/dev/null && echo "Media volume set to max ($MAX_VOL)" || true
+fi
+
 echo "Done."

@@ -5,6 +5,7 @@ import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.media.AudioManager;
 import android.os.UserManager;
 import android.util.Log;
 
@@ -48,6 +49,12 @@ public class BootReceiver extends BroadcastReceiver {
             Log.e(TAG, "Not device owner, cannot apply restrictions");
             return;
         }
+
+        // Set media volume to max before locking it
+        AudioManager am = context.getSystemService(AudioManager.class);
+        int maxVol = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+        am.setStreamVolume(AudioManager.STREAM_MUSIC, maxVol, 0);
+        Log.i(TAG, "Media volume set to max: " + maxVol);
 
         // Apply user restrictions
         for (String restriction : USER_RESTRICTIONS) {
