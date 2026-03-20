@@ -21,16 +21,12 @@ else
 fi
 ps aux | grep -E "[a]play"               >/dev/null && ok "aplay (playback)" || info "aplay not running"
 
-# Show bt-reconnect state via supervisorctl
-RECON=$(supervisorctl status bt-reconnect 2>/dev/null || true)
-if echo "$RECON" | grep -q "RUNNING"; then
-    ok  "bt-reconnect: $(echo "$RECON" | awk '{print $2, $3, $4, $5}')"
-elif echo "$RECON" | grep -q "EXITED\|STOPPED"; then
-    info "bt-reconnect: completed ($(echo "$RECON" | awk '{print $2, $3, $4, $5}'))"
-elif echo "$RECON" | grep -q "STARTING"; then
-    info "bt-reconnect: starting..."
+RECON_PID=$(pgrep -f "bluetooth-connect.sh" 2>/dev/null || true)
+if [ -n "$RECON_PID" ]; then
+    RECON_SECS=$(ps -o etimes= -p "$RECON_PID" 2>/dev/null | tr -d ' ' || echo "?")
+    ok "bt-reconnect: running (${RECON_SECS}s)"
 else
-    info "bt-reconnect: $RECON"
+    info "bt-reconnect: idle"
 fi
 
 echo
