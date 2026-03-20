@@ -17,15 +17,100 @@ use tokio::{
     sync::{broadcast, Mutex},
 };
 
-const SAMPLE_RATE: u32 = 44100;
-const CHANNELS: u16 = 1;
 const FRAME_SIZE: usize = 4096; // bytes per PCM frame sent over WebSocket
+
+#[derive(Clone)]
+struct AudioConfig {
+    backend: String, // "alsa" or "bluetooth"
+    sample_rate: u32,
+    channels: u16,
+    capture_cmd: Vec<String>,
+    playback_cmd: Vec<String>,
+    mp3_cmd: String,
+}
+
+impl AudioConfig {
+    fn from_env() -> Self {
+        let backend = env::var("AUDIO_BACKEND").unwrap_or_else(|_| "alsa".into());
+
+        match backend.as_str() {
+            "bluetooth" => {
+                // HFP via BlueALSA. mSBC codec runs at 16kHz (wideband).
+                // BlueALSA exposes a standard ALSA device named "bluealsa".
+                let sample_rate = 16000u32;
+                let channels = 1u16;
+                // Device format: "bluealsa:DEV=AA:BB:CC:DD:EE:FF,PROFILE=sco"
+                // Default uses first connected device; override with BLUEALSA_DEVICE.
+                let device = env::var("BLUEALSA_DEVICE")
+                    .unwrap_or_else(|_| "bluealsa:DEV=00:00:00:00:00:00,PROFILE=sco".into());
+                AudioConfig {
+                    backend: "bluetooth".into(),
+                    sample_rate,
+                    channels,
+                    capture_cmd: vec![
+                        "arecord".into(),
+                        "-D".into(), device.clone(),
+                        "-f".into(), "S16_LE".into(),
+                        "-r".into(), sample_rate.to_string(),
+                        "-c".into(), channels.to_string(),
+                        "-t".into(), "raw".into(),
+                    ],
+                    playback_cmd: vec![
+                        "aplay".into(),
+                        "-D".into(), device.clone(),
+                        "-f".into(), "S16_LE".into(),
+                        "-r".into(), sample_rate.to_string(),
+                        "-c".into(), channels.to_string(),
+                        "-t".into(), "raw".into(),
+                    ],
+                    mp3_cmd: format!(
+                        "arecord -D {device} -f S16_LE -r {sample_rate} -c {channels} -t raw | lame -r -s 16 -m m --bitrate 32 - -"
+                    ),
+                }
+            }
+            _ => {
+                let sample_rate = 44100;
+                let channels = 1;
+                let capture_device = env::var("ALSA_CAPTURE_DEVICE")
+                    .unwrap_or_else(|_| "plughw:Device,0".into());
+                let playback_device = env::var("ALSA_PLAYBACK_DEVICE")
+                    .unwrap_or_else(|_| "plughw:Device,0".into());
+                AudioConfig {
+                    backend: "alsa".into(),
+                    sample_rate,
+                    channels,
+                    capture_cmd: vec![
+                        "arecord".into(),
+                        "-D".into(), capture_device.clone(),
+                        "-f".into(), "S16_LE".into(),
+                        "-r".into(), sample_rate.to_string(),
+                        "-c".into(), channels.to_string(),
+                        "-t".into(), "raw".into(),
+                    ],
+                    playback_cmd: vec![
+                        "aplay".into(),
+                        "-D".into(), playback_device,
+                        "-f".into(), "S16_LE".into(),
+                        "-r".into(), sample_rate.to_string(),
+                        "-c".into(), channels.to_string(),
+                        "-t".into(), "raw".into(),
+                    ],
+                    mp3_cmd: format!(
+                        "arecord -D {capture_device} -f S16_LE -r {sample_rate} -c {channels} -t raw | lame -r -s 44.1 -m m --bitrate 128 - -"
+                    ),
+                }
+            }
+        }
+    }
+}
 
 struct AppState {
     /// Broadcast channel for captured audio (Pi mic → clients)
     capture_tx: broadcast::Sender<Vec<u8>>,
     /// Mutex protecting the single playback sender slot
     playback_owner: Mutex<Option<u64>>,
+    /// Audio configuration
+    audio_config: AudioConfig,
 }
 
 #[tokio::main]
@@ -35,16 +120,20 @@ async fn main() {
         .and_then(|v| v.parse().ok())
         .unwrap_or(8080);
 
+    let audio_config = AudioConfig::from_env();
+    eprintln!("Audio backend: {} ({}Hz, {}ch)", audio_config.backend, audio_config.sample_rate, audio_config.channels);
+
     let (capture_tx, _) = broadcast::channel::<Vec<u8>>(64);
 
     let state = Arc::new(AppState {
         capture_tx: capture_tx.clone(),
         playback_owner: Mutex::new(None),
+        audio_config: audio_config.clone(),
     });
 
-    // Spawn the capture task (arecord → broadcast)
-    let capture_device = env::var("ALSA_CAPTURE_DEVICE").unwrap_or_else(|_| "plughw:Device,0".into());
-    tokio::spawn(capture_audio(capture_device, capture_tx));
+    // Spawn the capture task
+    let capture_cmd = audio_config.capture_cmd.clone();
+    tokio::spawn(capture_audio(capture_cmd, capture_tx));
 
     let app = Router::new()
         .route("/", get(index_handler))
@@ -53,8 +142,8 @@ async fn main() {
             move |ws| ws_handler(ws, state)
         }))
         .route("/audio", get({
-            let capture_device = env::var("ALSA_CAPTURE_DEVICE").unwrap_or_else(|_| "plughw:Device,0".into());
-            move || mp3_stream_handler(capture_device)
+            let mp3_cmd = audio_config.mp3_cmd.clone();
+            move || mp3_stream_handler(mp3_cmd)
         }));
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
@@ -80,25 +169,19 @@ async fn main() {
     }
 }
 
-/// Continuously capture from ALSA and broadcast PCM to all subscribers
-async fn capture_audio(device: String, tx: broadcast::Sender<Vec<u8>>) {
+/// Continuously capture audio and broadcast PCM to all subscribers
+async fn capture_audio(cmd: Vec<String>, tx: broadcast::Sender<Vec<u8>>) {
     loop {
-        eprintln!("Starting arecord on {device}");
-        let mut child = match Command::new("arecord")
-            .args([
-                "-D", &device,
-                "-f", "S16_LE",
-                "-r", &SAMPLE_RATE.to_string(),
-                "-c", &CHANNELS.to_string(),
-                "-t", "raw",
-            ])
+        eprintln!("Starting capture: {:?}", cmd);
+        let mut child = match Command::new(&cmd[0])
+            .args(&cmd[1..])
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
         {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("Failed to start arecord: {e}");
+                eprintln!("Failed to start capture: {e}");
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 continue;
             }
@@ -110,7 +193,6 @@ async fn capture_audio(device: String, tx: broadcast::Sender<Vec<u8>>) {
         loop {
             match stdout.read_exact(&mut buf).await {
                 Ok(_) => {
-                    // Ignore send errors (no receivers)
                     let _ = tx.send(buf.clone());
                 }
                 Err(_) => break,
@@ -118,7 +200,7 @@ async fn capture_audio(device: String, tx: broadcast::Sender<Vec<u8>>) {
         }
 
         let _ = child.kill().await;
-        eprintln!("arecord exited, restarting in 2s");
+        eprintln!("Capture exited, restarting in 2s");
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
 }
@@ -141,6 +223,13 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
     let (mut ws_tx, mut ws_rx) = socket.split();
     let mut capture_rx = state.capture_tx.subscribe();
 
+    // Send config message so the client knows the sample rate
+    let config_msg = format!(
+        r#"{{"type":"config","sampleRate":{},"channels":{}}}"#,
+        state.audio_config.sample_rate, state.audio_config.channels
+    );
+    let _ = ws_tx.send(Message::Text(config_msg.into())).await;
+
     // Task: send captured audio to this client
     let send_task = tokio::spawn(async move {
         while let Ok(data) = capture_rx.recv().await {
@@ -150,11 +239,11 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
         }
     });
 
-    // Task: receive mic audio from this client → aplay
-    let playback_device = env::var("ALSA_PLAYBACK_DEVICE").unwrap_or_else(|_| "plughw:Device,0".into());
+    // Task: receive mic audio from this client → playback
+    let playback_cmd = state.audio_config.playback_cmd.clone();
     let state_clone = state.clone();
     let recv_task = tokio::spawn(async move {
-        let mut aplay: Option<tokio::process::Child> = None;
+        let mut player: Option<tokio::process::Child> = None;
         let mut is_owner = false;
 
         while let Some(Ok(msg)) = ws_rx.next().await {
@@ -167,39 +256,31 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
                         is_owner = true;
                         eprintln!("Client {client_id} claimed playback");
                     } else {
-                        // Someone else owns playback, ignore
                         continue;
                     }
                 }
 
-                // Start aplay if not running
-                if aplay.is_none() {
-                    match Command::new("aplay")
-                        .args([
-                            "-D", &playback_device,
-                            "-f", "S16_LE",
-                            "-r", &SAMPLE_RATE.to_string(),
-                            "-c", &CHANNELS.to_string(),
-                            "-t", "raw",
-                        ])
+                // Start playback if not running
+                if player.is_none() {
+                    match Command::new(&playback_cmd[0])
+                        .args(&playback_cmd[1..])
                         .stdin(Stdio::piped())
                         .stderr(Stdio::null())
                         .spawn()
                     {
-                        Ok(child) => aplay = Some(child),
+                        Ok(child) => player = Some(child),
                         Err(e) => {
-                            eprintln!("Failed to start aplay: {e}");
+                            eprintln!("Failed to start playback: {e}");
                             continue;
                         }
                     }
                 }
 
-                if let Some(ref mut child) = aplay {
+                if let Some(ref mut child) = player {
                     if let Some(ref mut stdin) = child.stdin {
                         if stdin.write_all(&data).await.is_err() {
-                            // aplay died, will restart on next frame
                             let _ = child.kill().await;
-                            aplay = None;
+                            player = None;
                         }
                     }
                 }
@@ -215,12 +296,11 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
             }
         }
 
-        if let Some(mut child) = aplay {
+        if let Some(mut child) = player {
             let _ = child.kill().await;
         }
     });
 
-    // Wait for either task to finish (client disconnect)
     tokio::select! {
         _ = send_task => {},
         _ = recv_task => {},
@@ -230,16 +310,10 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
 }
 
 /// Stream MP3 audio via HTTP (for VLC/ffplay)
-async fn mp3_stream_handler(capture_device: String) -> Response {
+async fn mp3_stream_handler(mp3_cmd: String) -> Response {
     let stream = async_stream::stream! {
         let mut child = match Command::new("bash")
-            .args([
-                "-c",
-                &format!(
-                    "arecord -D {} -f S16_LE -r {} -c {} -t raw | lame -r -s 44.1 -m m --bitrate 128 - -",
-                    capture_device, SAMPLE_RATE, CHANNELS
-                ),
-            ])
+            .args(["-c", &mp3_cmd])
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()

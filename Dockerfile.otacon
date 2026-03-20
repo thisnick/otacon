@@ -72,6 +72,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Audio
     alsa-utils \
     lame \
+    # Bluetooth audio (HFP HF via BlueALSA)
+    bluez \
+    dbus \
+    bluez-alsa-utils \
+    rfkill \
+    procps \
+    python3-dbus \
+    python3-gi \
     && rm -rf /var/lib/apt/lists/*
 
 # scrcpy
@@ -105,10 +113,20 @@ ENV GNIREHTET_DNS=8.8.8.8,8.8.4.4
 ENV AUDIO_PORT=8080
 ENV ALSA_CAPTURE_DEVICE=plughw:Device,0
 ENV ALSA_PLAYBACK_DEVICE=plughw:Device,0
+ENV AUDIO_BACKEND=alsa
 
-COPY config/supervisord-otacon.conf /etc/supervisor/conf.d/otacon.conf
+COPY config/supervisord-base.conf /etc/supervisor/conf.d/supervisord-base.conf
+COPY config/supervisord-bluetooth.conf /etc/supervisor/conf.d/supervisord-bluetooth.conf
+COPY config/bluetooth-main.conf /etc/bluetooth/main.conf
+COPY scripts/bluetooth-agent.py /opt/bluetooth-agent.py
+COPY scripts/bluetooth-pair.sh /opt/bluetooth-pair.sh
+COPY scripts/bluetooth-connect.sh /opt/bluetooth-connect.sh
+COPY scripts/bluetooth-status.sh /opt/bluetooth-status.sh
 COPY scripts/otacon-entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+RUN chmod +x /entrypoint.sh /opt/bluetooth-pair.sh /opt/bluetooth-agent.py \
+    /opt/bluetooth-status.sh /opt/bluetooth-connect.sh
+
+RUN mkdir -p /run/dbus
 
 EXPOSE 5900 8080
 

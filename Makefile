@@ -1,5 +1,6 @@
 .PHONY: build up down logs push provision deploy-docker setup-pi \
-       phone-setup phone-reset health pigen pigen-flash pigen-config
+       phone-setup phone-reset health pigen pigen-flash pigen-config \
+       bluetooth-pair bluetooth-connect bluetooth-status bluetooth-watch
 
 PI_HOST ?= otacon-pi
 PI_USER ?= nick
@@ -60,6 +61,18 @@ pigen-flash:
 	@echo "Usage: make pigen-flash DEVICE=/dev/sdX"
 	@test -n "$(DEVICE)" || (echo "ERROR: Set DEVICE="; exit 1)
 	bash pigen/build.sh flash $(DEVICE)
+
+bluetooth-pair:
+	$(SSH_CMD) "cd $(REMOTE_DIR) && docker compose exec otacon /opt/bluetooth-pair.sh"
+
+bluetooth-connect:
+	$(SSH_CMD) "cd $(REMOTE_DIR) && docker compose exec otacon /opt/bluetooth-connect.sh"
+
+bluetooth-status:
+	$(SSH_CMD) "cd $(REMOTE_DIR) && docker compose exec otacon /opt/bluetooth-status.sh"
+
+bluetooth-watch:
+	$(SSH_CMD) -t "watch -n 2 'cd $(REMOTE_DIR) && docker compose exec -T otacon /opt/bluetooth-status.sh'"
 
 pigen-config:
 	@test -n "$(DEVICE)" || (echo "ERROR: Set DEVICE= to boot partition mount point"; exit 1)

@@ -49,5 +49,15 @@ if ! adb shell pm list packages | grep -q com.genymobile.gnirehtet; then
     adb install -r /usr/local/share/gnirehtet.apk
 fi
 
-# Start supervisord (manages Xvnc, scrcpy, gnirehtet, audio-server)
-exec /usr/bin/supervisord -c /etc/supervisor/conf.d/otacon.conf
+# Build supervisor config based on audio backend
+cp /etc/supervisor/conf.d/supervisord-base.conf /tmp/supervisord.conf
+if [ "$AUDIO_BACKEND" = "bluetooth" ]; then
+    echo "Audio backend: Bluetooth HFP (BlueALSA)"
+    cat /etc/supervisor/conf.d/supervisord-bluetooth.conf >> /tmp/supervisord.conf
+    rfkill unblock bluetooth || true
+else
+    echo "Audio backend: ALSA (cable)"
+fi
+
+# Start supervisord
+exec /usr/bin/supervisord -c /tmp/supervisord.conf

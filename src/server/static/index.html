@@ -42,8 +42,9 @@
 </div>
 
 <script>
-const SAMPLE_RATE = 44100;
-const CHANNELS = 1;
+// Defaults — overridden by server config message
+let SAMPLE_RATE = 44100;
+let CHANNELS = 1;
 const FRAME_SIZE = 4096;
 
 let ws = null;
@@ -75,6 +76,19 @@ function connect() {
   ws.onerror = () => setStatus('Connection error', 'error');
 
   ws.onmessage = (e) => {
+    // Handle text config messages from server
+    if (typeof e.data === 'string') {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'config') {
+          SAMPLE_RATE = msg.sampleRate || SAMPLE_RATE;
+          CHANNELS = msg.channels || CHANNELS;
+          console.log(`Audio config: ${SAMPLE_RATE}Hz, ${CHANNELS}ch`);
+        }
+      } catch (_) {}
+      return;
+    }
+
     if (!listening || !audioCtx) return;
     const pcm = new Int16Array(e.data);
     const float = new Float32Array(pcm.length);
@@ -87,7 +101,6 @@ function connect() {
     const source = audioCtx.createBufferSource();
     source.buffer = buffer;
     source.connect(audioCtx.destination);
-    // Schedule playback; use a simple queue based on frame timing
     if (!connect._nextTime || connect._nextTime < audioCtx.currentTime) {
       connect._nextTime = audioCtx.currentTime + 0.05;
     }
@@ -124,7 +137,6 @@ async function toggleMic() {
       const ctx = new AudioContext({ sampleRate: SAMPLE_RATE });
       const source = ctx.createMediaStreamSource(micStream);
 
-      // ScriptProcessorNode for PCM extraction (simple, widely supported)
       micProcessor = ctx.createScriptProcessor(FRAME_SIZE / 2, 1, 1);
       micProcessor._ctx = ctx;
       micProcessor.onaudioprocess = (e) => {

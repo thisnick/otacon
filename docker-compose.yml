@@ -13,6 +13,7 @@ services:
       - /dev/snd:/dev/snd
       - /etc/tailscale/certs:/certs:ro
       - ${HOME}/.android:/root/.android:ro
+      - bt-data:/var/lib/bluetooth
     environment:
       - DISPLAY_NUM=${DISPLAY_NUM:-50}
       - DISPLAY_RESOLUTION=${DISPLAY_RESOLUTION:-540x1204}
@@ -25,6 +26,7 @@ services:
       - AUDIO_PORT=${AUDIO_PORT:-8080}
       - ALSA_CAPTURE_DEVICE=${ALSA_CAPTURE_DEVICE:-plughw:Device,0}
       - ALSA_PLAYBACK_DEVICE=${ALSA_PLAYBACK_DEVICE:-plughw:Device,0}
+      - AUDIO_BACKEND=${AUDIO_BACKEND:-alsa}
 
   watchtower:
     image: containrrr/watchtower:latest
@@ -37,3 +39,6 @@ services:
       - WATCHTOWER_POLL_INTERVAL=${WATCHTOWER_POLL_INTERVAL:-300}
       - WATCHTOWER_INCLUDE_STOPPED=false
       - DOCKER_CONFIG=/config.json
+
+volumes:
+  bt-data:

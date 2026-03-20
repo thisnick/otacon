@@ -30,9 +30,10 @@ provision() {
 }
 
 deploy_compose() {
-    echo "Syncing docker-compose.yml and .env..."
-    ssh "${REMOTE}" "mkdir -p ${REMOTE_DIR}"
+    echo "Syncing docker-compose.yml, .env, and scripts..."
+    ssh "${REMOTE}" "mkdir -p ${REMOTE_DIR}/scripts"
     rsync -az docker-compose.yml "${REMOTE}:${REMOTE_DIR}/docker-compose.yml"
+    rsync -az scripts/ "${REMOTE}:${REMOTE_DIR}/scripts/"
     # Filter .env to Pi-relevant vars (exclude Mac-only and Tailscale vars)
     grep -Ev '^(PI_HOST|PI_USER|TS_AUTH_KEY)=' .env \
         | grep -Ev '^\s*#|^\s*$' \

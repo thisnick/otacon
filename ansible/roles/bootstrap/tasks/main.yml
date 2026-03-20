@@ -51,6 +51,14 @@
     state: started
   when: not pigen_chroot
 
+- name: Disable host Bluetooth service (managed by Docker)
+  systemd:
+    name: bluetooth
+    enabled: false
+    state: stopped
+  when: not pigen_chroot
+  ignore_errors: true
+
 - name: Disable WiFi kernel module
   copy:
     dest: /etc/modprobe.d/disable-wifi.conf
