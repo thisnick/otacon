@@ -15,6 +15,7 @@ done
 
 bluetoothctl power on
 sleep 1
+bluetoothctl discoverable on
 
 PI_BT_MAC=$(bluetoothctl show | grep "Controller" | awk '{print $2}')
 [ -z "$PI_BT_MAC" ] && echo "ERROR: No Bluetooth adapter" && exit 1
@@ -41,6 +42,7 @@ if bluetoothctl info "$PHONE_BT_MAC" 2>/dev/null | grep -q "Paired: yes"; then
     bluetoothctl trust "$PHONE_BT_MAC"
     CONNECT_OUT=$(bluetoothctl connect "$PHONE_BT_MAC" 2>&1 || true)
     if echo "$CONNECT_OUT" | grep -qi "successful\|already connected"; then
+        bluetoothctl discoverable off
         echo "Connected. bt-agent will activate HFP profile."
         exit 0
     else
@@ -91,4 +93,5 @@ sleep 1
 echo "Connecting to $PHONE_BT_MAC..."
 bluetoothctl connect "$PHONE_BT_MAC" || true
 
+bluetoothctl discoverable off
 echo "Pair complete. bt-agent will activate headset_head_unit profile."
