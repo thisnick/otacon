@@ -43,6 +43,17 @@ export DISPLAY_RESOLUTION="${DISPLAY_W}x${DISPLAY_H}"
 export DISPLAY=:${DISPLAY_NUM}
 echo "Display resolution: ${DISPLAY_RESOLUTION}"
 
+# Auto-detect phone Bluetooth MAC from ADB and set BLUEALSA_DEVICE
+if [ "$AUDIO_BACKEND" = "bluetooth" ]; then
+    PHONE_BT_MAC=$(adb shell settings get secure bluetooth_address 2>/dev/null | tr -d '\r')
+    if [ -n "$PHONE_BT_MAC" ] && [ "$PHONE_BT_MAC" != "null" ]; then
+        export BLUEALSA_DEVICE="bluealsa:DEV=${PHONE_BT_MAC},PROFILE=sco"
+        echo "BLUEALSA_DEVICE auto-detected: $BLUEALSA_DEVICE"
+    else
+        echo "WARNING: Could not detect phone BT MAC via ADB"
+    fi
+fi
+
 # Connect phone to Pi's WiFi AP
 if [ -n "${WIFI_AP_SSID:-}" ]; then
     echo "Connecting phone to WiFi AP '${WIFI_AP_SSID}'..."
