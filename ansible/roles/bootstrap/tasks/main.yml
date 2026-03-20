@@ -59,6 +59,15 @@
   when: not pigen_chroot
   ignore_errors: true
 
+- name: Stop NetworkManager from managing wlan0 (Docker container owns it as AP)
+  copy:
+    dest: /etc/NetworkManager/conf.d/unmanaged-wlan0.conf
+    content: |
+      [keyfile]
+      unmanaged-devices=interface-name:wlan0
+    mode: "0644"
+  notify: restart NetworkManager
+
 - name: Add udev rules for Android USB devices
   copy:
     dest: /etc/udev/rules.d/51-android.rules

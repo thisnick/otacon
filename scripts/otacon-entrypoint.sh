@@ -67,9 +67,11 @@ if [ -n "${WIFI_AP_SSID:-}" ]; then
 interface=wlan0
 driver=nl80211
 ssid=${WIFI_AP_SSID}
+country_code=US
 hw_mode=g
 channel=6
-wmm_enabled=0
+ieee80211n=1
+wmm_enabled=1
 auth_algs=1
 wpa=2
 wpa_passphrase=${WIFI_AP_PASSWORD}
@@ -87,8 +89,13 @@ server=8.8.8.8
 server=8.8.4.4
 EOF
 
-    ip link set wlan0 up || true
+    # Disconnect from any existing WiFi and take exclusive control of wlan0
+    pkill wpa_supplicant || true
+    sleep 1
+    dhcpcd --release wlan0 2>/dev/null || true
+    ip link set wlan0 down || true
     ip addr flush dev wlan0 || true
+    ip link set wlan0 up || true
     ip addr add 10.42.0.1/24 dev wlan0 || true
 
     sysctl -w net.ipv4.ip_forward=1

@@ -16,5 +16,9 @@ TS_AUTH_KEY=tskey-auth-xxxxx
 # Optional: Docker image repo (otacon-dev for dev, otacon for prod)
 #OTACON_REPO=otacon-dev
 
+# Optional: WiFi AP (Pi creates hotspot for phone — bypasses network proxy)
+#WIFI_AP_SSID=OtaconAP
+#WIFI_AP_PASSWORD=
+
 # Optional: Disable traditional SSH (Tailscale SSH replaces it)
 #TS_DISABLE_SSH=true

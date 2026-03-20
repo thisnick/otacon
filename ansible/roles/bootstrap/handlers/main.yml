@@ -7,3 +7,10 @@
   systemd:
     daemon_reload: true
   when: not pigen_chroot
+
+- name: restart NetworkManager
+  systemd:
+    name: NetworkManager
+    state: restarted
+  when: not pigen_chroot
+  ignore_errors: true
