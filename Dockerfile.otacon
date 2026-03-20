@@ -99,12 +99,13 @@ COPY config/supervisord-base.conf /etc/supervisor/conf.d/supervisord-base.conf
 COPY config/supervisord-bluetooth.conf /etc/supervisor/conf.d/supervisord-bluetooth.conf
 COPY config/bluetooth-main.conf /etc/bluetooth/main.conf
 COPY scripts/bluetooth-agent.py /opt/bluetooth-agent.py
+COPY scripts/bt-reconnect.py /opt/bt-reconnect.py
 COPY scripts/bluetooth-pair.sh /opt/bluetooth-pair.sh
 COPY scripts/bluetooth-connect.sh /opt/bluetooth-connect.sh
 COPY scripts/bluetooth-status.sh /opt/bluetooth-status.sh
 COPY scripts/otacon-entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh /opt/bluetooth-pair.sh /opt/bluetooth-agent.py \
-    /opt/bluetooth-status.sh /opt/bluetooth-connect.sh
+    /opt/bt-reconnect.py /opt/bluetooth-status.sh /opt/bluetooth-connect.sh
 
 RUN mkdir -p /run/dbus /etc/hostapd
 
