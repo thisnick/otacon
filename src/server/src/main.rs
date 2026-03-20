@@ -19,14 +19,34 @@ use tokio::{
 
 const FRAME_SIZE: usize = 4096; // bytes per PCM frame sent over WebSocket
 
+#[derive(Clone, Debug)]
+enum AudioBackend { Alsa, Bluetooth }
+
+impl std::fmt::Display for AudioBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self { AudioBackend::Alsa => write!(f, "alsa"), AudioBackend::Bluetooth => write!(f, "bluetooth") }
+    }
+}
+
 #[derive(Clone)]
 struct AudioConfig {
-    backend: String, // "alsa" or "bluetooth"
+    backend: AudioBackend,
     sample_rate: u32,
     channels: u16,
     capture_cmd: Vec<String>,
     playback_cmd: Vec<String>,
     mp3_cmd: String,
+}
+
+fn alsa_cmd(tool: &str, device: &str, rate: u32, channels: u16) -> Vec<String> {
+    vec![
+        tool.into(),
+        "-D".into(), device.into(),
+        "-f".into(), "S16_LE".into(),
+        "-r".into(), rate.to_string(),
+        "-c".into(), channels.to_string(),
+        "-t".into(), "raw".into(),
+    ]
 }
 
 impl AudioConfig {
@@ -44,57 +64,29 @@ impl AudioConfig {
                 let device = env::var("BLUEALSA_DEVICE")
                     .unwrap_or_else(|_| "bluealsa:DEV=00:00:00:00:00:00,PROFILE=sco".into());
                 AudioConfig {
-                    backend: "bluetooth".into(),
+                    backend: AudioBackend::Bluetooth,
                     sample_rate,
                     channels,
-                    capture_cmd: vec![
-                        "arecord".into(),
-                        "-D".into(), device.clone(),
-                        "-f".into(), "S16_LE".into(),
-                        "-r".into(), sample_rate.to_string(),
-                        "-c".into(), channels.to_string(),
-                        "-t".into(), "raw".into(),
-                    ],
-                    playback_cmd: vec![
-                        "aplay".into(),
-                        "-D".into(), device.clone(),
-                        "-f".into(), "S16_LE".into(),
-                        "-r".into(), sample_rate.to_string(),
-                        "-c".into(), channels.to_string(),
-                        "-t".into(), "raw".into(),
-                    ],
+                    capture_cmd: alsa_cmd("arecord", &device, sample_rate, channels),
+                    playback_cmd: alsa_cmd("aplay", &device, sample_rate, channels),
                     mp3_cmd: format!(
                         "arecord -D {device} -f S16_LE -r {sample_rate} -c {channels} -t raw | lame -r -s 16 -m m --bitrate 32 - -"
                     ),
                 }
             }
             _ => {
-                let sample_rate = 44100;
-                let channels = 1;
+                let sample_rate = 44100u32;
+                let channels = 1u16;
                 let capture_device = env::var("ALSA_CAPTURE_DEVICE")
                     .unwrap_or_else(|_| "plughw:Device,0".into());
                 let playback_device = env::var("ALSA_PLAYBACK_DEVICE")
                     .unwrap_or_else(|_| "plughw:Device,0".into());
                 AudioConfig {
-                    backend: "alsa".into(),
+                    backend: AudioBackend::Alsa,
                     sample_rate,
                     channels,
-                    capture_cmd: vec![
-                        "arecord".into(),
-                        "-D".into(), capture_device.clone(),
-                        "-f".into(), "S16_LE".into(),
-                        "-r".into(), sample_rate.to_string(),
-                        "-c".into(), channels.to_string(),
-                        "-t".into(), "raw".into(),
-                    ],
-                    playback_cmd: vec![
-                        "aplay".into(),
-                        "-D".into(), playback_device,
-                        "-f".into(), "S16_LE".into(),
-                        "-r".into(), sample_rate.to_string(),
-                        "-c".into(), channels.to_string(),
-                        "-t".into(), "raw".into(),
-                    ],
+                    capture_cmd: alsa_cmd("arecord", &capture_device, sample_rate, channels),
+                    playback_cmd: alsa_cmd("aplay", &playback_device, sample_rate, channels),
                     mp3_cmd: format!(
                         "arecord -D {capture_device} -f S16_LE -r {sample_rate} -c {channels} -t raw | lame -r -s 44.1 -m m --bitrate 128 - -"
                     ),
@@ -125,14 +117,16 @@ async fn main() {
 
     let (capture_tx, _) = broadcast::channel::<Vec<u8>>(64);
 
+    // Extract fields needed by spawned tasks before moving audio_config into state
+    let capture_cmd = audio_config.capture_cmd.clone();
+    let mp3_cmd = audio_config.mp3_cmd.clone();
+
     let state = Arc::new(AppState {
         capture_tx: capture_tx.clone(),
         playback_owner: Mutex::new(None),
-        audio_config: audio_config.clone(),
+        audio_config,
     });
 
-    // Spawn the capture task
-    let capture_cmd = audio_config.capture_cmd.clone();
     tokio::spawn(capture_audio(capture_cmd, capture_tx));
 
     let app = Router::new()
@@ -142,7 +136,6 @@ async fn main() {
             move |ws| ws_handler(ws, state)
         }))
         .route("/audio", get({
-            let mp3_cmd = audio_config.mp3_cmd.clone();
             move || mp3_stream_handler(mp3_cmd)
         }));
 
@@ -153,19 +146,19 @@ async fn main() {
     let cert_path = format!("{cert_dir}/otacon-pi.crt");
     let key_path = format!("{cert_dir}/otacon-pi.key");
 
-    if std::path::Path::new(&cert_path).exists() && std::path::Path::new(&key_path).exists() {
-        eprintln!("Audio server listening on https://{addr} (TLS)");
-        let tls_config = axum_server::tls_rustls::RustlsConfig::from_pem_file(&cert_path, &key_path)
-            .await
-            .expect("Failed to load TLS certs");
-        axum_server::bind_rustls(addr, tls_config)
-            .serve(app.into_make_service())
-            .await
-            .unwrap();
-    } else {
-        eprintln!("No TLS certs found at {cert_dir}, listening on http://{addr}");
-        let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-        axum::serve(listener, app).await.unwrap();
+    match axum_server::tls_rustls::RustlsConfig::from_pem_file(&cert_path, &key_path).await {
+        Ok(tls_config) => {
+            eprintln!("Audio server listening on https://{addr} (TLS)");
+            axum_server::bind_rustls(addr, tls_config)
+                .serve(app.into_make_service())
+                .await
+                .unwrap();
+        }
+        Err(_) => {
+            eprintln!("No TLS certs found at {cert_dir}, listening on http://{addr}");
+            let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+            axum::serve(listener, app).await.unwrap();
+        }
     }
 }
 

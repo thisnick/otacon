@@ -17,8 +17,8 @@ echo
 echo "=== BT Connection ==="
 CONN=$(bluetoothctl devices 2>/dev/null | head -1 | awk '{print $2}')
 if [ -n "$CONN" ]; then
-    bluetoothctl info "$CONN" 2>/dev/null \
-        | grep -E "Name|Connected|Paired|Trusted|ServicesResolved|UUIDs" | sed 's/^/  /'
+    BT_INFO=$(bluetoothctl info "$CONN" 2>/dev/null)
+    echo "$BT_INFO" | grep -E "Name|Connected|Paired|Trusted|ServicesResolved" | sed 's/^/  /'
 else
     info "No paired devices found"
 fi
@@ -26,15 +26,14 @@ fi
 echo
 echo "=== HFP Profile Check ==="
 if [ -n "$CONN" ]; then
-    UUIDS=$(bluetoothctl info "$CONN" 2>/dev/null | grep -A999 "UUID" | grep "UUID" || true)
+    UUIDS=$(echo "$BT_INFO" | grep "UUID")
     echo "$UUIDS" | grep -q "Handsfree"    && ok "HFP HF registered (phone sees us as headset)" \
                                            || fail "HFP HF NOT in UUID list — phone won't route audio"
     echo "$UUIDS" | grep -q "0000111e"     && ok "UUID 0x111e (HFP) confirmed" \
                                            || info "UUID 0x111e not listed"
     echo "$UUIDS" | grep -q "0000110b\|Advanced Audio" && info "A2DP sink also present" || true
-    # Show all UUIDs for reference
     echo "  UUIDs from phone:"
-    bluetoothctl info "$CONN" 2>/dev/null | grep "UUID" | sed 's/^/    /'
+    echo "$UUIDS" | sed 's/^/    /'
 fi
 
 echo
