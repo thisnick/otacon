@@ -37,7 +37,23 @@ COPY src/server/src/ ./src/
 COPY src/server/static/ ./static/
 RUN cargo build --release
 
-# Stage 3: Runtime
+# Stage 3: Build device owner APK
+# Force linux/amd64 — Android build tools (AAPT2) are x86_64 only
+FROM --platform=linux/amd64 eclipse-temurin:17-jdk AS apk-builder
+ENV ANDROID_HOME=/opt/android-sdk
+RUN apt-get update && apt-get install -y --no-install-recommends wget unzip \
+    && mkdir -p ${ANDROID_HOME}/cmdline-tools \
+    && wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O /tmp/tools.zip \
+    && unzip -q /tmp/tools.zip -d ${ANDROID_HOME}/cmdline-tools \
+    && mv ${ANDROID_HOME}/cmdline-tools/cmdline-tools ${ANDROID_HOME}/cmdline-tools/latest \
+    && yes | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 \
+    && ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager "platforms;android-34" "build-tools;34.0.0" \
+    && rm -rf /tmp/tools.zip /var/lib/apt/lists/*
+WORKDIR /src/android
+COPY android/device-owner/ .
+RUN chmod +x gradlew && ./gradlew assembleRelease --no-daemon
+
+# Stage 4: Runtime
 FROM debian:trixie-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -79,6 +95,9 @@ COPY --from=scrcpy-builder /usr/local/share/scrcpy/ /usr/local/share/scrcpy/
 
 # Audio server
 COPY --from=audio-builder /src/server/target/release/otacon-server /usr/local/bin/otacon-server
+
+# Device owner APK (for auto-provisioning)
+COPY --from=apk-builder /src/android/app/build/outputs/apk/release/app-release-unsigned.apk /opt/otacon-kiosk.apk
 
 ENV PATH="/usr/lib/android-sdk/platform-tools:${PATH}"
 ENV DISPLAY_NUM=50

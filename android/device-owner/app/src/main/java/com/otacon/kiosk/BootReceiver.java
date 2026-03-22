@@ -66,9 +66,7 @@ public class BootReceiver extends BroadcastReceiver {
         dpm.setCameraDisabled(admin, true);
         Log.i(TAG, "Camera disabled");
 
-        // Disable WiFi and Bluetooth
-        dpm.setWifiEnabled(admin, false);
-        Log.i(TAG, "WiFi disabled");
+        // WiFi is controlled via DISALLOW_CONFIG_WIFI restriction above
 
         Log.i(TAG, "All restrictions applied");
     }
@@ -86,7 +84,6 @@ public class BootReceiver extends BroadcastReceiver {
             dpm.clearUserRestriction(admin, restriction);
         }
         dpm.setCameraDisabled(admin, false);
-        dpm.setWifiEnabled(admin, true);
 
         Log.i(TAG, "All restrictions cleared");
     }
