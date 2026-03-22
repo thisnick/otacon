@@ -92,6 +92,26 @@ enables features not possible via ADB:
 - Server can be notified of UI changes instantly instead of re-dumping the tree
 - Enables the `/ws/events` stream for `app.foreground` changes
 
+**Smart cache invalidation (replaces brute-force TTL):**
+
+The current ADB approach invalidates the entire snapshot cache after any action and
+uses a 30s TTL. With accessibility events, invalidation becomes surgical:
+
+- **Keep the tree live in memory** — the service holds the parsed tree and patches it
+  incrementally on each event, rather than re-dumping from scratch
+- **Invalidate only affected subtrees** — a scroll in a `RecyclerView` only invalidates
+  refs inside that container. Refs outside it remain valid and usable.
+- **Know the result of our own actions** — when the server sends a tap, the accessibility
+  event tells us exactly what changed (dialog opened, checkbox toggled, list scrolled).
+  Update only the affected nodes instead of throwing everything away.
+- **Detect external changes** — if the user touches the phone or a notification pops up,
+  the event identifies what changed. Invalidate only those refs.
+- **No TTL needed** — the tree is always current because the service maintains it
+  incrementally. The server reads from the live tree whenever the agent asks.
+
+This changes the agent workflow from snapshot→act→re-snapshot (2.5s overhead per cycle)
+to act→read (near-instant, tree is already up to date).
+
 **Direct node actions (more reliable than coordinate taps):**
 - `node.performAction(AccessibilityNodeInfo.ACTION_CLICK)` — works even if element
   is partially obscured or overlapped by another window
