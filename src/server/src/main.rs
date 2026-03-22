@@ -1,3 +1,5 @@
+mod api;
+
 use axum::{
     Router,
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
@@ -108,7 +110,7 @@ impl AudioConfig {
     }
 }
 
-struct AppState {
+pub struct AppState {
     /// Broadcast channel for captured audio (Pi mic → clients)
     capture_tx: broadcast::Sender<Vec<u8>>,
     /// Broadcast channel for A2DP media audio (phone → clients)
@@ -117,6 +119,8 @@ struct AppState {
     playback_owner: Mutex<Option<u64>>,
     /// Audio configuration
     audio_config: AudioConfig,
+    /// Cached accessibility snapshot for ref lookups
+    snapshot_cache: Mutex<Option<api::snapshot::SnapshotCache>>,
 }
 
 #[tokio::main]
@@ -148,23 +152,25 @@ async fn main() {
         a2dp_tx,
         playback_owner: Mutex::new(None),
         audio_config,
+        snapshot_cache: Mutex::new(Some(api::snapshot::SnapshotCache::default())),
     });
 
     tokio::spawn(capture_audio(capture_cmd, capture_tx));
 
     let app = Router::new()
         .route("/", get(index_handler))
-        .route("/ws", get({
+        .route("/ws/audio/call", get({
             let state = state.clone();
             move |ws| ws_handler(ws, state)
         }))
-        .route("/ws/media", get({
+        .route("/ws/audio/media", get({
             let state = state.clone();
             move |ws| ws_media_handler(ws, state)
         }))
         .route("/audio", get({
             move || mp3_stream_handler(mp3_cmd)
-        }));
+        }))
+        .nest("/api", api::router(state.clone()));
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
 

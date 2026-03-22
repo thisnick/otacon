@@ -3,274 +3,721 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Otacon Audio</title>
+<title>Otacon</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
+  :root {
+    --bg: #0c0c14;
+    --surface: #13131f;
+    --border: #1e1e2e;
+    --text: #c8c8d8;
+    --text-dim: #6a6a82;
+    --text-muted: #3a3a50;
+    --accent: #6e8ff5;
+    --accent-dim: #3d4e80;
+    --green: #5cb87a;
+    --green-dim: #2a4a35;
+    --amber: #d4a054;
+    --red: #d45454;
+    --tap-flash: rgba(110, 143, 245, 0.3);
+  }
+
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #e0e0e0; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
-  .container { width: 320px; padding: 24px; }
-  h1 { font-size: 18px; margin-bottom: 16px; color: #a0a0c0; }
-  .status { font-size: 13px; margin-bottom: 20px; color: #808080; }
-  .status.connected { color: #4caf50; }
-  .status.error { color: #f44336; }
-  .controls { display: flex; flex-direction: column; gap: 12px; }
-  button { padding: 12px; border: 1px solid #333; border-radius: 6px; background: #262640; color: #e0e0e0; font-size: 14px; cursor: pointer; transition: background 0.15s; }
-  button:hover { background: #333355; }
-  button.active { background: #2e5030; border-color: #4caf50; }
-  button:disabled { opacity: 0.4; cursor: not-allowed; }
-  .level { height: 4px; background: #333; border-radius: 2px; margin-top: 4px; overflow: hidden; }
-  .level-bar { height: 100%; width: 0%; background: #4caf50; transition: width 0.05s; }
-  .section { margin-bottom: 16px; }
-  .section-label { font-size: 11px; text-transform: uppercase; color: #606080; margin-bottom: 6px; letter-spacing: 0.5px; }
+
+  body {
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .shell {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 28px 32px;
+  }
+
+  /* --- Header --- */
+  header {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  header h1 {
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+  header .dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    align-self: center;
+    transition: background 0.4s;
+  }
+  header .dot.connected { background: var(--green); }
+  header .dot.error { background: var(--red); }
+
+  /* --- Audio strip --- */
+  .audio-strip {
+    display: flex;
+    gap: 1px;
+    background: var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 20px;
+  }
+  .audio-ch {
+    flex: 1;
+    background: var(--surface);
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .ch-label {
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    min-width: 56px;
+  }
+  .ch-meter {
+    flex: 1;
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .ch-meter-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--green);
+    border-radius: 2px;
+    transition: width 0.06s linear;
+  }
+  .ch-btn {
+    font-family: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 5px 14px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .ch-btn:hover { border-color: var(--text-muted); color: var(--text); }
+  .ch-btn.active { background: var(--green-dim); border-color: var(--green); color: var(--green); }
+
+  /* --- Main panel --- */
+  .main-panel {
+    display: flex;
+    gap: 1px;
+    background: var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 20px;
+  }
+
+  .screen-col {
+    width: 340px;
+    flex-shrink: 0;
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+  }
+  .panel-header {
+    padding: 12px 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+  }
+  .panel-header .label {
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+  .panel-header .controls { display: flex; align-items: center; gap: 6px; }
+
+  .screen-body {
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 8px;
+    background: #0a0a10;
+    cursor: crosshair;
+    position: relative;
+  }
+  .screen-body img {
+    max-width: 100%;
+    max-height: 100%;
+    display: block;
+    border-radius: 3px;
+    user-select: none;
+    -webkit-user-drag: none;
+  }
+  .tap-indicator {
+    position: absolute;
+    width: 28px; height: 28px;
+    border: 2px solid var(--accent);
+    border-radius: 50%;
+    transform: translate(-50%, -50%) scale(0);
+    pointer-events: none;
+    animation: tap-ring 0.5s ease-out forwards;
+  }
+  @keyframes tap-ring {
+    0% { transform: translate(-50%,-50%) scale(0); opacity: 1; }
+    100% { transform: translate(-50%,-50%) scale(1.5); opacity: 0; }
+  }
+  .screen-status {
+    padding: 8px 18px;
+    font-size: 12px;
+    color: var(--text-muted);
+    border-top: 1px solid var(--border);
+    font-family: 'JetBrains Mono', monospace;
+    min-height: 32px;
+  }
+  .screen-status.busy { color: var(--amber); }
+
+  .tree-col {
+    flex: 1;
+    min-width: 0;
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+  }
+  .tree-body {
+    flex: 1;
+    overflow: auto;
+    padding: 16px 20px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    line-height: 1.7;
+    white-space: pre;
+    tab-size: 2;
+    color: var(--text-dim);
+  }
+  .tree-body .ref {
+    color: var(--accent);
+    font-weight: 500;
+  }
+  .tree-body .txt { color: #a8d8a0; }
+  .tree-body .attr { color: var(--amber); }
+  .tree-body .empty { color: var(--text-muted); font-style: italic; }
+
+  .pill {
+    font-family: 'Space Grotesk', system-ui, sans-serif;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 4px 12px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: transparent;
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .pill:hover { border-color: var(--text-muted); color: var(--text); }
+  .pill.active { border-color: var(--accent-dim); color: var(--accent); }
+
+  /* --- Info bar --- */
+  .info-bar {
+    display: flex;
+    gap: 1px;
+    background: var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .info-item {
+    flex: 1;
+    background: var(--surface);
+    padding: 14px 20px;
+  }
+  .info-item dt {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 5px;
+  }
+  .info-item dd {
+    font-size: 13px;
+    color: var(--text-dim);
+    font-family: 'JetBrains Mono', monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .tree-body::-webkit-scrollbar { width: 6px; }
+  .tree-body::-webkit-scrollbar-track { background: transparent; }
+  .tree-body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  .tree-body::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+  /* --- Ref list --- */
+  .ref-list {
+    flex-shrink: 0;
+    max-height: 240px;
+    overflow-y: auto;
+    border-top: 1px solid var(--border);
+  }
+  .ref-list-empty {
+    padding: 12px 18px;
+    font-size: 12px;
+    color: var(--text-muted);
+    font-style: italic;
+  }
+  .ref-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 18px;
+    cursor: pointer;
+    transition: background 0.1s;
+    border-bottom: 1px solid var(--border);
+  }
+  .ref-item:last-child { border-bottom: none; }
+  .ref-item:hover { background: rgba(110, 143, 245, 0.06); }
+  .ref-item:active { background: rgba(110, 143, 245, 0.12); }
+  .ref-item .ref-id {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--accent);
+    min-width: 36px;
+    flex-shrink: 0;
+  }
+  .ref-item .ref-type {
+    font-size: 11px;
+    color: var(--text-muted);
+    min-width: 64px;
+    flex-shrink: 0;
+  }
+  .ref-item .ref-label {
+    font-size: 12px;
+    color: var(--text-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+  }
+  .ref-long {
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--amber);
+    border: 1px solid var(--amber);
+    border-radius: 3px;
+    padding: 1px 6px;
+    cursor: pointer;
+    opacity: 0.5;
+    transition: opacity 0.15s;
+    flex-shrink: 0;
+  }
+  .ref-item:hover .ref-long { opacity: 1; }
+  .ref-list::-webkit-scrollbar { width: 4px; }
+  .ref-list::-webkit-scrollbar-track { background: transparent; }
+  .ref-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  @media (max-width: 800px) {
+    .main-panel { flex-direction: column; }
+    .screen-col { width: 100%; }
+    .audio-strip { flex-direction: column; }
+    .info-bar { flex-direction: column; }
+  }
 </style>
 </head>
 <body>
-<div class="container">
-  <h1>Otacon Audio</h1>
-  <div class="status" id="status">Disconnected</div>
+<div class="shell">
+  <header>
+    <h1>Otacon</h1>
+    <div class="dot" id="statusDot"></div>
+  </header>
 
-  <div class="section">
-    <div class="section-label">Phone Call Audio (HFP)</div>
-    <button id="hfpListenBtn" onclick="toggleHfpListen()">Listen</button>
-    <div class="level"><div class="level-bar" id="hfpListenLevel"></div></div>
+  <div class="audio-strip">
+    <div class="audio-ch">
+      <span class="ch-label">Call</span>
+      <div class="ch-meter"><div class="ch-meter-fill" id="hfpListenLevel"></div></div>
+      <button class="ch-btn" id="hfpListenBtn" onclick="toggleHfpListen()">Listen</button>
+    </div>
+    <div class="audio-ch">
+      <span class="ch-label">Media</span>
+      <div class="ch-meter"><div class="ch-meter-fill" id="mediaListenLevel"></div></div>
+      <button class="ch-btn" id="mediaListenBtn" onclick="toggleMediaListen()">Listen</button>
+    </div>
+    <div class="audio-ch">
+      <span class="ch-label">Mic</span>
+      <div class="ch-meter"><div class="ch-meter-fill" id="micLevel"></div></div>
+      <button class="ch-btn" id="micBtn" onclick="toggleMic()">Send</button>
+    </div>
   </div>
 
-  <div class="section">
-    <div class="section-label">Media Audio (A2DP)</div>
-    <button id="mediaListenBtn" onclick="toggleMediaListen()">Listen</button>
-    <div class="level"><div class="level-bar" id="mediaListenLevel"></div></div>
+  <div class="main-panel">
+    <div class="screen-col">
+      <div class="panel-header">
+        <span class="label">Screen</span>
+      </div>
+      <div class="screen-body" id="screenBody">
+        <img id="screenshot" alt="" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=">
+      </div>
+      <div class="screen-status" id="screenStatus"></div>
+      <div class="ref-list" id="refList">
+        <div class="ref-list-empty">tap targets appear here after loading</div>
+      </div>
+    </div>
+
+    <div class="tree-col">
+      <div class="panel-header">
+        <span class="label">Accessibility</span>
+        <div class="controls">
+          <button class="pill" id="jsonToggle" onclick="toggleJsonMode()">JSON</button>
+          <button class="pill" onclick="refreshAll()">Refresh</button>
+        </div>
+      </div>
+      <div class="tree-body" id="treeContent"><span class="empty">loading...</span></div>
+    </div>
   </div>
 
-  <div class="section">
-    <div class="section-label">Microphone (Send)</div>
-    <button id="micBtn" onclick="toggleMic()">Mic</button>
-    <div class="level"><div class="level-bar" id="micLevel"></div></div>
+  <div class="info-bar" id="infoBar">
+    <div class="info-item"><dt>Model</dt><dd>—</dd></div>
+    <div class="info-item"><dt>Activity</dt><dd>—</dd></div>
+    <div class="info-item"><dt>Resolution</dt><dd>—</dd></div>
+    <div class="info-item"><dt>Window</dt><dd>—</dd></div>
   </div>
 </div>
 
 <script>
-// HFP state
-let HFP_SAMPLE_RATE = 16000;
-let HFP_CHANNELS = 1;
-let hfpWs = null;
-let hfpCtx = null;
-let hfpListening = false;
-let hfpNextTime = 0;
-
-// Media (A2DP) state
-let MEDIA_SAMPLE_RATE = 44100;
-let MEDIA_CHANNELS = 2;
-let mediaWs = null;
-let mediaCtx = null;
-let mediaListening = false;
-let mediaNextTime = 0;
-
-// Mic state (sends over HFP WS)
-let micActive = false;
-let micStream = null;
-let micProcessor = null;
-
+// --- State ---
+let HFP_SAMPLE_RATE = 16000, HFP_CHANNELS = 1;
+let MEDIA_SAMPLE_RATE = 44100, MEDIA_CHANNELS = 2;
+let hfpWs = null, hfpCtx = null, hfpListening = false, hfpNextTime = 0;
+let mediaWs = null, mediaCtx = null, mediaListening = false, mediaNextTime = 0;
+let micActive = false, micStream = null, micProcessor = null;
 const FRAME_SIZE = 4096;
+let phoneWidth = 0, phoneHeight = 0;
+let jsonMode = false;
+let tapping = false;
 
-function setStatus(text, cls) {
-  const el = document.getElementById('status');
+function setStatus(cls) {
+  document.getElementById('statusDot').className = 'dot ' + (cls || '');
+}
+function setScreenStatus(text, busy) {
+  const el = document.getElementById('screenStatus');
   el.textContent = text;
-  el.className = 'status ' + (cls || '');
+  el.className = 'screen-status' + (busy ? ' busy' : '');
 }
 
-// --- HFP WebSocket ---
+// --- Tap on screenshot ---
+async function screenTap(e, long) {
+  if (tapping) return;
+  const img = document.getElementById('screenshot');
+  if (!phoneWidth || !phoneHeight) return;
 
+  const rect = img.getBoundingClientRect();
+  const relX = (e.clientX - rect.left) / rect.width;
+  const relY = (e.clientY - rect.top) / rect.height;
+  const tapX = Math.round(relX * phoneWidth);
+  const tapY = Math.round(relY * phoneHeight);
+
+  // Visual feedback
+  const ring = document.createElement('div');
+  ring.className = 'tap-indicator';
+  ring.style.left = e.clientX - document.getElementById('screenBody').getBoundingClientRect().left + 'px';
+  ring.style.top = e.clientY - document.getElementById('screenBody').getBoundingClientRect().top + 'px';
+  document.getElementById('screenBody').appendChild(ring);
+  setTimeout(() => ring.remove(), 600);
+
+  const action = long ? 'long_tap' : 'tap';
+  const label = long ? 'long-tap' : 'tap';
+  tapping = true;
+  setScreenStatus(`${label} ${tapX}, ${tapY}...`, true);
+  try {
+    const res = await fetch('/api/action', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action, x: tapX, y: tapY})
+    });
+    if (!res.ok) throw new Error(res.status);
+    await new Promise(r => setTimeout(r, long ? 1200 : 800));
+    await refreshAll();
+    setScreenStatus(`${label} ${tapX}, ${tapY}`);
+  } catch(e) {
+    setScreenStatus(`${label} failed: ${e.message}`);
+  }
+  tapping = false;
+}
+
+document.getElementById('screenBody').addEventListener('click', (e) => screenTap(e, false));
+document.getElementById('screenBody').addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  screenTap(e, true);
+});
+
+// --- Tap on ref ---
+async function tapRef(refId, long) {
+  if (tapping) return;
+  const action = long ? 'long_tap' : 'tap';
+  const label = long ? 'long-tap' : 'tap';
+  tapping = true;
+  setScreenStatus(`${label} ${refId}...`, true);
+  try {
+    const res = await fetch('/api/action', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action, ref: refId})
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || res.status);
+    }
+    await new Promise(r => setTimeout(r, long ? 1200 : 800));
+    await refreshAll();
+    setScreenStatus(`${label} ${refId}`);
+  } catch(e) {
+    setScreenStatus(`${label} ${refId} failed: ${e.message}`);
+  }
+  tapping = false;
+}
+
+// --- HFP ---
 function connectHfp() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  hfpWs = new WebSocket(`${proto}//${location.host}/ws`);
+  hfpWs = new WebSocket(`${proto}//${location.host}/ws/audio/call`);
   hfpWs.binaryType = 'arraybuffer';
-
-  hfpWs.onopen = () => setStatus('Connected', 'connected');
-  hfpWs.onclose = () => {
-    setStatus('Disconnected');
-    hfpListening = false;
-    micActive = false;
-    updateButtons();
-    setTimeout(connectHfp, 2000);
-  };
-  hfpWs.onerror = () => setStatus('Connection error', 'error');
-
+  hfpWs.onopen = () => setStatus('connected');
+  hfpWs.onclose = () => { setStatus(''); hfpListening = false; micActive = false; updateButtons(); setTimeout(connectHfp, 2000); };
+  hfpWs.onerror = () => setStatus('error');
   hfpWs.onmessage = (e) => {
     if (typeof e.data === 'string') {
-      try {
-        const msg = JSON.parse(e.data);
-        if (msg.type === 'config') {
-          HFP_SAMPLE_RATE = msg.sampleRate || HFP_SAMPLE_RATE;
-          HFP_CHANNELS = msg.channels || HFP_CHANNELS;
-          console.log(`HFP config: ${HFP_SAMPLE_RATE}Hz, ${HFP_CHANNELS}ch`);
-        }
-      } catch (_) {}
+      try { const m = JSON.parse(e.data); if (m.type==='config') { HFP_SAMPLE_RATE=m.sampleRate||HFP_SAMPLE_RATE; HFP_CHANNELS=m.channels||HFP_CHANNELS; } } catch(_){}
       return;
     }
-
     if (!hfpListening || !hfpCtx) return;
     const pcm = new Int16Array(e.data);
     const float = new Float32Array(pcm.length);
     for (let i = 0; i < pcm.length; i++) float[i] = pcm[i] / 32768;
-
-    const buffer = hfpCtx.createBuffer(HFP_CHANNELS, float.length / HFP_CHANNELS, HFP_SAMPLE_RATE);
-    buffer.copyToChannel(float, 0);
-    const source = hfpCtx.createBufferSource();
-    source.buffer = buffer;
-    source.connect(hfpCtx.destination);
+    const buf = hfpCtx.createBuffer(HFP_CHANNELS, float.length / HFP_CHANNELS, HFP_SAMPLE_RATE);
+    buf.copyToChannel(float, 0);
+    const src = hfpCtx.createBufferSource(); src.buffer = buf; src.connect(hfpCtx.destination);
     if (!hfpNextTime || hfpNextTime < hfpCtx.currentTime) hfpNextTime = hfpCtx.currentTime + 0.05;
-    source.start(hfpNextTime);
-    hfpNextTime += (float.length / HFP_CHANNELS) / HFP_SAMPLE_RATE;
-
-    let sum = 0;
-    for (let i = 0; i < float.length; i++) sum += float[i] * float[i];
-    document.getElementById('hfpListenLevel').style.width = Math.min(100, Math.sqrt(sum / float.length) * 300) + '%';
+    src.start(hfpNextTime); hfpNextTime += (float.length / HFP_CHANNELS) / HFP_SAMPLE_RATE;
+    let s = 0; for (let i = 0; i < float.length; i++) s += float[i] * float[i];
+    document.getElementById('hfpListenLevel').style.width = Math.min(100, Math.sqrt(s / float.length) * 300) + '%';
   };
 }
-
 function toggleHfpListen() {
-  if (!hfpListening) {
-    hfpCtx = new AudioContext({ sampleRate: HFP_SAMPLE_RATE });
-    hfpListening = true;
-  } else {
-    hfpListening = false;
-    if (hfpCtx) { hfpCtx.close(); hfpCtx = null; }
-    hfpNextTime = 0;
-    document.getElementById('hfpListenLevel').style.width = '0%';
-  }
+  if (!hfpListening) { hfpCtx = new AudioContext({sampleRate: HFP_SAMPLE_RATE}); hfpListening = true; }
+  else { hfpListening = false; if (hfpCtx) { hfpCtx.close(); hfpCtx = null; } hfpNextTime = 0; document.getElementById('hfpListenLevel').style.width = '0%'; }
   updateButtons();
 }
 
-// --- Media (A2DP) WebSocket ---
-
+// --- Media ---
 function connectMedia() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  mediaWs = new WebSocket(`${proto}//${location.host}/ws/media`);
+  mediaWs = new WebSocket(`${proto}//${location.host}/ws/audio/media`);
   mediaWs.binaryType = 'arraybuffer';
-
-  mediaWs.onclose = () => {
-    mediaListening = false;
-    updateButtons();
-    setTimeout(connectMedia, 2000);
-  };
-
+  mediaWs.onclose = () => { mediaListening = false; updateButtons(); setTimeout(connectMedia, 2000); };
   mediaWs.onmessage = (e) => {
     if (typeof e.data === 'string') {
-      try {
-        const msg = JSON.parse(e.data);
-        if (msg.type === 'config') {
-          MEDIA_SAMPLE_RATE = msg.sampleRate || MEDIA_SAMPLE_RATE;
-          MEDIA_CHANNELS = msg.channels || MEDIA_CHANNELS;
-          console.log(`Media config: ${MEDIA_SAMPLE_RATE}Hz, ${MEDIA_CHANNELS}ch`);
-        }
-      } catch (_) {}
+      try { const m = JSON.parse(e.data); if (m.type === 'config') { MEDIA_SAMPLE_RATE = m.sampleRate || MEDIA_SAMPLE_RATE; MEDIA_CHANNELS = m.channels || MEDIA_CHANNELS; } } catch(_){}
       return;
     }
-
     if (!mediaListening || !mediaCtx) return;
-    const pcm = new Int16Array(e.data);
-    const samplesPerChannel = pcm.length / MEDIA_CHANNELS;
-    const buffer = mediaCtx.createBuffer(MEDIA_CHANNELS, samplesPerChannel, MEDIA_SAMPLE_RATE);
-
-    for (let ch = 0; ch < MEDIA_CHANNELS; ch++) {
-      const float = new Float32Array(samplesPerChannel);
-      for (let i = 0; i < samplesPerChannel; i++) float[i] = pcm[i * MEDIA_CHANNELS + ch] / 32768;
-      buffer.copyToChannel(float, ch);
-    }
-
-    const source = mediaCtx.createBufferSource();
-    source.buffer = buffer;
-    source.connect(mediaCtx.destination);
+    const pcm = new Int16Array(e.data); const spc = pcm.length / MEDIA_CHANNELS;
+    const buf = mediaCtx.createBuffer(MEDIA_CHANNELS, spc, MEDIA_SAMPLE_RATE);
+    for (let ch = 0; ch < MEDIA_CHANNELS; ch++) { const f = new Float32Array(spc); for (let i = 0; i < spc; i++) f[i] = pcm[i * MEDIA_CHANNELS + ch] / 32768; buf.copyToChannel(f, ch); }
+    const src = mediaCtx.createBufferSource(); src.buffer = buf; src.connect(mediaCtx.destination);
     if (!mediaNextTime || mediaNextTime < mediaCtx.currentTime) mediaNextTime = mediaCtx.currentTime + 0.05;
-    source.start(mediaNextTime);
-    mediaNextTime += samplesPerChannel / MEDIA_SAMPLE_RATE;
-
-    // Level meter from first channel
-    const ch0 = buffer.getChannelData(0);
-    let sum = 0;
-    for (let i = 0; i < ch0.length; i++) sum += ch0[i] * ch0[i];
-    document.getElementById('mediaListenLevel').style.width = Math.min(100, Math.sqrt(sum / ch0.length) * 300) + '%';
+    src.start(mediaNextTime); mediaNextTime += spc / MEDIA_SAMPLE_RATE;
+    const c0 = buf.getChannelData(0); let s = 0; for (let i = 0; i < c0.length; i++) s += c0[i] * c0[i];
+    document.getElementById('mediaListenLevel').style.width = Math.min(100, Math.sqrt(s / c0.length) * 300) + '%';
   };
 }
-
 function toggleMediaListen() {
-  if (!mediaListening) {
-    mediaCtx = new AudioContext({ sampleRate: MEDIA_SAMPLE_RATE });
-    mediaListening = true;
-  } else {
-    mediaListening = false;
-    if (mediaCtx) { mediaCtx.close(); mediaCtx = null; }
-    mediaNextTime = 0;
-    document.getElementById('mediaListenLevel').style.width = '0%';
-  }
+  if (!mediaListening) { mediaCtx = new AudioContext({sampleRate: MEDIA_SAMPLE_RATE}); mediaListening = true; }
+  else { mediaListening = false; if (mediaCtx) { mediaCtx.close(); mediaCtx = null; } mediaNextTime = 0; document.getElementById('mediaListenLevel').style.width = '0%'; }
   updateButtons();
 }
 
-// --- Mic (sends over HFP WS) ---
-
+// --- Mic ---
 async function toggleMic() {
   if (!micActive) {
     try {
-      micStream = await navigator.mediaDevices.getUserMedia({
-        audio: { sampleRate: HFP_SAMPLE_RATE, channelCount: HFP_CHANNELS, echoCancellation: true }
-      });
-      const ctx = new AudioContext({ sampleRate: HFP_SAMPLE_RATE });
-      const source = ctx.createMediaStreamSource(micStream);
-
-      micProcessor = ctx.createScriptProcessor(FRAME_SIZE / 2, 1, 1);
-      micProcessor._ctx = ctx;
+      micStream = await navigator.mediaDevices.getUserMedia({audio: {sampleRate: HFP_SAMPLE_RATE, channelCount: HFP_CHANNELS, echoCancellation: true}});
+      const ctx = new AudioContext({sampleRate: HFP_SAMPLE_RATE}); const source = ctx.createMediaStreamSource(micStream);
+      micProcessor = ctx.createScriptProcessor(FRAME_SIZE / 2, 1, 1); micProcessor._ctx = ctx;
       micProcessor.onaudioprocess = (e) => {
         if (!hfpWs || hfpWs.readyState !== WebSocket.OPEN) return;
-        const float = e.inputBuffer.getChannelData(0);
-        const pcm = new Int16Array(float.length);
-        for (let i = 0; i < float.length; i++) {
-          pcm[i] = Math.max(-32768, Math.min(32767, float[i] * 32768));
-        }
-        hfpWs.send(pcm.buffer);
-
-        let sum = 0;
-        for (let i = 0; i < float.length; i++) sum += float[i] * float[i];
-        document.getElementById('micLevel').style.width = Math.min(100, Math.sqrt(sum / float.length) * 300) + '%';
+        const f = e.inputBuffer.getChannelData(0); const p = new Int16Array(f.length);
+        for (let i = 0; i < f.length; i++) p[i] = Math.max(-32768, Math.min(32767, f[i] * 32768));
+        hfpWs.send(p.buffer);
+        let s = 0; for (let i = 0; i < f.length; i++) s += f[i] * f[i];
+        document.getElementById('micLevel').style.width = Math.min(100, Math.sqrt(s / f.length) * 300) + '%';
       };
-
-      source.connect(micProcessor);
-      micProcessor.connect(ctx.destination);
-      micActive = true;
-    } catch (e) {
-      setStatus('Mic access denied', 'error');
-      return;
-    }
+      source.connect(micProcessor); micProcessor.connect(ctx.destination); micActive = true;
+    } catch(e) { return; }
   } else {
-    if (micProcessor) {
-      micProcessor.disconnect();
-      micProcessor._ctx.close();
-      micProcessor = null;
-    }
-    if (micStream) {
-      micStream.getTracks().forEach(t => t.stop());
-      micStream = null;
-    }
-    micActive = false;
-    document.getElementById('micLevel').style.width = '0%';
+    if (micProcessor) { micProcessor.disconnect(); micProcessor._ctx.close(); micProcessor = null; }
+    if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+    micActive = false; document.getElementById('micLevel').style.width = '0%';
   }
   updateButtons();
 }
 
 function updateButtons() {
-  const hb = document.getElementById('hfpListenBtn');
-  hb.textContent = hfpListening ? 'Stop Listening' : 'Listen';
-  hb.className = hfpListening ? 'active' : '';
-
-  const mb = document.getElementById('mediaListenBtn');
-  mb.textContent = mediaListening ? 'Stop Listening' : 'Listen';
-  mb.className = mediaListening ? 'active' : '';
-
-  const mic = document.getElementById('micBtn');
-  mic.textContent = micActive ? 'Stop Mic' : 'Mic';
-  mic.className = micActive ? 'active' : '';
+  const h = document.getElementById('hfpListenBtn'); h.textContent = hfpListening ? 'Stop' : 'Listen'; h.className = 'ch-btn' + (hfpListening ? ' active' : '');
+  const m = document.getElementById('mediaListenBtn'); m.textContent = mediaListening ? 'Stop' : 'Listen'; m.className = 'ch-btn' + (mediaListening ? ' active' : '');
+  const k = document.getElementById('micBtn'); k.textContent = micActive ? 'Stop' : 'Send'; k.className = 'ch-btn' + (micActive ? ' active' : '');
 }
 
+// --- Screenshot + Snapshot ---
+async function refreshScreenshot() {
+  try {
+    const res = await fetch('/api/screenshot');
+    if (!res.ok) throw new Error(res.status);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const img = document.getElementById('screenshot');
+    const old = img.src;
+    img.src = url;
+    if (old.startsWith('blob:')) URL.revokeObjectURL(old);
+  } catch(e) {
+    setScreenStatus('screenshot failed');
+  }
+}
+
+async function refreshSnapshot() {
+  const el = document.getElementById('treeContent');
+  try {
+    // Always fetch JSON to build the ref list
+    const jsonRes = await fetch('/api/snapshot?format=json');
+    if (!jsonRes.ok) throw new Error(jsonRes.status);
+    const data = await jsonRes.json();
+    buildRefList(data);
+
+    if (jsonMode) {
+      el.textContent = JSON.stringify(data, null, 2);
+    } else {
+      // Fetch text format for the tree display
+      const textRes = await fetch('/api/snapshot?format=text');
+      if (!textRes.ok) throw new Error(textRes.status);
+      const t = await textRes.text();
+      el.innerHTML = highlightTree(t);
+    }
+  } catch(e) {
+    el.innerHTML = `<span class="empty">error: ${e.message}</span>`;
+  }
+}
+
+function buildRefList(nodes) {
+  const refs = [];
+  function findText(node) {
+    if (node.text) return node.text;
+    if (node.content_desc) return node.content_desc;
+    if (node.children) {
+      for (const child of node.children) {
+        const t = findText(child);
+        if (t) return t;
+      }
+    }
+    return '';
+  }
+  function walk(node) {
+    if (node.ref_id && (node.clickable || node.checkable || node.long_clickable)) {
+      const label = node.text || node.content_desc || findText(node);
+      const type = (node.class || '').replace('android.widget.', '').replace('android.view.', '');
+      refs.push({ id: node.ref_id, type, label, longClickable: node.long_clickable });
+    }
+    if (node.children) node.children.forEach(walk);
+  }
+  if (Array.isArray(nodes)) nodes.forEach(walk); else walk(nodes);
+
+  const list = document.getElementById('refList');
+  if (refs.length === 0) {
+    list.innerHTML = '<div class="ref-list-empty">no tap targets</div>';
+    return;
+  }
+  list.innerHTML = refs.map(r =>
+    `<div class="ref-item" data-ref="${r.id}" title="${r.type}">` +
+      `<span class="ref-id">${r.id}</span>` +
+      `<span class="ref-type">${r.type}</span>` +
+      `<span class="ref-label">${r.label ? escHtml(r.label) : '—'}</span>` +
+      (r.longClickable ? `<span class="ref-long" data-long="${r.id}" title="long-tap">hold</span>` : '') +
+    `</div>`
+  ).join('');
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function refreshAll() {
+  await Promise.all([refreshScreenshot(), refreshSnapshot(), refreshInfo()]);
+}
+
+function toggleJsonMode() {
+  jsonMode = !jsonMode;
+  document.getElementById('jsonToggle').className = 'pill' + (jsonMode ? ' active' : '');
+  refreshSnapshot();
+}
+
+function highlightTree(t) {
+  // Order matters: escape HTML first, then highlight text/attrs, then refs last
+  // (so the " regex doesn't match quotes inside span attributes)
+  return t
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"([^"]*?)"/g, '"<span class="txt">$1</span>"')
+    .replace(/\b(long-clickable|checked|focused|scrollable|selected|disabled)\b/g, '<span class="attr">$1</span>')
+    .replace(/\[ref=(e\d+)\]/g, '[ref=<span class="ref">$1</span>]');
+}
+
+// Delegate ref clicks from the ref list
+document.getElementById('refList').addEventListener('click', (e) => {
+  // Long-tap button
+  const longBtn = e.target.closest('[data-long]');
+  if (longBtn) { tapRef(longBtn.dataset.long, true); return; }
+  // Regular tap on row
+  const item = e.target.closest('[data-ref]');
+  if (item) tapRef(item.dataset.ref, false);
+});
+
+// --- Device Info ---
+async function refreshInfo() {
+  try {
+    const res = await fetch('/api/info');
+    if (!res.ok) return;
+    const info = await res.json();
+    // Store phone resolution for tap coordinate mapping
+    if (info.resolution) {
+      const m = info.resolution.match(/(\d+)\s*x\s*(\d+)/);
+      if (m) { phoneWidth = parseInt(m[1]); phoneHeight = parseInt(m[2]); }
+    }
+    document.getElementById('infoBar').innerHTML = `
+      <div class="info-item"><dt>Model</dt><dd>${info.model || '—'}</dd></div>
+      <div class="info-item"><dt>Activity</dt><dd>${info.activity || '—'}</dd></div>
+      <div class="info-item"><dt>Resolution</dt><dd>${info.resolution || '—'}</dd></div>
+      <div class="info-item"><dt>Window</dt><dd>${info.window || '—'}</dd></div>
+    `;
+  } catch(_) {}
+}
+
+// --- Init ---
 connectHfp();
 connectMedia();
+refreshAll();
 </script>
 </body>
 </html>

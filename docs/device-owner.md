@@ -73,3 +73,68 @@ before `DISALLOW_CONFIG_WIFI` is applied:
 
 This path requires Android 13+ and the Device Owner app to know the AP credentials
 (pass via intent or bake into the APK via BuildConfig).
+
+## TODO: AccessibilityService for fast UI tree + actions
+
+Currently the server gets the accessibility tree via `adb exec-out uiautomator dump`
+which takes ~2.5s per call (full serialization + process spawn overhead). The device
+owner app can register an `AccessibilityService` that is dramatically faster and
+enables features not possible via ADB:
+
+**Fast tree access (~100-200ms vs 2.5s):**
+- `getRootInActiveWindow()` returns the live in-memory tree — no serialization, no process spawn
+- Can query subtrees or individual nodes instead of dumping everything
+- Can filter to only return interactive nodes, reducing payload size
+
+**Real-time UI change events (eliminates polling):**
+- `onAccessibilityEvent()` receives callbacks for `TYPE_WINDOW_CONTENT_CHANGED`,
+  `TYPE_VIEW_CLICKED`, `TYPE_VIEW_SCROLLED`, etc.
+- Server can be notified of UI changes instantly instead of re-dumping the tree
+- Enables the `/ws/events` stream for `app.foreground` changes
+
+**Direct node actions (more reliable than coordinate taps):**
+- `node.performAction(AccessibilityNodeInfo.ACTION_CLICK)` — works even if element
+  is partially obscured or overlapped by another window
+- `ACTION_LONG_CLICK`, `ACTION_SCROLL_FORWARD`, `ACTION_SET_TEXT` — direct manipulation
+  without coordinate mapping
+- `ACTION_SET_SELECTION`, `ACTION_PASTE` — clipboard interaction
+
+**Architecture:**
+The device owner app runs a lightweight HTTP server on localhost (e.g., port 9090).
+The Rust server on the Pi connects via ADB port forwarding:
+```bash
+adb forward tcp:9090 tcp:9090
+```
+Then calls `http://localhost:9090/snapshot`, `http://localhost:9090/action`, etc.
+The Rust server's API stays the same — clients don't know whether the backend
+uses ADB commands or the device owner app.
+
+**Permission:** Device Owner can grant itself accessibility access via
+`DevicePolicyManager.setPermittedAccessibilityServices()` — no manual Settings toggle.
+
+## TODO: Notification management via NotificationListenerService
+
+The device owner app can register a `NotificationListenerService` to:
+- Receive real-time notification events (posted, removed, updated)
+- Dismiss notifications programmatically (`cancelNotification(key)`)
+- Read notification action buttons and trigger them (`Notification.Action`)
+- Feed events to `/ws/events` stream (`notification.received`, `notification.removed`)
+
+Currently `GET /api/notifications` parses `dumpsys notification --noredact` output,
+and `DELETE /api/notifications/:key` is deferred. With a NotificationListenerService
+both become fast and reliable.
+
+**Permission:** Device Owner grants itself notification access via
+`DevicePolicyManager.setPermittedNotificationListeners()`.
+
+## TODO: Clipboard access via ClipboardManager
+
+No ADB command can read/write the clipboard on Android 10+. The device owner app
+can access `ClipboardManager` directly:
+- `clipboardManager.getPrimaryClip()` — read
+- `clipboardManager.setPrimaryClip(ClipData.newPlainText(...))` — write
+
+This enables `GET /api/clipboard` and `PUT /api/clipboard`.
+
+Scrcpy solves this via `app_process` (runs Java with shell permissions), but bundling
+it in the device owner app is simpler and doesn't require a separate process.
