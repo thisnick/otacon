@@ -43,11 +43,12 @@ while true; do
     sleep 2
 
     # --- Screen settings ---
+    adb shell settings put global stay_on_while_plugged_in 2 2>/dev/null || true  # stay awake on USB (persists)
     adb shell settings put system screen_off_timeout 2147483647 2>/dev/null || true
-    adb shell svc power stayon usb 2>/dev/null || true
     adb shell settings put system screen_brightness_mode 0 2>/dev/null || true  # manual brightness
     adb shell settings put system screen_brightness 0 2>/dev/null || true       # minimum brightness
     adb shell input keyevent 26 2>/dev/null || true  # wake screen
+    adb shell input swipe 540 1800 540 800 2>/dev/null || true  # dismiss lock screen
 
     # --- Device Owner provisioning ---
     if ! adb shell dpm list-owners 2>/dev/null | grep -q "com.otacon.kiosk"; then
