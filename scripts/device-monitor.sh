@@ -136,10 +136,52 @@ while true; do
         if [ -n "$PI_BT_MAC" ]; then
             log "Checking Bluetooth pairing with Pi ($PI_BT_MAC)..."
 
-            # Pair endpoint checks bond state and pairs if needed
-            PAIR_RESULT=$(curl -s --max-time 45 -X POST -H 'Content-Type: application/json' \
+            # Start pairing in background (blocks waiting for bond)
+            curl -s --max-time 45 -X POST -H 'Content-Type: application/json' \
                 -d "{\"mac\":\"${PI_BT_MAC}\"}" \
-                http://127.0.0.1:9090/bluetooth/pair 2>/dev/null || true)
+                http://127.0.0.1:9090/bluetooth/pair > /tmp/bt-pair-result 2>/dev/null &
+            PAIR_PID=$!
+
+            # Auto-tap Samsung's pairing confirmation dialog via snapshot server
+            for attempt in $(seq 1 20); do
+                sleep 1
+                # Check if pairing already finished
+                if ! kill -0 $PAIR_PID 2>/dev/null; then break; fi
+                # Look for "Pair" button in the UI tree and tap it
+                SNAPSHOT=$(curl -s http://127.0.0.1:9091/snapshot?format=json 2>/dev/null || true)
+                # Find a clickable node with text "Pair" (not "Repair" or "Unpair")
+                PAIR_REF=$(echo "$SNAPSHOT" | python3 -c "
+import sys, json
+def find_pair(node):
+    text = node.get('text', '')
+    if text == 'Pair' and node.get('clickable'):
+        return node.get('ref_id')
+    for child in node.get('children', []):
+        r = find_pair(child)
+        if r: return r
+    return None
+try:
+    data = json.load(sys.stdin)
+    nodes = data if isinstance(data, list) else [data]
+    for n in nodes:
+        r = find_pair(n)
+        if r:
+            print(r)
+            break
+except: pass
+" 2>/dev/null || true)
+                if [ -n "$PAIR_REF" ]; then
+                    log "Auto-tapping 'Pair' button ($PAIR_REF)"
+                    curl -s -X POST -H 'Content-Type: application/json' \
+                        -d "{\"action\":\"click\",\"ref\":\"$PAIR_REF\"}" \
+                        http://127.0.0.1:9091/action 2>/dev/null || true
+                    break
+                fi
+            done
+
+            # Wait for pairing to complete
+            wait $PAIR_PID 2>/dev/null || true
+            PAIR_RESULT=$(cat /tmp/bt-pair-result 2>/dev/null || true)
 
             if echo "$PAIR_RESULT" | grep -q '"already_paired"'; then
                 log "Bluetooth already paired"
