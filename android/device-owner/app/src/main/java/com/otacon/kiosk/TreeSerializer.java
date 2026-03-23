@@ -2,12 +2,14 @@ package com.otacon.kiosk;
 
 import android.graphics.Rect;
 import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.accessibility.AccessibilityWindowInfo;
 
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -34,7 +36,41 @@ public class TreeSerializer {
         return refMap;
     }
 
-    /** Serialize the tree rooted at the given node to indented text. */
+    /** Serialize the tree from all windows to indented text. */
+    public String toText(List<AccessibilityWindowInfo> windows) {
+        refMap.clear();
+        StringBuilder sb = new StringBuilder();
+        int idx = 0;
+        for (AccessibilityWindowInfo window : windows) {
+            AccessibilityNodeInfo root = window.getRoot();
+            if (root != null) {
+                walkText(root, 0, "/" + idx, sb);
+                idx++;
+            }
+        }
+        return sb.toString();
+    }
+
+    /** Serialize the tree from all windows to JSON. */
+    public String toJson(List<AccessibilityWindowInfo> windows) {
+        refMap.clear();
+        try {
+            JSONArray arr = new JSONArray();
+            int idx = 0;
+            for (AccessibilityWindowInfo window : windows) {
+                AccessibilityNodeInfo root = window.getRoot();
+                if (root != null) {
+                    arr.put(walkJson(root, "/" + idx));
+                    idx++;
+                }
+            }
+            return arr.toString(2);
+        } catch (JSONException e) {
+            return "{\"error\": \"" + e.getMessage() + "\"}";
+        }
+    }
+
+    /** Serialize a single root (fallback). */
     public String toText(AccessibilityNodeInfo root) {
         if (root == null) return "";
         refMap.clear();
@@ -43,7 +79,7 @@ public class TreeSerializer {
         return sb.toString();
     }
 
-    /** Serialize the tree rooted at the given node to JSON. */
+    /** Serialize a single root to JSON (fallback). */
     public String toJson(AccessibilityNodeInfo root) {
         if (root == null) return "[]";
         refMap.clear();

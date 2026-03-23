@@ -106,19 +106,33 @@ public class HttpServer extends NanoHTTPD {
         Map<String, String> params = session.getParms();
         String format = params.getOrDefault("format", "text");
 
-        AccessibilityNodeInfo root = service.getRootInActiveWindow();
+        TreeSerializer serializer = service.getSerializer();
+
+        // Use getWindows() to capture all windows (app, dialogs, system UI, launcher)
+        java.util.List<android.view.accessibility.AccessibilityWindowInfo> windows = service.getWindows();
+        if (windows != null && !windows.isEmpty()) {
+            if ("json".equals(format)) {
+                return newFixedLengthResponse(Response.Status.OK, MIME_JSON,
+                    serializer.toJson(windows));
+            } else {
+                return newFixedLengthResponse(Response.Status.OK, MIME_TEXT,
+                    serializer.toText(windows));
+            }
+        }
+
+        // Fallback to active window only
+        android.view.accessibility.AccessibilityNodeInfo root = service.getRootInActiveWindow();
         if (root == null) {
             return newFixedLengthResponse(Response.Status.OK, MIME_JSON,
                 "{\"error\": \"no active window\"}");
         }
 
-        TreeSerializer serializer = service.getSerializer();
         if ("json".equals(format)) {
-            String json = serializer.toJson(root);
-            return newFixedLengthResponse(Response.Status.OK, MIME_JSON, json);
+            return newFixedLengthResponse(Response.Status.OK, MIME_JSON,
+                serializer.toJson(root));
         } else {
-            String text = serializer.toText(root);
-            return newFixedLengthResponse(Response.Status.OK, MIME_TEXT, text);
+            return newFixedLengthResponse(Response.Status.OK, MIME_TEXT,
+                serializer.toText(root));
         }
     }
 
