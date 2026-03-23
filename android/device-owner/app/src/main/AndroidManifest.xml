@@ -30,6 +30,7 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="com.otacon.kiosk.APPLY_RESTRICTIONS" />
                 <action android:name="com.otacon.kiosk.CLEAR_RESTRICTIONS" />
+                <action android:name="com.otacon.kiosk.REMOVE_DEVICE_OWNER" />
             </intent-filter>
         </receiver>
 

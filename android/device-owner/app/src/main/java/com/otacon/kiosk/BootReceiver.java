@@ -13,6 +13,7 @@ public class BootReceiver extends BroadcastReceiver {
     private static final String TAG = "OtaconKiosk";
 
     private static final String ACTION_CLEAR = "com.otacon.kiosk.CLEAR_RESTRICTIONS";
+    private static final String ACTION_REMOVE_OWNER = "com.otacon.kiosk.REMOVE_DEVICE_OWNER";
 
     private static final String[] USER_RESTRICTIONS = {
         UserManager.DISALLOW_CONFIG_WIFI,
@@ -32,7 +33,16 @@ public class BootReceiver extends BroadcastReceiver {
         String action = intent.getAction();
         if (action == null) return;
 
-        if (ACTION_CLEAR.equals(action)) {
+        if (ACTION_REMOVE_OWNER.equals(action)) {
+            Log.i(TAG, "Removing device owner");
+            clearRestrictions(context);
+            DevicePolicyManager dpm = context.getSystemService(DevicePolicyManager.class);
+            if (dpm.isDeviceOwnerApp(context.getPackageName())) {
+                dpm.clearDeviceOwnerApp(context.getPackageName());
+                Log.i(TAG, "Device owner removed");
+            }
+            return;
+        } else if (ACTION_CLEAR.equals(action)) {
             Log.i(TAG, "Clearing all restrictions");
             clearRestrictions(context);
         } else {

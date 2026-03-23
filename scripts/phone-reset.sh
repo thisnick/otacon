@@ -3,7 +3,6 @@
 set -euo pipefail
 
 DEVICE_OWNER_PKG="com.otacon.kiosk"
-DEVICE_OWNER_RECEIVER="${DEVICE_OWNER_PKG}/.DeviceOwnerReceiver"
 
 echo "=== Otacon Phone Reset ==="
 
@@ -15,15 +14,15 @@ fi
 SERIAL=$(adb devices | grep 'device$' | head -1 | awk '{print $1}')
 echo "Device: ${SERIAL}"
 
-echo "Clearing all user restrictions..."
+echo "Removing device owner (clears restrictions + revokes ownership)..."
 adb -s "${SERIAL}" shell am broadcast \
-    -a com.otacon.kiosk.CLEAR_RESTRICTIONS \
+    -a com.otacon.kiosk.REMOVE_DEVICE_OWNER \
     -n "${DEVICE_OWNER_PKG}/.BootReceiver"
 
-echo "Removing device owner..."
-adb -s "${SERIAL}" shell dpm remove-active-admin "${DEVICE_OWNER_RECEIVER}"
+sleep 2
 
 echo "Uninstalling app..."
-adb -s "${SERIAL}" shell pm uninstall "${DEVICE_OWNER_PKG}"
+adb -s "${SERIAL}" shell pm uninstall "${DEVICE_OWNER_PKG}" || true
 
 echo "=== Phone reset complete ==="
+echo "You can now factory reset the phone if needed."
