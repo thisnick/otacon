@@ -42,9 +42,11 @@ while true; do
     # Give the device a moment to fully initialize
     sleep 2
 
-    # --- Keep screen on ---
+    # --- Screen settings ---
     adb shell settings put system screen_off_timeout 2147483647 2>/dev/null || true
     adb shell svc power stayon usb 2>/dev/null || true
+    adb shell settings put system screen_brightness_mode 0 2>/dev/null || true  # manual brightness
+    adb shell settings put system screen_brightness 0 2>/dev/null || true       # minimum brightness
     adb shell input keyevent 26 2>/dev/null || true  # wake screen
 
     # --- Device Owner provisioning ---
