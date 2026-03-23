@@ -20,7 +20,6 @@ public class BootReceiver extends BroadcastReceiver {
         UserManager.DISALLOW_CONFIG_BLUETOOTH,
         UserManager.DISALLOW_CONFIG_LOCATION,
         UserManager.DISALLOW_FACTORY_RESET,
-        UserManager.DISALLOW_INSTALL_APPS,
         UserManager.DISALLOW_SAFE_BOOT,
         UserManager.DISALLOW_USB_FILE_TRANSFER,
         UserManager.DISALLOW_ADJUST_VOLUME,
