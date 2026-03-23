@@ -59,8 +59,6 @@ while true; do
         elif [ -f /opt/otacon-kiosk.apk ]; then
             adb install -r /opt/otacon-kiosk.apk
             adb shell dpm set-device-owner com.otacon.kiosk/.DeviceOwnerReceiver
-            adb shell settings put secure enabled_accessibility_services \
-                com.otacon.kiosk/.OtaconAccessibilityService
             adb shell cmd notification allow_listener \
                 com.otacon.kiosk/.OtaconNotificationListener 2>/dev/null || true
             # Grant runtime permissions
@@ -78,14 +76,36 @@ while true; do
         fi
     fi
 
+    # --- Start snapshot server (app_process) ---
+    if [ -f /opt/snapshot-server.jar ]; then
+        adb push /opt/snapshot-server.jar /data/local/tmp/snapshot-server.jar 2>/dev/null || true
+        # Kill any existing instance
+        adb shell "pkill -f snapshot-server.jar" 2>/dev/null || true
+        sleep 1
+        # Start in background on the device
+        adb shell "nohup app_process -Djava.class.path=/data/local/tmp/snapshot-server.jar \
+            / com.otacon.snapshot.SnapshotServer > /dev/null 2>&1 &" 2>/dev/null || true
+        log "Snapshot server started"
+    fi
+
     # --- ADB port forward ---
     adb forward tcp:9090 tcp:9090 2>/dev/null || true
-    log "Port forward established"
+    adb forward tcp:9091 tcp:9091 2>/dev/null || true
+    log "Port forwards established"
 
     # Wait for device owner HTTP server to come up
     for i in $(seq 1 10); do
         if curl -s http://127.0.0.1:9090/health 2>/dev/null | grep -q '"ok"'; then
-            log "Bridge connected"
+            log "Device owner bridge connected"
+            break
+        fi
+        sleep 1
+    done
+
+    # Wait for snapshot server to come up
+    for i in $(seq 1 10); do
+        if curl -s http://127.0.0.1:9091/health 2>/dev/null | grep -q '"ok"'; then
+            log "Snapshot server connected"
             break
         fi
         sleep 1
@@ -135,8 +155,9 @@ while true; do
 
     # --- Monitor connection ---
     while adb -s "$SERIAL" get-state 2>/dev/null | grep -q "device"; do
-        # Re-establish port forward if lost
+        # Re-establish port forwards if lost
         adb forward tcp:9090 tcp:9090 2>/dev/null || true
+        adb forward tcp:9091 tcp:9091 2>/dev/null || true
         sleep 10
     done
 

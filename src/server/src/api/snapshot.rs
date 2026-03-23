@@ -333,10 +333,10 @@ pub async fn handler(
     state: std::sync::Arc<super::AppState>,
     Query(query): Query<SnapshotQuery>,
 ) -> Result<Response, ApiError> {
-    // Fast path: device owner app bridge
-    if state.bridge.is_available() {
+    // Fast path: snapshot server (app_process with shell permissions)
+    if state.bridge.is_snapshot_available() {
         let path = format!("/snapshot?format={}", query.format);
-        let body = state.bridge.get(&path).await?;
+        let body = state.bridge.snapshot_get(&path).await?;
         let content_type = if query.format == "json" {
             "application/json"
         } else {

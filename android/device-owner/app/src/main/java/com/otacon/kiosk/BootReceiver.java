@@ -32,6 +32,9 @@ public class BootReceiver extends BroadcastReceiver {
         String action = intent.getAction();
         if (action == null) return;
 
+        // Ensure HTTP server is running
+        ensureHttpServer(context);
+
         if (ACTION_REMOVE_OWNER.equals(action)) {
             Log.i(TAG, "Removing device owner");
             clearRestrictions(context);
@@ -47,6 +50,21 @@ public class BootReceiver extends BroadcastReceiver {
         } else {
             Log.i(TAG, "Applying restrictions on: " + action);
             applyRestrictions(context);
+        }
+    }
+
+    private static HttpServer httpServer;
+
+    /** Start the HTTP server if not already running. */
+    static void ensureHttpServer(Context context) {
+        if (httpServer == null) {
+            httpServer = new HttpServer(context.getApplicationContext());
+            try {
+                httpServer.startServer();
+                Log.i(TAG, "HTTP server started");
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to start HTTP server", e);
+            }
         }
     }
 

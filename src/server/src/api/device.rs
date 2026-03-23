@@ -14,6 +14,7 @@ pub struct DeviceInfo {
     model: Option<String>,
     resolution: Option<String>,
     bridge: bool,
+    snapshot_server: bool,
 }
 
 pub async fn info_handler(state: Arc<AppState>) -> Result<Json<DeviceInfo>, ApiError> {
@@ -31,7 +32,8 @@ pub async fn info_handler(state: Arc<AppState>) -> Result<Json<DeviceInfo>, ApiE
         resolution: resolution
             .ok()
             .and_then(|s| s.split(':').last().map(|s| s.trim().to_string())),
-        bridge: state.bridge.is_available(),
+        bridge: state.bridge.is_device_owner_available(),
+        snapshot_server: state.bridge.is_snapshot_available(),
     }))
 }
 
@@ -78,8 +80,8 @@ pub async fn notifications_handler(
     state: Arc<AppState>,
 ) -> Result<Response, ApiError> {
     // Fast path: device owner app
-    if state.bridge.is_available() {
-        let body = state.bridge.get("/notifications").await?;
+    if state.bridge.is_device_owner_available() {
+        let body = state.bridge.device_get("/notifications").await?;
         return Ok(([("content-type", "application/json")], body).into_response());
     }
 

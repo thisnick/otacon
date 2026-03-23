@@ -89,11 +89,11 @@ pub async fn handler(
 async fn handle_tap(state: Arc<AppState>, p: TapParams, long: bool) -> Result<(), ApiError> {
     let action_name = if long { "long_click" } else { "click" };
 
-    // Ref-based tap: try bridge first (performAction, no coordinates needed)
+    // Ref-based tap: try snapshot server first (performAction, no coordinates needed)
     if let Some(ref ref_id) = p.ref_id {
-        if state.bridge.is_available() {
+        if state.bridge.is_snapshot_available() {
             let body = serde_json::json!({"action": action_name, "ref": ref_id}).to_string();
-            state.bridge.post("/action", &body).await?;
+            state.bridge.snapshot_post("/action", &body).await?;
             return Ok(());
         }
 
