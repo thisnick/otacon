@@ -10,7 +10,7 @@ else
     vncpasswd -f <<< "" > /tmp/vncpasswd
 fi
 
-# Wait for ADB device
+# Wait for ADB device (needed for display resolution before supervisord starts)
 echo "Waiting for ADB device..."
 while ! adb devices 2>/dev/null | grep -q 'device$'; do
     sleep 2
@@ -43,72 +43,6 @@ export DISPLAY_RESOLUTION="${DISPLAY_W}x${DISPLAY_H}"
 export DISPLAY=:${DISPLAY_NUM}
 echo "Display resolution: ${DISPLAY_RESOLUTION}"
 
-# Auto-detect phone Bluetooth MAC from ADB and set BLUEALSA_DEVICE
-if [ "$AUDIO_BACKEND" = "bluetooth" ]; then
-    PHONE_BT_MAC=$(adb shell settings get secure bluetooth_address 2>/dev/null | tr -d '\r')
-    if [ -n "$PHONE_BT_MAC" ] && [ "$PHONE_BT_MAC" != "null" ]; then
-        export BLUEALSA_DEVICE="bluealsa:DEV=${PHONE_BT_MAC},PROFILE=sco"
-        echo "BLUEALSA_DEVICE auto-detected: $BLUEALSA_DEVICE"
-    else
-        echo "WARNING: Could not detect phone BT MAC via ADB"
-    fi
-fi
-
-# === Device Owner auto-provisioning ===
-if ! adb shell dpm list-owners 2>/dev/null | grep -q "com.otacon.kiosk"; then
-    echo "Device owner not set — provisioning..."
-    # Check for Google accounts (device owner requires none)
-    ACCOUNT_COUNT=$(adb shell dumpsys account 2>/dev/null | grep -c "Account {" || true)
-    if [ "${ACCOUNT_COUNT:-0}" -gt 0 ]; then
-        echo "ERROR: Phone has $ACCOUNT_COUNT account(s). Factory reset required for device owner."
-        echo "Continuing without device owner (reduced functionality)."
-    elif [ -f /opt/otacon-kiosk.apk ]; then
-        adb install -r /opt/otacon-kiosk.apk
-        adb shell dpm set-device-owner com.otacon.kiosk/.DeviceOwnerReceiver
-        # Enable accessibility service and notification listener before restrictions
-        adb shell settings put secure enabled_accessibility_services \
-            com.otacon.kiosk/.OtaconAccessibilityService
-        adb shell cmd notification allow_listener \
-            com.otacon.kiosk/.OtaconNotificationListener
-        echo "Device owner provisioned (restrictions applied after WiFi connect)"
-    else
-        echo "WARNING: /opt/otacon-kiosk.apk not found — skipping device owner setup"
-    fi
-else
-    echo "Device owner already set"
-    # Always update APK to latest version
-    if [ -f /opt/otacon-kiosk.apk ]; then
-        adb install -r /opt/otacon-kiosk.apk 2>/dev/null || true
-    fi
-fi
-
-# Keep screen on and disable lock screen
-adb shell settings put system screen_off_timeout 2147483647 || true
-adb shell svc power stayon usb || true
-adb shell input keyevent 26 || true  # wake screen if off
-
-# Set up ADB port forward to device owner HTTP server
-adb forward tcp:9090 tcp:9090 2>/dev/null || true
-
-# Connect phone to Pi's WiFi AP
-if [ -n "${WIFI_AP_SSID:-}" ]; then
-    echo "Connecting phone to WiFi AP '${WIFI_AP_SSID}'..."
-    # Try device owner app bridge first (works on Samsung Android 14+)
-    if curl -s -X POST -H 'Content-Type: application/json' \
-        -d "{\"ssid\":\"${WIFI_AP_SSID}\",\"password\":\"${WIFI_AP_PASSWORD}\"}" \
-        http://127.0.0.1:9090/wifi/connect 2>/dev/null | grep -q '"ok"'; then
-        echo "WiFi connected via device owner app"
-    else
-        # Fallback: ADB command (works on stock Android, not Samsung 14)
-        adb shell cmd wifi connect-network "${WIFI_AP_SSID}" wpa2 "${WIFI_AP_PASSWORD}" || true
-    fi
-fi
-
-# Apply device owner restrictions (after WiFi is connected)
-if adb shell dpm list-owners 2>/dev/null | grep -q "com.otacon.kiosk"; then
-    adb shell am broadcast -a com.otacon.kiosk.APPLY_RESTRICTIONS -n com.otacon.kiosk/.BootReceiver || true
-fi
-
 # Build supervisor config based on audio backend
 cp /etc/supervisor/conf.d/supervisord-base.conf /tmp/supervisord.conf
 if [ "$AUDIO_BACKEND" = "bluetooth" ]; then
@@ -119,7 +53,7 @@ else
     echo "Audio backend: ALSA (cable)"
 fi
 
-# === WiFi AP setup ===
+# === WiFi AP setup (Pi-side, no phone needed) ===
 if [ -n "${WIFI_AP_SSID:-}" ]; then
     echo "Setting up WiFi AP: ${WIFI_AP_SSID}"
 
@@ -173,5 +107,6 @@ else
     echo "WIFI_AP_SSID not set — skipping WiFi AP setup"
 fi
 
-# Start supervisord
+# Start supervisord — device-monitor handles provisioning, WiFi connect,
+# port forwarding, and reconnection in the background.
 exec /usr/bin/supervisord -c /tmp/supervisord.conf
