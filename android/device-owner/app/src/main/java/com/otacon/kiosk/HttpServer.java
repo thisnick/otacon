@@ -261,22 +261,7 @@ public class HttpServer extends NanoHTTPD {
             }
         }
 
-        // Use WifiNetworkSuggestion for Android 10+
-        android.net.wifi.WifiNetworkSuggestion suggestion =
-            new android.net.wifi.WifiNetworkSuggestion.Builder()
-                .setSsid(ssid)
-                .setWpa2Passphrase(password)
-                .build();
-
-        int status = wm.addNetworkSuggestions(java.util.Collections.singletonList(suggestion));
-
-        if (status == android.net.wifi.WifiManager.STATUS_NETWORK_SUGGESTIONS_SUCCESS) {
-            Log.i(TAG, "WiFi suggestion added for " + ssid);
-            return newFixedLengthResponse(Response.Status.OK, MIME_JSON,
-                "{\"ok\": true, \"method\": \"suggestion\"}");
-        }
-
-        // Fallback: try legacy WifiConfiguration (device owner has privileges)
+        // Try legacy WifiConfiguration first (device owner has privileges to force connect)
         try {
             android.net.wifi.WifiConfiguration config = new android.net.wifi.WifiConfiguration();
             config.SSID = "\"" + ssid + "\"";
@@ -285,15 +270,33 @@ public class HttpServer extends NanoHTTPD {
             if (netId != -1) {
                 wm.enableNetwork(netId, true);
                 wm.reconnect();
-                Log.i(TAG, "WiFi connected to " + ssid + " via legacy API");
+                Log.i(TAG, "WiFi connected to " + ssid + " via legacy API (netId=" + netId + ")");
                 return newFixedLengthResponse(Response.Status.OK, MIME_JSON,
                     "{\"ok\": true, \"method\": \"legacy\"}");
             }
+            Log.w(TAG, "Legacy addNetwork returned -1 for " + ssid);
         } catch (Exception e) {
             Log.w(TAG, "Legacy WiFi connect failed: " + e.getMessage());
         }
 
-        return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_JSON,
-            "{\"error\": \"failed to add network suggestion, status=" + status + "\"}");
+        // Fallback: WifiNetworkSuggestion (passive — Android decides when to connect)
+        try {
+            android.net.wifi.WifiNetworkSuggestion suggestion =
+                new android.net.wifi.WifiNetworkSuggestion.Builder()
+                    .setSsid(ssid)
+                    .setWpa2Passphrase(password)
+                    .build();
+            int status = wm.addNetworkSuggestions(java.util.Collections.singletonList(suggestion));
+            if (status == android.net.wifi.WifiManager.STATUS_NETWORK_SUGGESTIONS_SUCCESS) {
+                Log.i(TAG, "WiFi suggestion added for " + ssid);
+                return newFixedLengthResponse(Response.Status.OK, MIME_JSON,
+                    "{\"ok\": true, \"method\": \"suggestion\"}");
+            }
+            return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_JSON,
+                "{\"error\": \"suggestion failed, status=" + status + "\"}");
+        } catch (Exception e) {
+            return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_JSON,
+                "{\"error\": \"" + e.getMessage() + "\"}");
+        }
     }
 }
