@@ -66,6 +66,10 @@ while true; do
         fi
     else
         log "Device owner already set"
+        # Clear restrictions temporarily to allow APK update
+        adb shell am broadcast -a com.otacon.kiosk.CLEAR_RESTRICTIONS \
+            -n com.otacon.kiosk/.BootReceiver 2>/dev/null || true
+        sleep 1
         # Update APK to latest version
         if [ -f /opt/otacon-kiosk.apk ]; then
             adb install -r /opt/otacon-kiosk.apk 2>/dev/null && log "APK updated" || true
