@@ -6,6 +6,15 @@ android {
     namespace = "com.otacon.kiosk"
     compileSdk = 34
 
+    signingConfigs {
+        create("release") {
+            storeFile = file("../signing.jks")
+            storePassword = "otacon123"
+            keyAlias = "otacon"
+            keyPassword = "otacon123"
+        }
+    }
+
     defaultConfig {
         applicationId = "com.otacon.kiosk"
         minSdk = 33
@@ -15,8 +24,12 @@ android {
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("release")
+        }
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 

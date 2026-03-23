@@ -51,7 +51,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends wget unzip \
     && rm -rf /tmp/tools.zip /var/lib/apt/lists/*
 WORKDIR /src/android
 COPY android/device-owner/ .
-RUN chmod +x gradlew && ./gradlew assembleDebug --no-daemon
+RUN chmod +x gradlew && ./gradlew assembleRelease --no-daemon
 
 # Stage 4: Runtime
 FROM debian:trixie-slim
@@ -99,7 +99,7 @@ COPY --from=scrcpy-builder /usr/local/share/scrcpy/ /usr/local/share/scrcpy/
 COPY --from=audio-builder /src/server/target/release/otacon-server /usr/local/bin/otacon-server
 
 # Device owner APK (for auto-provisioning)
-COPY --from=apk-builder /src/android/app/build/outputs/apk/debug/app-debug.apk /opt/otacon-kiosk.apk
+COPY --from=apk-builder /src/android/app/build/outputs/apk/release/app-release.apk /opt/otacon-kiosk.apk
 
 ENV PATH="/usr/lib/android-sdk/platform-tools:${PATH}"
 ENV DISPLAY_NUM=50
