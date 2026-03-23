@@ -62,6 +62,11 @@ public class HttpServer extends NanoHTTPD {
                 return handleDismissNotification(key);
             }
 
+            // WiFi
+            if ("/wifi/connect".equals(uri) && method == Method.POST) {
+                return handleWifiConnect(session);
+            }
+
             // Clipboard
             if ("/clipboard".equals(uri) && method == Method.GET) {
                 return handleGetClipboard();
@@ -232,5 +237,63 @@ public class HttpServer extends NanoHTTPD {
         cm.setPrimaryClip(clip);
 
         return newFixedLengthResponse(Response.Status.OK, MIME_JSON, "{\"ok\": true}");
+    }
+
+    // --- WiFi ---
+
+    private Response handleWifiConnect(IHTTPSession session) throws Exception {
+        Map<String, String> bodyMap = new java.util.HashMap<>();
+        session.parseBody(bodyMap);
+        String body = bodyMap.get("postData");
+        JSONObject req = new JSONObject(body);
+        String ssid = req.getString("ssid");
+        String password = req.optString("password", "");
+
+        android.net.wifi.WifiManager wm = (android.net.wifi.WifiManager)
+            service.getApplicationContext().getSystemService(android.content.Context.WIFI_SERVICE);
+
+        if (!wm.isWifiEnabled()) {
+            wm.setWifiEnabled(true);
+            // Wait for WiFi to enable
+            for (int i = 0; i < 10; i++) {
+                if (wm.isWifiEnabled()) break;
+                Thread.sleep(500);
+            }
+        }
+
+        // Use WifiNetworkSuggestion for Android 10+
+        android.net.wifi.WifiNetworkSuggestion suggestion =
+            new android.net.wifi.WifiNetworkSuggestion.Builder()
+                .setSsid(ssid)
+                .setWpa2Passphrase(password)
+                .build();
+
+        int status = wm.addNetworkSuggestions(java.util.Collections.singletonList(suggestion));
+
+        if (status == android.net.wifi.WifiManager.STATUS_NETWORK_SUGGESTIONS_SUCCESS) {
+            Log.i(TAG, "WiFi suggestion added for " + ssid);
+            return newFixedLengthResponse(Response.Status.OK, MIME_JSON,
+                "{\"ok\": true, \"method\": \"suggestion\"}");
+        }
+
+        // Fallback: try legacy WifiConfiguration (device owner has privileges)
+        try {
+            android.net.wifi.WifiConfiguration config = new android.net.wifi.WifiConfiguration();
+            config.SSID = "\"" + ssid + "\"";
+            config.preSharedKey = "\"" + password + "\"";
+            int netId = wm.addNetwork(config);
+            if (netId != -1) {
+                wm.enableNetwork(netId, true);
+                wm.reconnect();
+                Log.i(TAG, "WiFi connected to " + ssid + " via legacy API");
+                return newFixedLengthResponse(Response.Status.OK, MIME_JSON,
+                    "{\"ok\": true, \"method\": \"legacy\"}");
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Legacy WiFi connect failed: " + e.getMessage());
+        }
+
+        return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_JSON,
+            "{\"error\": \"failed to add network suggestion, status=" + status + "\"}");
     }
 }

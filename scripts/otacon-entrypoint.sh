@@ -65,18 +65,21 @@ if ! adb shell dpm list-owners 2>/dev/null | grep -q "com.otacon.kiosk"; then
     elif [ -f /opt/otacon-kiosk.apk ]; then
         adb install -r /opt/otacon-kiosk.apk
         adb shell dpm set-device-owner com.otacon.kiosk/.DeviceOwnerReceiver
-        adb shell am broadcast -a com.otacon.kiosk.APPLY_RESTRICTIONS
-        # Enable accessibility service and notification listener
+        # Enable accessibility service and notification listener before restrictions
         adb shell settings put secure enabled_accessibility_services \
             com.otacon.kiosk/.OtaconAccessibilityService
         adb shell cmd notification allow_listener \
             com.otacon.kiosk/.OtaconNotificationListener
-        echo "Device owner provisioned"
+        echo "Device owner provisioned (restrictions applied after WiFi connect)"
     else
         echo "WARNING: /opt/otacon-kiosk.apk not found — skipping device owner setup"
     fi
 else
     echo "Device owner already set"
+    # Always update APK to latest version
+    if [ -f /opt/otacon-kiosk.apk ]; then
+        adb install -r /opt/otacon-kiosk.apk 2>/dev/null || true
+    fi
 fi
 
 # Keep screen on and disable lock screen
@@ -90,7 +93,20 @@ adb forward tcp:9090 tcp:9090 2>/dev/null || true
 # Connect phone to Pi's WiFi AP
 if [ -n "${WIFI_AP_SSID:-}" ]; then
     echo "Connecting phone to WiFi AP '${WIFI_AP_SSID}'..."
-    adb shell cmd wifi connect-network "${WIFI_AP_SSID}" wpa2 "${WIFI_AP_PASSWORD}" || true
+    # Try device owner app bridge first (works on Samsung Android 14+)
+    if curl -s -X POST -H 'Content-Type: application/json' \
+        -d "{\"ssid\":\"${WIFI_AP_SSID}\",\"password\":\"${WIFI_AP_PASSWORD}\"}" \
+        http://127.0.0.1:9090/wifi/connect 2>/dev/null | grep -q '"ok"'; then
+        echo "WiFi connected via device owner app"
+    else
+        # Fallback: ADB command (works on stock Android, not Samsung 14)
+        adb shell cmd wifi connect-network "${WIFI_AP_SSID}" wpa2 "${WIFI_AP_PASSWORD}" || true
+    fi
+fi
+
+# Apply device owner restrictions (after WiFi is connected)
+if adb shell dpm list-owners 2>/dev/null | grep -q "com.otacon.kiosk"; then
+    adb shell am broadcast -a com.otacon.kiosk.APPLY_RESTRICTIONS -n com.otacon.kiosk/.BootReceiver || true
 fi
 
 # Build supervisor config based on audio backend

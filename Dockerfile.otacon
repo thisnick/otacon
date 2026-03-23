@@ -79,6 +79,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Audio
     alsa-utils \
     lame \
+    # HTTP client (for device owner app bridge)
+    curl \
     # Bluetooth audio (HFP HF via BlueALSA)
     bluez \
     dbus \
