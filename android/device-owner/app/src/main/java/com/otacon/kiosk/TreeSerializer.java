@@ -70,6 +70,30 @@ public class TreeSerializer {
         }
     }
 
+    /** Serialize multiple roots (combined from getWindows + getRootInActiveWindow). */
+    public String toTextMultiRoot(List<AccessibilityNodeInfo> roots) {
+        refMap.clear();
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < roots.size(); i++) {
+            walkText(roots.get(i), 0, "/" + i, sb);
+        }
+        return sb.toString();
+    }
+
+    /** Serialize multiple roots to JSON. */
+    public String toJsonMultiRoot(List<AccessibilityNodeInfo> roots) {
+        refMap.clear();
+        try {
+            JSONArray arr = new JSONArray();
+            for (int i = 0; i < roots.size(); i++) {
+                arr.put(walkJson(roots.get(i), "/" + i));
+            }
+            return arr.toString(2);
+        } catch (JSONException e) {
+            return "{\"error\": \"" + e.getMessage() + "\"}";
+        }
+    }
+
     /** Serialize a single root (fallback). */
     public String toText(AccessibilityNodeInfo root) {
         if (root == null) return "";

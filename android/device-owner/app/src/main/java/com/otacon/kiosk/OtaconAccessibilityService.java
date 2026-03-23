@@ -25,10 +25,11 @@ public class OtaconAccessibilityService extends AccessibilityService {
     public void onServiceConnected() {
         super.onServiceConnected();
 
-        // Configure to see all windows
+        // Configure to see all windows and all views
         AccessibilityServiceInfo info = getServiceInfo();
         if (info != null) {
-            info.flags |= AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
+            info.flags |= AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+                | AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS;
             setServiceInfo(info);
         }
 

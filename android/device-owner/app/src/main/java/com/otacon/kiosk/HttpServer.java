@@ -108,31 +108,44 @@ public class HttpServer extends NanoHTTPD {
 
         TreeSerializer serializer = service.getSerializer();
 
-        // Use getWindows() to capture all windows (app, dialogs, system UI, launcher)
+        // Collect roots from all available sources
+        java.util.List<android.view.accessibility.AccessibilityNodeInfo> roots = new java.util.ArrayList<>();
+        java.util.Set<Integer> seenWindowIds = new java.util.HashSet<>();
+
+        // Source 1: getWindows() — system UI, nav bar, etc.
         java.util.List<android.view.accessibility.AccessibilityWindowInfo> windows = service.getWindows();
-        if (windows != null && !windows.isEmpty()) {
-            if ("json".equals(format)) {
-                return newFixedLengthResponse(Response.Status.OK, MIME_JSON,
-                    serializer.toJson(windows));
-            } else {
-                return newFixedLengthResponse(Response.Status.OK, MIME_TEXT,
-                    serializer.toText(windows));
+        if (windows != null) {
+            for (android.view.accessibility.AccessibilityWindowInfo w : windows) {
+                android.view.accessibility.AccessibilityNodeInfo root = w.getRoot();
+                if (root != null) {
+                    roots.add(root);
+                    seenWindowIds.add(w.getId());
+                }
             }
         }
 
-        // Fallback to active window only
-        android.view.accessibility.AccessibilityNodeInfo root = service.getRootInActiveWindow();
-        if (root == null) {
+        // Source 2: getRootInActiveWindow() — may capture windows that getWindows() misses
+        android.view.accessibility.AccessibilityNodeInfo activeRoot = service.getRootInActiveWindow();
+        if (activeRoot != null) {
+            // Avoid duplicates: check if this window was already included
+            android.view.accessibility.AccessibilityWindowInfo activeWindow = activeRoot.getWindow();
+            int activeWindowId = activeWindow != null ? activeWindow.getId() : -1;
+            if (!seenWindowIds.contains(activeWindowId)) {
+                roots.add(activeRoot);
+            }
+        }
+
+        if (roots.isEmpty()) {
             return newFixedLengthResponse(Response.Status.OK, MIME_JSON,
-                "{\"error\": \"no active window\"}");
+                "{\"error\": \"no windows available\"}");
         }
 
         if ("json".equals(format)) {
             return newFixedLengthResponse(Response.Status.OK, MIME_JSON,
-                serializer.toJson(root));
+                serializer.toJsonMultiRoot(roots));
         } else {
             return newFixedLengthResponse(Response.Status.OK, MIME_TEXT,
-                serializer.toText(root));
+                serializer.toTextMultiRoot(roots));
         }
     }
 
