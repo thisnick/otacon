@@ -67,6 +67,11 @@ public class HttpServer extends NanoHTTPD {
                 return handleWifiConnect(session);
             }
 
+            // Bluetooth
+            if ("/bluetooth/pair".equals(uri) && method == Method.POST) {
+                return handleBluetoothPair(session);
+            }
+
             // Clipboard
             if ("/clipboard".equals(uri) && method == Method.GET) {
                 return handleGetClipboard();
@@ -297,6 +302,114 @@ public class HttpServer extends NanoHTTPD {
         } catch (Exception e) {
             return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_JSON,
                 "{\"error\": \"" + e.getMessage() + "\"}");
+        }
+    }
+
+    // --- Bluetooth ---
+
+    private android.content.BroadcastReceiver pairingReceiver;
+
+    private Response handleBluetoothPair(IHTTPSession session) throws Exception {
+        Map<String, String> bodyMap = new java.util.HashMap<>();
+        session.parseBody(bodyMap);
+        String body = bodyMap.get("postData");
+        JSONObject req = new JSONObject(body);
+        String mac = req.getString("mac").toUpperCase();
+
+        android.bluetooth.BluetoothManager bm = (android.bluetooth.BluetoothManager)
+            service.getSystemService(android.content.Context.BLUETOOTH_SERVICE);
+        android.bluetooth.BluetoothAdapter adapter = bm.getAdapter();
+
+        if (adapter == null) {
+            return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_JSON,
+                "{\"error\": \"no bluetooth adapter\"}");
+        }
+
+        // Enable Bluetooth if off
+        if (!adapter.isEnabled()) {
+            adapter.enable();
+            for (int i = 0; i < 20; i++) {
+                if (adapter.isEnabled()) break;
+                Thread.sleep(500);
+            }
+            if (!adapter.isEnabled()) {
+                return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_JSON,
+                    "{\"error\": \"could not enable bluetooth\"}");
+            }
+        }
+
+        android.bluetooth.BluetoothDevice device = adapter.getRemoteDevice(mac);
+        if (device == null) {
+            return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_JSON,
+                "{\"error\": \"device not found: " + mac + "\"}");
+        }
+
+        // Check if already bonded
+        if (device.getBondState() == android.bluetooth.BluetoothDevice.BOND_BONDED) {
+            Log.i(TAG, "Already paired with " + mac);
+            return newFixedLengthResponse(Response.Status.OK, MIME_JSON,
+                "{\"ok\": true, \"status\": \"already_paired\"}");
+        }
+
+        // Register auto-confirm receiver for pairing requests
+        registerPairingReceiver(mac);
+
+        // Initiate pairing
+        boolean started = device.createBond();
+        if (!started) {
+            unregisterPairingReceiver();
+            return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_JSON,
+                "{\"error\": \"createBond failed\"}");
+        }
+
+        // Wait for bonding to complete (up to 30s)
+        for (int i = 0; i < 60; i++) {
+            int state = device.getBondState();
+            if (state == android.bluetooth.BluetoothDevice.BOND_BONDED) {
+                Log.i(TAG, "Paired with " + mac);
+                unregisterPairingReceiver();
+                return newFixedLengthResponse(Response.Status.OK, MIME_JSON,
+                    "{\"ok\": true, \"status\": \"paired\"}");
+            }
+            if (state == android.bluetooth.BluetoothDevice.BOND_NONE) {
+                // Bonding failed
+                break;
+            }
+            Thread.sleep(500);
+        }
+
+        unregisterPairingReceiver();
+        return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_JSON,
+            "{\"error\": \"pairing timed out or failed\"}");
+    }
+
+    private void registerPairingReceiver(String targetMac) {
+        unregisterPairingReceiver();
+        pairingReceiver = new android.content.BroadcastReceiver() {
+            @Override
+            public void onReceive(android.content.Context context, android.content.Intent intent) {
+                if (android.bluetooth.BluetoothDevice.ACTION_PAIRING_REQUEST.equals(intent.getAction())) {
+                    android.bluetooth.BluetoothDevice device =
+                        intent.getParcelableExtra(android.bluetooth.BluetoothDevice.EXTRA_DEVICE,
+                            android.bluetooth.BluetoothDevice.class);
+                    if (device != null && device.getAddress().equalsIgnoreCase(targetMac)) {
+                        Log.i(TAG, "Auto-confirming pairing with " + targetMac);
+                        device.setPairingConfirmation(true);
+                        abortBroadcast();
+                    }
+                }
+            }
+        };
+        android.content.IntentFilter filter = new android.content.IntentFilter(
+            android.bluetooth.BluetoothDevice.ACTION_PAIRING_REQUEST);
+        filter.setPriority(android.content.IntentFilter.SYSTEM_HIGH_PRIORITY);
+        service.registerReceiver(pairingReceiver, filter);
+    }
+
+    private void unregisterPairingReceiver() {
+        if (pairingReceiver != null) {
+            try { service.unregisterReceiver(pairingReceiver); } catch (Exception ignored) {}
+            pairingReceiver = null;
         }
     }
 }

@@ -104,11 +104,24 @@ while true; do
         log "Restrictions applied"
     fi
 
-    # --- Auto-detect Bluetooth MAC ---
+    # --- Bluetooth pairing ---
     if [ "$AUDIO_BACKEND" = "bluetooth" ]; then
-        PHONE_BT_MAC=$(adb shell settings get secure bluetooth_address 2>/dev/null | tr -d '\r')
-        if [ -n "$PHONE_BT_MAC" ] && [ "$PHONE_BT_MAC" != "null" ]; then
-            log "Phone BT MAC: $PHONE_BT_MAC"
+        PI_BT_MAC=$(hciconfig hci0 2>/dev/null | grep -oP '(?<=BD Address: )\S+' || true)
+        if [ -n "$PI_BT_MAC" ]; then
+            log "Checking Bluetooth pairing with Pi ($PI_BT_MAC)..."
+
+            # Pair endpoint checks bond state and pairs if needed
+            PAIR_RESULT=$(curl -s --max-time 45 -X POST -H 'Content-Type: application/json' \
+                -d "{\"mac\":\"${PI_BT_MAC}\"}" \
+                http://127.0.0.1:9090/bluetooth/pair 2>/dev/null || true)
+
+            if echo "$PAIR_RESULT" | grep -q '"already_paired"'; then
+                log "Bluetooth already paired"
+            elif echo "$PAIR_RESULT" | grep -q '"paired"'; then
+                log "Bluetooth paired successfully"
+            else
+                log "Bluetooth pairing result: $PAIR_RESULT"
+            fi
         fi
     fi
 
