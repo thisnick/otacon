@@ -705,11 +705,13 @@ async function refreshInfo() {
       const m = info.resolution.match(/(\d+)\s*x\s*(\d+)/);
       if (m) { phoneWidth = parseInt(m[1]); phoneHeight = parseInt(m[2]); }
     }
+    const bridgeColor = info.bridge ? 'var(--green)' : 'var(--text-muted)';
+    const bridgeLabel = info.bridge ? 'bridge' : 'adb';
     document.getElementById('infoBar').innerHTML = `
       <div class="info-item"><dt>Model</dt><dd>${info.model || '—'}</dd></div>
       <div class="info-item"><dt>Activity</dt><dd>${info.activity || '—'}</dd></div>
       <div class="info-item"><dt>Resolution</dt><dd>${info.resolution || '—'}</dd></div>
-      <div class="info-item"><dt>Window</dt><dd>${info.window || '—'}</dd></div>
+      <div class="info-item"><dt>Backend</dt><dd style="color:${bridgeColor}">${bridgeLabel}</dd></div>
     `;
   } catch(_) {}
 }

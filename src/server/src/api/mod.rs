@@ -53,7 +53,10 @@ pub fn router(state: Arc<AppState>) -> Router {
                 move |query| snapshot::handler(state, query)
             }),
         )
-        .route("/info", get(device::info_handler))
+        .route("/info", get({
+            let state = state.clone();
+            move || device::info_handler(state)
+        }))
         // Notifications
         .route("/notifications", get({
             let state = state.clone();

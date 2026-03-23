@@ -13,9 +13,10 @@ pub struct DeviceInfo {
     window: Option<String>,
     model: Option<String>,
     resolution: Option<String>,
+    bridge: bool,
 }
 
-pub async fn info_handler() -> Result<Json<DeviceInfo>, ApiError> {
+pub async fn info_handler(state: Arc<AppState>) -> Result<Json<DeviceInfo>, ApiError> {
     let (activity, window, model, resolution) = tokio::join!(
         get_current_activity(),
         get_focused_window(),
@@ -30,6 +31,7 @@ pub async fn info_handler() -> Result<Json<DeviceInfo>, ApiError> {
         resolution: resolution
             .ok()
             .and_then(|s| s.split(':').last().map(|s| s.trim().to_string())),
+        bridge: state.bridge.is_available(),
     }))
 }
 
