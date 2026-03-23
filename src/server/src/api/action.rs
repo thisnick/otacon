@@ -14,6 +14,7 @@ pub enum Action {
     Pinch(PinchParams),
     Key(KeyParams),
     Type(TypeParams),
+    SetText(SetTextParams),
 }
 
 #[derive(Debug, Deserialize)]
@@ -62,6 +63,13 @@ pub struct TypeParams {
     text: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct SetTextParams {
+    #[serde(rename = "ref")]
+    ref_id: String,
+    text: String,
+}
+
 pub async fn handler(
     state: Arc<AppState>,
     Json(action): Json<Action>,
@@ -73,6 +81,7 @@ pub async fn handler(
         Action::Pinch(p) => handle_pinch(p).await?,
         Action::Key(p) => handle_key(p).await?,
         Action::Type(p) => handle_type(p).await?,
+        Action::SetText(p) => handle_set_text(state.clone(), p).await?,
     }
 
     // Invalidate snapshot cache — the UI likely changed
@@ -216,6 +225,49 @@ async fn handle_type(p: TypeParams) -> Result<(), ApiError> {
         .replace('\'', "\\'")
         .replace('"', "\\\"")
         .replace('`', "\\`");
+    adb_shell(&format!("input text '{escaped}'")).await?;
+    Ok(())
+}
+
+async fn handle_set_text(state: Arc<AppState>, p: SetTextParams) -> Result<(), ApiError> {
+    // set_text uses the snapshot server's performAction(ACTION_SET_TEXT) —
+    // supports full Unicode (Chinese, emoji, etc.) unlike adb shell input text
+    if state.bridge.is_snapshot_available() {
+        let body = serde_json::json!({
+            "action": "set_text",
+            "ref": p.ref_id,
+            "text": p.text,
+        })
+        .to_string();
+        state.bridge.snapshot_post("/action", &body).await?;
+        return Ok(());
+    }
+
+    // Fallback: tap the element to focus, then type via ADB
+    // This won't work for non-ASCII — warn the user
+    let guard = state.snapshot_cache.lock().await;
+    let cache = guard
+        .as_ref()
+        .ok_or_else(|| ApiError::BadRequest("no snapshot — call GET /api/snapshot first".into()))?;
+    if !cache.is_valid() {
+        return Err(ApiError::BadRequest("snapshot expired — refresh first".into()));
+    }
+    let bounds = cache
+        .ref_bounds
+        .get(&p.ref_id)
+        .ok_or_else(|| ApiError::NotFound(format!("ref {} not found", p.ref_id)))?;
+    let (x, y) = ((bounds.x1 + bounds.x2) / 2, (bounds.y1 + bounds.y2) / 2);
+    drop(guard);
+
+    // Tap to focus, then type
+    adb_shell(&format!("input tap {x} {y}")).await?;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    let escaped = p.text
+        .replace('\\', "\\\\")
+        .replace(' ', "%s")
+        .replace('&', "\\&")
+        .replace('\'', "\\'")
+        .replace('"', "\\\"");
     adb_shell(&format!("input text '{escaped}'")).await?;
     Ok(())
 }

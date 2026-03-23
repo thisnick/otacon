@@ -89,11 +89,21 @@ program
 
 program
   .command("type")
-  .description("Type text")
+  .description("Type text (via ADB input, ASCII only)")
   .argument("<text>", "text to type")
   .action(async (text: string) => {
     const client = getClient(program.opts());
     await client.action({ action: "type", text });
+  });
+
+program
+  .command("set-text")
+  .description("Set text on a focused element (supports Unicode)")
+  .argument("<ref>", "element ref (e.g. e5)")
+  .argument("<text>", "text to set")
+  .action(async (ref: string, text: string) => {
+    const client = getClient(program.opts());
+    await client.action({ action: "set_text", ref, text });
   });
 
 // --- Screen ---

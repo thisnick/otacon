@@ -328,6 +328,32 @@
     flex-shrink: 0;
   }
   .ref-item:hover .ref-long { opacity: 1; }
+  .ref-input {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    padding: 2px 6px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--bg);
+    color: var(--text);
+    width: 120px;
+    flex-shrink: 0;
+  }
+  .ref-input:focus { border-color: var(--accent); outline: none; }
+  .ref-send {
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--green);
+    border: 1px solid var(--green);
+    border-radius: 3px;
+    padding: 1px 6px;
+    cursor: pointer;
+    opacity: 0.5;
+    transition: opacity 0.15s;
+    flex-shrink: 0;
+    background: transparent;
+  }
+  .ref-item:hover .ref-send { opacity: 1; }
   .ref-list::-webkit-scrollbar { width: 4px; }
   .ref-list::-webkit-scrollbar-track { background: transparent; }
   .ref-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
@@ -636,10 +662,12 @@ function buildRefList(nodes) {
     return '';
   }
   function walk(node) {
-    if (node.ref_id && (node.clickable || node.checkable || node.long_clickable)) {
+    const cls = node.class || '';
+    const type = cls.replace('android.widget.', '').replace('android.view.', '');
+    const isEditable = node.focusable && cls.endsWith('EditText');
+    if (node.ref_id && (node.clickable || node.checkable || node.long_clickable || isEditable)) {
       const label = node.text || node.content_desc || findText(node);
-      const type = (node.class || '').replace('android.widget.', '').replace('android.view.', '');
-      refs.push({ id: node.ref_id, type, label, longClickable: node.long_clickable });
+      refs.push({ id: node.ref_id, type, label, longClickable: node.long_clickable, editable: isEditable });
     }
     if (node.children) node.children.forEach(walk);
   }
@@ -655,6 +683,7 @@ function buildRefList(nodes) {
       `<span class="ref-id">${r.id}</span>` +
       `<span class="ref-type">${r.type}</span>` +
       `<span class="ref-label">${r.label ? escHtml(r.label) : '—'}</span>` +
+      (r.editable ? `<input class="ref-input" data-setText="${r.id}" placeholder="type here..." onclick="event.stopPropagation()"><button class="ref-send" data-sendText="${r.id}">set</button>` : '') +
       (r.longClickable ? `<span class="ref-long" data-long="${r.id}" title="long-tap">hold</span>` : '') +
     `</div>`
   ).join('');
@@ -686,13 +715,53 @@ function highlightTree(t) {
 
 // Delegate ref clicks from the ref list
 document.getElementById('refList').addEventListener('click', (e) => {
+  // Set text button
+  const sendBtn = e.target.closest('[data-sendText]');
+  if (sendBtn) {
+    const refId = sendBtn.dataset.sendtext;
+    const input = document.querySelector(`[data-setText="${refId}"]`);
+    if (input && input.value) setText(refId, input.value);
+    return;
+  }
   // Long-tap button
   const longBtn = e.target.closest('[data-long]');
   if (longBtn) { tapRef(longBtn.dataset.long, true); return; }
-  // Regular tap on row
+  // Regular tap on row (but not if clicking input)
+  if (e.target.tagName === 'INPUT') return;
   const item = e.target.closest('[data-ref]');
   if (item) tapRef(item.dataset.ref, false);
 });
+
+// Enter key in text input triggers set-text
+document.getElementById('refList').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && e.target.dataset.settext) {
+    const refId = e.target.dataset.settext;
+    if (e.target.value) setText(refId, e.target.value);
+  }
+});
+
+async function setText(refId, text) {
+  if (tapping) return;
+  tapping = true;
+  setScreenStatus(`set-text ${refId}: "${text}"...`, true);
+  try {
+    const res = await fetch('/api/action', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action: 'set_text', ref: refId, text})
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || res.status);
+    }
+    await new Promise(r => setTimeout(r, 500));
+    await refreshAll();
+    setScreenStatus(`set-text ${refId} done`);
+  } catch(e) {
+    setScreenStatus(`set-text failed: ${e.message}`);
+  }
+  tapping = false;
+}
 
 // --- Device Info ---
 async function refreshInfo() {
