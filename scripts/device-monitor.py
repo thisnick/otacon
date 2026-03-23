@@ -111,9 +111,12 @@ def configure_screen():
     adb_shell('settings put system screen_off_timeout 2147483647')
     adb_shell('settings put system screen_brightness_mode 0')
     adb_shell('settings put system screen_brightness 0')
-    adb_shell('input keyevent 26')  # wake
-    time.sleep(0.5)
-    adb_shell('input swipe 540 1800 540 800')  # dismiss lock
+    # Only wake if screen is off (keyevent 26 is a toggle)
+    display_state = adb_shell('dumpsys display | grep "mScreenState"')
+    if 'OFF' in display_state or 'mScreenState=0' in display_state:
+        adb_shell('input keyevent 224')  # WAKEUP (not a toggle)
+        time.sleep(0.5)
+        adb_shell('input swipe 540 1800 540 800')  # dismiss lock
 
 
 def is_device_owner_set() -> bool:
