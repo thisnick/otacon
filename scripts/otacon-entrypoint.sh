@@ -79,6 +79,11 @@ else
     echo "Device owner already set"
 fi
 
+# Keep screen on and disable lock screen
+adb shell settings put system screen_off_timeout 2147483647 || true
+adb shell svc power stayon usb || true
+adb shell input keyevent 26 || true  # wake screen if off
+
 # Set up ADB port forward to device owner HTTP server
 adb forward tcp:9090 tcp:9090 2>/dev/null || true
 
