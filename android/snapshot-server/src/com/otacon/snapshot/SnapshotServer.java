@@ -79,9 +79,10 @@ public class SnapshotServer {
             System.out.println("Step 7: configuring service info");
             android.accessibilityservice.AccessibilityServiceInfo info = uiAutomation.getServiceInfo();
             if (info != null) {
-                info.flags |= android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
+                info.flags |= android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+                    | android.accessibilityservice.AccessibilityServiceInfo.FLAG_INCLUDE_NOT_IMPORTANT_VIEWS;
                 uiAutomation.setServiceInfo(info);
-                System.out.println("  flags set: FLAG_RETRIEVE_INTERACTIVE_WINDOWS");
+                System.out.println("  flags set: FLAG_RETRIEVE_INTERACTIVE_WINDOWS | FLAG_INCLUDE_NOT_IMPORTANT_VIEWS");
             } else {
                 System.out.println("  WARNING: getServiceInfo() returned null");
             }
