@@ -76,7 +76,17 @@ public class SnapshotServer {
             System.out.println("Step 6: connect()");
             UiAutomation.class.getDeclaredMethod("connect").invoke(uiAutomation);
 
-            System.out.println("Step 7: waiting for connection");
+            System.out.println("Step 7: configuring service info");
+            android.accessibilityservice.AccessibilityServiceInfo info = uiAutomation.getServiceInfo();
+            if (info != null) {
+                info.flags |= android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;
+                uiAutomation.setServiceInfo(info);
+                System.out.println("  flags set: FLAG_RETRIEVE_INTERACTIVE_WINDOWS");
+            } else {
+                System.out.println("  WARNING: getServiceInfo() returned null");
+            }
+
+            System.out.println("Step 8: waiting for connection");
             Thread.sleep(500);
 
             System.out.println("Step 7: starting server on port " + PORT);
@@ -173,17 +183,25 @@ public class SnapshotServer {
 
         try {
             List<AccessibilityWindowInfo> windows = uiAutomation.getWindows();
+            System.out.println("getWindows() returned " + windows.size() + " windows");
             for (AccessibilityWindowInfo w : windows) {
                 AccessibilityNodeInfo root = w.getRoot();
+                System.out.println("  window type=" + w.getType() + " layer=" + w.getLayer()
+                    + " hasRoot=" + (root != null));
                 if (root != null) roots.add(root);
             }
         } catch (Exception e) {
+            System.err.println("getWindows() failed: " + e.getMessage());
             // Fallback
             try {
                 AccessibilityNodeInfo root = uiAutomation.getRootInActiveWindow();
+                System.out.println("getRootInActiveWindow() hasRoot=" + (root != null));
                 if (root != null) roots.add(root);
-            } catch (Exception ignored) {}
+            } catch (Exception e2) {
+                System.err.println("getRootInActiveWindow() failed: " + e2.getMessage());
+            }
         }
+        System.out.println("Total roots: " + roots.size());
 
         if (roots.isEmpty()) return json ? "[]" : "";
 
