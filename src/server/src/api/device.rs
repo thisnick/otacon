@@ -1,3 +1,4 @@
+use axum::extract::Path;
 use axum::Json;
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
@@ -89,6 +90,22 @@ pub async fn notifications_handler(
     let out = adb_shell("dumpsys notification --noredact").await?;
     let notifications = parse_notifications(&out);
     Ok(Json(notifications).into_response())
+}
+
+pub async fn dismiss_notification_handler(
+    state: Arc<AppState>,
+    Path(key): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if !state.bridge.is_device_owner_available() {
+        return Err(ApiError::Adb(
+            "notification dismiss requires device owner app (not available)".into(),
+        ));
+    }
+    state
+        .bridge
+        .device_delete(&format!("/notifications/{key}"))
+        .await?;
+    Ok(Json(serde_json::json!({"ok": true})))
 }
 
 fn parse_notifications(dump: &str) -> Vec<Notification> {

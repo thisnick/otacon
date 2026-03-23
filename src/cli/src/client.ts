@@ -165,4 +165,42 @@ export class OtaconClient {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json();
   }
+
+  async clipboardGet(): Promise<{ text: string | null }> {
+    const res = await fetch(`${this.baseUrl}/api/clipboard`);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(
+        (body as Record<string, string>).error || `HTTP ${res.status}`
+      );
+    }
+    return res.json();
+  }
+
+  async clipboardSet(text: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/clipboard`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(
+        (body as Record<string, string>).error || `HTTP ${res.status}`
+      );
+    }
+  }
+
+  async notificationDismiss(key: string): Promise<void> {
+    const res = await fetch(
+      `${this.baseUrl}/api/notifications/${encodeURIComponent(key)}`,
+      { method: "DELETE" }
+    );
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(
+        (body as Record<string, string>).error || `HTTP ${res.status}`
+      );
+    }
+  }
 }

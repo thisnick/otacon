@@ -15,6 +15,8 @@ pub enum Action {
     Key(KeyParams),
     Type(TypeParams),
     SetText(SetTextParams),
+    ScrollForward(ScrollParams),
+    ScrollBackward(ScrollParams),
 }
 
 #[derive(Debug, Deserialize)]
@@ -70,6 +72,12 @@ pub struct SetTextParams {
     text: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ScrollParams {
+    #[serde(rename = "ref")]
+    ref_id: String,
+}
+
 pub async fn handler(
     state: Arc<AppState>,
     Json(action): Json<Action>,
@@ -82,6 +90,8 @@ pub async fn handler(
         Action::Key(p) => handle_key(p).await?,
         Action::Type(p) => handle_type(p).await?,
         Action::SetText(p) => handle_set_text(state.clone(), p).await?,
+        Action::ScrollForward(p) => handle_scroll(state.clone(), p, "scroll_forward").await?,
+        Action::ScrollBackward(p) => handle_scroll(state.clone(), p, "scroll_backward").await?,
     }
 
     // Invalidate snapshot cache — the UI likely changed
@@ -269,5 +279,38 @@ async fn handle_set_text(state: Arc<AppState>, p: SetTextParams) -> Result<(), A
         .replace('\'', "\\'")
         .replace('"', "\\\"");
     adb_shell(&format!("input text '{escaped}'")).await?;
+    Ok(())
+}
+
+async fn handle_scroll(state: Arc<AppState>, p: ScrollParams, direction: &str) -> Result<(), ApiError> {
+    // Fast path: snapshot server performAction
+    if state.bridge.is_snapshot_available() {
+        let body = serde_json::json!({"action": direction, "ref": p.ref_id}).to_string();
+        state.bridge.snapshot_post("/action", &body).await?;
+        return Ok(());
+    }
+
+    // ADB fallback: swipe within element bounds
+    let guard = state.snapshot_cache.lock().await;
+    let cache = guard
+        .as_ref()
+        .ok_or_else(|| ApiError::BadRequest("no snapshot — call GET /api/snapshot first".into()))?;
+    if !cache.is_valid() {
+        return Err(ApiError::BadRequest("snapshot expired — refresh first".into()));
+    }
+    let bounds = cache
+        .ref_bounds
+        .get(&p.ref_id)
+        .ok_or_else(|| ApiError::NotFound(format!("ref {} not found", p.ref_id)))?;
+    let cx = (bounds.x1 + bounds.x2) / 2;
+    let top = bounds.y1 + (bounds.y2 - bounds.y1) / 4;
+    let bot = bounds.y2 - (bounds.y2 - bounds.y1) / 4;
+    drop(guard);
+
+    if direction == "scroll_forward" {
+        adb_shell(&format!("input swipe {cx} {bot} {cx} {top} 300")).await?;
+    } else {
+        adb_shell(&format!("input swipe {cx} {top} {cx} {bot} 300")).await?;
+    }
     Ok(())
 }

@@ -2,6 +2,7 @@ pub mod adb;
 pub mod action;
 pub mod apps;
 pub mod bridge;
+pub mod clipboard;
 pub mod contacts;
 pub mod device;
 pub mod screenshot;
@@ -61,6 +62,18 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/notifications", get({
             let state = state.clone();
             move || device::notifications_handler(state)
+        }))
+        .route("/notifications/{key}", delete({
+            let state = state.clone();
+            move |path| device::dismiss_notification_handler(state, path)
+        }))
+        // Clipboard
+        .route("/clipboard", get({
+            let state = state.clone();
+            move || clipboard::get_handler(state)
+        }).put({
+            let state = state.clone();
+            move |body| clipboard::set_handler(state, body)
         }))
         // SMS
         .route("/sms/threads", get(sms::threads_handler))

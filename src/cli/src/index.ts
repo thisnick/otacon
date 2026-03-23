@@ -106,6 +106,37 @@ program
     await client.action({ action: "set_text", ref, text });
   });
 
+program
+  .command("pinch")
+  .description("Pinch gesture (zoom in/out)")
+  .argument("<x>", "center x")
+  .argument("<y>", "center y")
+  .argument("<start_radius>", "starting finger distance from center")
+  .argument("<end_radius>", "ending finger distance (larger = zoom in)")
+  .option("-d, --duration <ms>", "duration in ms", "500")
+  .action(async (x: string, y: string, sr: string, er: string, opts: { duration: string }) => {
+    const client = getClient(program.opts());
+    await client.action({
+      action: "pinch",
+      x: parseInt(x),
+      y: parseInt(y),
+      start_radius: parseInt(sr),
+      end_radius: parseInt(er),
+      duration_ms: parseInt(opts.duration),
+    });
+  });
+
+program
+  .command("scroll")
+  .description("Scroll a scrollable element")
+  .argument("<ref>", "element ref (e.g. e5)")
+  .option("--up", "scroll up (backward)")
+  .action(async (ref: string, opts: { up?: boolean }) => {
+    const client = getClient(program.opts());
+    const action = opts.up ? "scroll_backward" : "scroll_forward";
+    await client.action({ action, ref });
+  });
+
 // --- Screen ---
 
 program
@@ -183,6 +214,41 @@ notifications
     const client = getClient(program.opts());
     const notifs = await client.notifications();
     console.log(JSON.stringify(notifs, null, 2));
+  });
+
+notifications
+  .command("dismiss")
+  .description("Dismiss a notification by key")
+  .argument("<key>", "notification key")
+  .action(async (key: string) => {
+    const client = getClient(program.opts());
+    await client.notificationDismiss(key);
+  });
+
+// --- Clipboard ---
+
+const clipboard = program
+  .command("clipboard")
+  .description("Clipboard commands");
+
+clipboard
+  .command("get")
+  .description("Get clipboard text")
+  .action(async () => {
+    const client = getClient(program.opts());
+    const result = await client.clipboardGet();
+    if (result.text !== null) {
+      console.log(result.text);
+    }
+  });
+
+clipboard
+  .command("set")
+  .description("Set clipboard text")
+  .argument("<text>", "text to set")
+  .action(async (text: string) => {
+    const client = getClient(program.opts());
+    await client.clipboardSet(text);
   });
 
 // --- Apps ---
