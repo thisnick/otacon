@@ -1,6 +1,7 @@
 pub mod adb;
 pub mod action;
 pub mod apps;
+pub mod bridge;
 pub mod contacts;
 pub mod device;
 pub mod screenshot;
@@ -54,7 +55,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/info", get(device::info_handler))
         // Notifications
-        .route("/notifications", get(device::notifications_handler))
+        .route("/notifications", get({
+            let state = state.clone();
+            move || device::notifications_handler(state)
+        }))
         // SMS
         .route("/sms/threads", get(sms::threads_handler))
         .route(

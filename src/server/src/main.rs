@@ -119,8 +119,10 @@ pub struct AppState {
     playback_owner: Mutex<Option<u64>>,
     /// Audio configuration
     audio_config: AudioConfig,
-    /// Cached accessibility snapshot for ref lookups
+    /// Cached accessibility snapshot for ref lookups (ADB fallback)
     snapshot_cache: Mutex<Option<api::snapshot::SnapshotCache>>,
+    /// Bridge to device owner app's HTTP server
+    pub bridge: Arc<api::bridge::BridgeState>,
 }
 
 #[tokio::main]
@@ -147,12 +149,16 @@ async fn main() {
         None
     };
 
+    let bridge = Arc::new(api::bridge::BridgeState::new());
+    api::bridge::spawn_health_checker(bridge.clone());
+
     let state = Arc::new(AppState {
         capture_tx: capture_tx.clone(),
         a2dp_tx,
         playback_owner: Mutex::new(None),
         audio_config,
         snapshot_cache: Mutex::new(Some(api::snapshot::SnapshotCache::default())),
+        bridge,
     });
 
     tokio::spawn(capture_audio(capture_cmd, capture_tx));

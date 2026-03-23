@@ -87,7 +87,17 @@ pub async fn handler(
 }
 
 async fn handle_tap(state: Arc<AppState>, p: TapParams, long: bool) -> Result<(), ApiError> {
-    let (x, y) = if let Some(ref_id) = p.ref_id {
+    let action_name = if long { "long_click" } else { "click" };
+
+    // Ref-based tap: try bridge first (performAction, no coordinates needed)
+    if let Some(ref ref_id) = p.ref_id {
+        if state.bridge.is_available() {
+            let body = serde_json::json!({"action": action_name, "ref": ref_id}).to_string();
+            state.bridge.post("/action", &body).await?;
+            return Ok(());
+        }
+
+        // ADB fallback: look up cached bounds
         let guard = state.snapshot_cache.lock().await;
         let cache = guard
             .as_ref()
@@ -101,26 +111,32 @@ async fn handle_tap(state: Arc<AppState>, p: TapParams, long: bool) -> Result<()
 
         let bounds = cache
             .ref_bounds
-            .get(&ref_id)
+            .get(ref_id)
             .ok_or_else(|| ApiError::NotFound(format!("ref {ref_id} not in current snapshot")))?;
-        let cx = (bounds.x1 + bounds.x2) / 2;
-        let cy = (bounds.y1 + bounds.y2) / 2;
-        (cx, cy)
-    } else if let (Some(x), Some(y)) = (p.x, p.y) {
-        (x, y)
-    } else {
-        return Err(ApiError::BadRequest(
-            "tap requires either {x, y} or {ref}".into(),
-        ));
-    };
+        let (x, y) = ((bounds.x1 + bounds.x2) / 2, (bounds.y1 + bounds.y2) / 2);
+        drop(guard);
 
-    if long {
-        // Long-press: swipe to same point with 1s duration
-        adb_shell(&format!("input swipe {x} {y} {x} {y} 1000")).await?;
-    } else {
-        adb_shell(&format!("input tap {x} {y}")).await?;
+        if long {
+            adb_shell(&format!("input swipe {x} {y} {x} {y} 1000")).await?;
+        } else {
+            adb_shell(&format!("input tap {x} {y}")).await?;
+        }
+        return Ok(());
     }
-    Ok(())
+
+    // Coordinate-based tap: always via ADB input
+    if let (Some(x), Some(y)) = (p.x, p.y) {
+        if long {
+            adb_shell(&format!("input swipe {x} {y} {x} {y} 1000")).await?;
+        } else {
+            adb_shell(&format!("input tap {x} {y}")).await?;
+        }
+        return Ok(());
+    }
+
+    Err(ApiError::BadRequest(
+        "tap requires either {x, y} or {ref}".into(),
+    ))
 }
 
 async fn handle_swipe(p: SwipeParams) -> Result<(), ApiError> {

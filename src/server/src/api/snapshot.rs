@@ -333,7 +333,19 @@ pub async fn handler(
     state: std::sync::Arc<super::AppState>,
     Query(query): Query<SnapshotQuery>,
 ) -> Result<Response, ApiError> {
-    // Dump UI hierarchy
+    // Fast path: device owner app bridge
+    if state.bridge.is_available() {
+        let path = format!("/snapshot?format={}", query.format);
+        let body = state.bridge.get(&path).await?;
+        let content_type = if query.format == "json" {
+            "application/json"
+        } else {
+            "text/plain; charset=utf-8"
+        };
+        return Ok(([("content-type", content_type)], body).into_response());
+    }
+
+    // Slow path: ADB uiautomator dump
     let raw = adb(&["exec-out", "uiautomator", "dump", "/dev/tty"]).await?;
     let raw_str = String::from_utf8_lossy(&raw);
 

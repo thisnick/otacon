@@ -54,6 +54,34 @@ if [ "$AUDIO_BACKEND" = "bluetooth" ]; then
     fi
 fi
 
+# === Device Owner auto-provisioning ===
+if ! adb shell dpm list-owners 2>/dev/null | grep -q "com.otacon.kiosk"; then
+    echo "Device owner not set — provisioning..."
+    # Check for Google accounts (device owner requires none)
+    ACCOUNT_COUNT=$(adb shell dumpsys account 2>/dev/null | grep -c "Account {" || true)
+    if [ "${ACCOUNT_COUNT:-0}" -gt 0 ]; then
+        echo "ERROR: Phone has $ACCOUNT_COUNT account(s). Factory reset required for device owner."
+        echo "Continuing without device owner (reduced functionality)."
+    elif [ -f /opt/otacon-kiosk.apk ]; then
+        adb install -r /opt/otacon-kiosk.apk
+        adb shell dpm set-device-owner com.otacon.kiosk/.DeviceOwnerReceiver
+        adb shell am broadcast -a com.otacon.kiosk.APPLY_RESTRICTIONS
+        # Enable accessibility service and notification listener
+        adb shell settings put secure enabled_accessibility_services \
+            com.otacon.kiosk/.OtaconAccessibilityService
+        adb shell cmd notification allow_listener \
+            com.otacon.kiosk/.OtaconNotificationListener
+        echo "Device owner provisioned"
+    else
+        echo "WARNING: /opt/otacon-kiosk.apk not found — skipping device owner setup"
+    fi
+else
+    echo "Device owner already set"
+fi
+
+# Set up ADB port forward to device owner HTTP server
+adb forward tcp:9090 tcp:9090 2>/dev/null || true
+
 # Connect phone to Pi's WiFi AP
 if [ -n "${WIFI_AP_SSID:-}" ]; then
     echo "Connecting phone to WiFi AP '${WIFI_AP_SSID}'..."

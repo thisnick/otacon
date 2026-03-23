@@ -1,8 +1,11 @@
 use axum::Json;
+use axum::response::{IntoResponse, Response};
 use serde::Serialize;
+use std::sync::Arc;
 
 use super::adb::adb_shell;
 use super::ApiError;
+use crate::AppState;
 
 #[derive(Serialize)]
 pub struct DeviceInfo {
@@ -69,10 +72,19 @@ pub struct Notification {
     time: Option<String>,
 }
 
-pub async fn notifications_handler() -> Result<Json<Vec<Notification>>, ApiError> {
+pub async fn notifications_handler(
+    state: Arc<AppState>,
+) -> Result<Response, ApiError> {
+    // Fast path: device owner app
+    if state.bridge.is_available() {
+        let body = state.bridge.get("/notifications").await?;
+        return Ok(([("content-type", "application/json")], body).into_response());
+    }
+
+    // Slow path: parse dumpsys
     let out = adb_shell("dumpsys notification --noredact").await?;
     let notifications = parse_notifications(&out);
-    Ok(Json(notifications))
+    Ok(Json(notifications).into_response())
 }
 
 fn parse_notifications(dump: &str) -> Vec<Notification> {
