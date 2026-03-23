@@ -1,6 +1,6 @@
 .PHONY: build up down logs push provision deploy-docker setup-pi \
        phone-setup phone-reset health pigen pigen-flash pigen-config \
-       wake bluetooth-pair bluetooth-connect bluetooth-status bluetooth-watch
+       wake cli bluetooth-pair bluetooth-connect bluetooth-status bluetooth-watch
 
 PI_HOST ?= otacon-pi
 PI_USER ?= nick
@@ -63,7 +63,11 @@ pigen-flash:
 	bash pigen/build.sh flash $(DEVICE)
 
 wake:
-	$(SSH_CMD) "cd $(REMOTE_DIR) && docker compose exec -T otacon adb shell input keyevent 26 && docker compose exec -T otacon adb shell input swipe 540 1800 540 800"
+	$(SSH_CMD) "cd $(REMOTE_DIR) && docker compose exec -T otacon adb shell input keyevent 224 && docker compose exec -T otacon adb shell input swipe 540 1800 540 800"
+
+# CLI — pass arguments via ARGS, e.g.: make cli ARGS="snapshot --json"
+cli:
+	@cd src/cli && npx tsx src/index.ts $(ARGS)
 
 bluetooth-pair:
 	$(SSH_CMD) "cd $(REMOTE_DIR) && docker compose exec otacon /opt/bluetooth-pair.sh"
