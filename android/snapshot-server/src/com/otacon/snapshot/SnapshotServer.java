@@ -42,39 +42,61 @@ public class SnapshotServer {
         }
     }
 
-    public static void main(String[] args) throws Exception {
-        if (Looper.myLooper() == null) Looper.prepareMainLooper();
+    public static void main(String[] args) {
+        try {
+            System.out.println("Step 1: Looper");
+            if (Looper.myLooper() == null) Looper.prepareMainLooper();
 
-        // UiAutomation requires a handler thread
-        HandlerThread handlerThread = new HandlerThread("UiAutomation");
-        handlerThread.start();
+            System.out.println("Step 2: HandlerThread");
+            HandlerThread handlerThread = new HandlerThread("UiAutomation");
+            handlerThread.start();
 
-        // Use reflection to access hidden UiAutomationConnection class
-        // This is how scrcpy and uiautomator2-server get UiAutomation from app_process
-        Class<?> connClass = Class.forName("android.app.UiAutomationConnection");
-        Object connection = connClass.getDeclaredConstructor().newInstance();
-        Constructor<UiAutomation> ctor = UiAutomation.class.getDeclaredConstructor(
-            Looper.class, connClass);
-        ctor.setAccessible(true);
-        uiAutomation = ctor.newInstance(handlerThread.getLooper(), connection);
-        // connect() is hidden API — use reflection
-        UiAutomation.class.getDeclaredMethod("connect").invoke(uiAutomation);
+            System.out.println("Step 3: UiAutomationConnection (reflection)");
+            Class<?> connClass = Class.forName("android.app.UiAutomationConnection");
+            Object connection = connClass.getDeclaredConstructor().newInstance();
 
-        // Give it a moment to connect
-        Thread.sleep(500);
-
-        System.out.println("Snapshot server starting on port " + PORT);
-
-        ServerSocket server = new ServerSocket(PORT);
-        System.out.println("Snapshot server ready");
-
-        while (true) {
-            try {
-                Socket client = server.accept();
-                handleClient(client);
-            } catch (Exception e) {
-                System.err.println("Client error: " + e.getMessage());
+            System.out.println("Step 4: listing UiAutomation constructors");
+            for (java.lang.reflect.Constructor<?> c : UiAutomation.class.getDeclaredConstructors()) {
+                System.out.println("  ctor: " + java.util.Arrays.toString(c.getParameterTypes()));
             }
+
+            System.out.println("Step 5: finding matching constructor");
+            Constructor<?> ctor = null;
+            for (java.lang.reflect.Constructor<?> c : UiAutomation.class.getDeclaredConstructors()) {
+                Class<?>[] params = c.getParameterTypes();
+                if (params.length >= 2 && params[0] == Looper.class) {
+                    ctor = c;
+                    break;
+                }
+            }
+            if (ctor == null) throw new RuntimeException("No suitable UiAutomation constructor found");
+            ctor.setAccessible(true);
+            uiAutomation = (UiAutomation) ctor.newInstance(handlerThread.getLooper(), connection);
+
+            System.out.println("Step 6: connect()");
+            UiAutomation.class.getDeclaredMethod("connect").invoke(uiAutomation);
+
+            System.out.println("Step 7: waiting for connection");
+            Thread.sleep(500);
+
+            System.out.println("Step 7: starting server on port " + PORT);
+            ServerSocket server = new ServerSocket(PORT);
+            System.out.println("Snapshot server ready");
+            System.out.flush();
+
+            while (true) {
+                try {
+                    Socket client = server.accept();
+                    handleClient(client);
+                } catch (Exception e) {
+                    System.err.println("Client error: " + e.getMessage());
+                }
+            }
+        } catch (Throwable t) {
+            System.err.println("FATAL: " + t.getClass().getName() + ": " + t.getMessage());
+            t.printStackTrace(System.err);
+            System.err.flush();
+            System.exit(1);
         }
     }
 
