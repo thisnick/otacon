@@ -377,6 +377,7 @@ public class HttpServer extends NanoHTTPD {
         }
 
         // Wait for bonding to complete (up to 30s)
+        // Samsung shows a pairing dialog that needs to be confirmed via a11y
         for (int i = 0; i < 60; i++) {
             int state = device.getBondState();
             if (state == android.bluetooth.BluetoothDevice.BOND_BONDED) {
@@ -385,9 +386,14 @@ public class HttpServer extends NanoHTTPD {
                 return newFixedLengthResponse(Response.Status.OK, MIME_JSON,
                     "{\"ok\": true, \"status\": \"paired\"}");
             }
-            if (state == android.bluetooth.BluetoothDevice.BOND_NONE) {
-                // Bonding failed
+            if (state == android.bluetooth.BluetoothDevice.BOND_NONE && i > 4) {
+                // Bonding failed (wait a few seconds before checking —
+                // state can briefly be NONE during Samsung dialog transition)
                 break;
+            }
+            // Try to auto-tap Samsung's pairing confirmation dialog
+            if (state == android.bluetooth.BluetoothDevice.BOND_BONDING) {
+                autoDismissPairingDialog();
             }
             Thread.sleep(500);
         }
@@ -425,5 +431,42 @@ public class HttpServer extends NanoHTTPD {
             try { service.unregisterReceiver(pairingReceiver); } catch (Exception ignored) {}
             pairingReceiver = null;
         }
+    }
+
+    /**
+     * Samsung shows a BluetoothPairingDialog that requires user confirmation.
+     * Use the accessibility service to find and tap the "Pair" button.
+     */
+    private void autoDismissPairingDialog() {
+        try {
+            java.util.List<android.view.accessibility.AccessibilityWindowInfo> windows = service.getWindows();
+            if (windows == null) return;
+            for (android.view.accessibility.AccessibilityWindowInfo window : windows) {
+                AccessibilityNodeInfo root = window.getRoot();
+                if (root == null) continue;
+                AccessibilityNodeInfo pairBtn = findNodeByText(root, "Pair");
+                if (pairBtn != null) {
+                    Log.i(TAG, "Auto-tapping 'Pair' button in pairing dialog");
+                    pairBtn.performAction(AccessibilityNodeInfo.ACTION_CLICK);
+                    return;
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "autoDismissPairingDialog error: " + e.getMessage());
+        }
+    }
+
+    private AccessibilityNodeInfo findNodeByText(AccessibilityNodeInfo node, String text) {
+        if (node == null) return null;
+        CharSequence nodeText = node.getText();
+        if (nodeText != null && text.equals(nodeText.toString()) && node.isClickable()) {
+            return node;
+        }
+        for (int i = 0; i < node.getChildCount(); i++) {
+            AccessibilityNodeInfo child = node.getChild(i);
+            AccessibilityNodeInfo found = findNodeByText(child, text);
+            if (found != null) return found;
+        }
+        return null;
     }
 }

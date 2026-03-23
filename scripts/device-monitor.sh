@@ -62,6 +62,9 @@ while true; do
                 com.otacon.kiosk/.OtaconAccessibilityService
             adb shell cmd notification allow_listener \
                 com.otacon.kiosk/.OtaconNotificationListener 2>/dev/null || true
+            # Grant runtime permissions
+            adb shell pm grant com.otacon.kiosk android.permission.BLUETOOTH_CONNECT 2>/dev/null || true
+            adb shell pm grant com.otacon.kiosk android.permission.BLUETOOTH_SCAN 2>/dev/null || true
             log "Device owner provisioned"
         else
             log "WARNING: /opt/otacon-kiosk.apk not found"
