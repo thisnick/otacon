@@ -17,12 +17,12 @@ public class BootReceiver extends BroadcastReceiver {
 
     private static final String[] USER_RESTRICTIONS = {
         UserManager.DISALLOW_CONFIG_WIFI,
-        UserManager.DISALLOW_CONFIG_BLUETOOTH,
+        // DISALLOW_CONFIG_BLUETOOTH removed — may interfere with BlueALSA audio
         UserManager.DISALLOW_CONFIG_LOCATION,
         UserManager.DISALLOW_FACTORY_RESET,
         UserManager.DISALLOW_SAFE_BOOT,
         UserManager.DISALLOW_USB_FILE_TRANSFER,
-        UserManager.DISALLOW_ADJUST_VOLUME,
+        // DISALLOW_ADJUST_VOLUME removed — may interfere with BT audio routing
         UserManager.DISALLOW_AIRPLANE_MODE,
         UserManager.DISALLOW_CONFIG_TETHERING,
         UserManager.DISALLOW_CONFIG_CREDENTIALS,
