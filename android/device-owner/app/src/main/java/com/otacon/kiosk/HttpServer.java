@@ -63,17 +63,6 @@ public class HttpServer extends NanoHTTPD {
                 return handleBluetoothPair(session);
             }
 
-            // Google accounts & OAuth
-            if ("/google/setup".equals(uri) && method == Method.POST) {
-                return handleGoogleSetup(session);
-            }
-            if ("/google/accounts".equals(uri) && method == Method.GET) {
-                return handleGoogleAccounts();
-            }
-            if ("/google/token".equals(uri) && method == Method.POST) {
-                return handleGoogleToken(session);
-            }
-
             // Clipboard
             if ("/clipboard".equals(uri) && method == Method.GET) {
                 return handleGetClipboard();
@@ -319,56 +308,4 @@ public class HttpServer extends NanoHTTPD {
         }
     }
 
-    // --- Google Accounts ---
-
-    private GoogleAuth googleAuth;
-
-    private GoogleAuth getGoogleAuth() {
-        if (googleAuth == null) {
-            googleAuth = new GoogleAuth(context);
-        }
-        return googleAuth;
-    }
-
-    private Response handleGoogleSetup(IHTTPSession session) throws Exception {
-        Map<String, String> bodyMap = new java.util.HashMap<>();
-        session.parseBody(bodyMap);
-        String body = bodyMap.get("postData");
-        JSONObject req = new JSONObject(body);
-        String clientId = req.getString("client_id");
-        String clientSecret = req.getString("client_secret");
-        getGoogleAuth().storeCredentials(clientId, clientSecret);
-        return newFixedLengthResponse(Response.Status.OK, MIME_JSON, "{\"ok\": true}");
-    }
-
-    private Response handleGoogleAccounts() {
-        try {
-            String[] accounts = getGoogleAuth().getAccounts();
-            org.json.JSONArray arr = new org.json.JSONArray();
-            for (String account : accounts) {
-                arr.put(account);
-            }
-            return newFixedLengthResponse(Response.Status.OK, MIME_JSON, arr.toString());
-        } catch (Exception e) {
-            return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_JSON,
-                "{\"error\": \"" + e.getMessage() + "\"}");
-        }
-    }
-
-    private Response handleGoogleToken(IHTTPSession session) throws Exception {
-        Map<String, String> bodyMap = new java.util.HashMap<>();
-        session.parseBody(bodyMap);
-        String body = bodyMap.get("postData");
-        JSONObject req = new JSONObject(body);
-        String email = req.getString("account");
-        String scope = req.getString("scope");
-
-        JSONObject result = getGoogleAuth().getToken(email, scope);
-
-        if (result.has("error")) {
-            return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_JSON,
-                result.toString());
-        }
-        return newFixedLengthResponse(Response.Status.OK, MIME_JSON, result.toString());
-    }
 }

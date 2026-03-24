@@ -251,60 +251,6 @@ clipboard
     await client.clipboardSet(text);
   });
 
-// --- Google ---
-
-const SCOPE_SHORTCUTS: Record<string, string> = {
-  mail: "https://mail.google.com/",
-  calendar: "https://www.googleapis.com/auth/calendar",
-  drive: "https://www.googleapis.com/auth/drive",
-  contacts: "https://www.googleapis.com/auth/contacts",
-  youtube: "https://www.googleapis.com/auth/youtube",
-  sheets: "https://www.googleapis.com/auth/spreadsheets",
-  docs: "https://www.googleapis.com/auth/documents",
-};
-
-const google = program.command("google").description("Google account commands");
-
-google
-  .command("setup")
-  .description("Configure OAuth credentials (one-time)")
-  .argument("<path>", "path to credentials.json from Google Cloud Console")
-  .action(async (path: string) => {
-    const client = getClient(program.opts());
-    const fs = await import("fs");
-    const raw = JSON.parse(fs.readFileSync(path, "utf-8"));
-    // Google Cloud Console exports as {"installed": {"client_id": ..., "client_secret": ...}}
-    const creds = raw.installed || raw.web || raw;
-    if (!creds.client_id || !creds.client_secret) {
-      console.error("Invalid credentials.json — must contain client_id and client_secret");
-      process.exit(1);
-    }
-    await client.googleSetup(creds.client_id, creds.client_secret);
-    console.error("OAuth credentials configured");
-  });
-
-google
-  .command("accounts")
-  .description("List signed-in Google accounts")
-  .action(async () => {
-    const client = getClient(program.opts());
-    const accounts = await client.googleAccounts();
-    console.log(JSON.stringify(accounts, null, 2));
-  });
-
-google
-  .command("token")
-  .description("Get OAuth token for a Google API scope")
-  .requiredOption("-s, --scope <scope>", "API scope (e.g. mail, calendar, drive, or full URL)")
-  .option("-a, --account <email>", "Google account email (default: first account)")
-  .action(async (opts: { scope: string; account?: string }) => {
-    const client = getClient(program.opts());
-    const scope = SCOPE_SHORTCUTS[opts.scope] || opts.scope;
-    const result = await client.googleToken(scope, opts.account);
-    // Print just the token for easy piping: $(otacon google token -s mail)
-    console.log(result.token);
-  });
-
 // --- Apps ---
 
 const apps = program.command("apps").description("App commands");
