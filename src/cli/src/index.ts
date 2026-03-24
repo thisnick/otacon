@@ -251,6 +251,42 @@ clipboard
     await client.clipboardSet(text);
   });
 
+// --- Google ---
+
+const SCOPE_SHORTCUTS: Record<string, string> = {
+  mail: "https://mail.google.com/",
+  calendar: "https://www.googleapis.com/auth/calendar",
+  drive: "https://www.googleapis.com/auth/drive",
+  contacts: "https://www.googleapis.com/auth/contacts",
+  youtube: "https://www.googleapis.com/auth/youtube",
+  sheets: "https://www.googleapis.com/auth/spreadsheets",
+  docs: "https://www.googleapis.com/auth/documents",
+};
+
+const google = program.command("google").description("Google account commands");
+
+google
+  .command("accounts")
+  .description("List signed-in Google accounts")
+  .action(async () => {
+    const client = getClient(program.opts());
+    const accounts = await client.googleAccounts();
+    console.log(JSON.stringify(accounts, null, 2));
+  });
+
+google
+  .command("token")
+  .description("Get OAuth token for a Google API scope")
+  .requiredOption("-s, --scope <scope>", "API scope (e.g. mail, calendar, drive, or full URL)")
+  .option("-a, --account <email>", "Google account email (default: first account)")
+  .action(async (opts: { scope: string; account?: string }) => {
+    const client = getClient(program.opts());
+    const scope = SCOPE_SHORTCUTS[opts.scope] || opts.scope;
+    const result = await client.googleToken(scope, opts.account);
+    // Print just the token for easy piping: $(otacon google token -s mail)
+    console.log(result.token);
+  });
+
 // --- Apps ---
 
 const apps = program.command("apps").description("App commands");

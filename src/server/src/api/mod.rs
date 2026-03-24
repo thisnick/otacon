@@ -4,6 +4,7 @@ pub mod apps;
 pub mod bridge;
 pub mod clipboard;
 pub mod contacts;
+pub mod google;
 pub mod device;
 pub mod screenshot;
 pub mod sms;
@@ -84,6 +85,15 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/sms/messages", post(sms::send_handler))
         // Contacts
         .route("/contacts", get(contacts::handler))
+        // Google
+        .route("/google/accounts", get({
+            let state = state.clone();
+            move || google::accounts_handler(state)
+        }))
+        .route("/google/token", get({
+            let state = state.clone();
+            move |query| google::token_handler(state, query)
+        }))
         // Apps
         .route("/apps", get(apps::list_handler))
         .route(
