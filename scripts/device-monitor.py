@@ -111,6 +111,12 @@ def configure_screen():
     adb_shell('settings put system screen_off_timeout 2147483647')
     adb_shell('settings put system screen_brightness_mode 0')
     adb_shell('settings put system screen_brightness 0')
+    # Set PIN to 0000 via ADB (not device owner — that triggers Samsung sec.automation)
+    result = adb_shell('locksettings set-pin 0000')
+    if 'error' not in result.lower():
+        log.info('PIN set to 0000')
+    else:
+        log.info(f'PIN already set or failed: {result}')
     # Only wake if screen is off (keyevent 26 is a toggle)
     display_state = adb_shell('dumpsys display | grep "mScreenState"')
     if 'OFF' in display_state or 'mScreenState=0' in display_state:

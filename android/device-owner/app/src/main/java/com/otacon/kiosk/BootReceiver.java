@@ -25,6 +25,7 @@ public class BootReceiver extends BroadcastReceiver {
         UserManager.DISALLOW_ADJUST_VOLUME,
         UserManager.DISALLOW_AIRPLANE_MODE,
         UserManager.DISALLOW_CONFIG_TETHERING,
+        UserManager.DISALLOW_CONFIG_CREDENTIALS,
     };
 
     @Override
