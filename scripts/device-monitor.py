@@ -88,6 +88,12 @@ def wait_for_device() -> str:
 
 
 def is_device_connected(serial: str) -> bool:
+    """Check if device is connected, retry once on failure (ADB can hiccup briefly)."""
+    state = adb('-s', serial, 'get-state')
+    if state == 'device':
+        return True
+    # ADB can briefly disconnect during APK install — retry after a pause
+    time.sleep(3)
     state = adb('-s', serial, 'get-state')
     return state == 'device'
 
