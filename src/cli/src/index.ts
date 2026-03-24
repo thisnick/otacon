@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// Accept Tailscale self-signed certs (set before any imports to avoid warning)
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+
 import { program } from "commander";
 import { writeFileSync } from "fs";
 import { OtaconClient } from "./client.js";
@@ -225,6 +228,17 @@ notifications
   .action(async (key: string) => {
     const client = getClient(program.opts());
     await client.notificationDismiss(key);
+  });
+
+notifications
+  .command("action")
+  .description("Trigger a notification action button")
+  .argument("<key>", "notification key")
+  .argument("<index>", "action index (from notifications list)")
+  .passThroughOptions(true)
+  .action(async (key: string, index: string) => {
+    const client = getClient(program.opts());
+    await client.notificationAction(key, parseInt(index));
   });
 
 // --- Clipboard ---

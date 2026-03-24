@@ -67,7 +67,7 @@ wake:
 
 # CLI — pass arguments via ARGS, e.g.: make cli ARGS="snapshot --json"
 cli:
-	@cd src/cli && npx tsx src/index.ts $(ARGS)
+	@cd src/cli && node --no-warnings --import tsx/esm src/index.ts $(ARGS)
 
 bluetooth-pair:
 	$(SSH_CMD) "cd $(REMOTE_DIR) && docker compose exec otacon /opt/bluetooth-pair.sh"

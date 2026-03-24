@@ -52,6 +52,14 @@ public class HttpServer extends NanoHTTPD {
                 String key = uri.substring("/notifications/".length());
                 return handleDismissNotification(key);
             }
+            // POST /notifications/:key/action/:index
+            if (uri.matches("/notifications/.+/action/\\d+") && method == Method.POST) {
+                String[] parts = uri.split("/");
+                // parts: ["", "notifications", key, "action", index]
+                String key = java.net.URLDecoder.decode(parts[2], "UTF-8");
+                int index = Integer.parseInt(parts[4]);
+                return handleNotificationAction(key, index);
+            }
 
             // WiFi
             if ("/wifi/connect".equals(uri) && method == Method.POST) {
@@ -107,6 +115,20 @@ public class HttpServer extends NanoHTTPD {
         }
         listener.dismissNotification(key);
         return newFixedLengthResponse(Response.Status.OK, MIME_JSON, "{\"ok\": true}");
+    }
+
+    private Response handleNotificationAction(String key, int actionIndex) {
+        OtaconNotificationListener listener = OtaconNotificationListener.getInstance();
+        if (listener == null) {
+            return newFixedLengthResponse(Response.Status.NOT_FOUND,
+                MIME_JSON, "{\"error\": \"notification listener not active\"}");
+        }
+        boolean ok = listener.triggerAction(key, actionIndex);
+        if (ok) {
+            return newFixedLengthResponse(Response.Status.OK, MIME_JSON, "{\"ok\": true}");
+        }
+        return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_JSON,
+            "{\"error\": \"notification or action not found\"}");
     }
 
     // --- Clipboard ---

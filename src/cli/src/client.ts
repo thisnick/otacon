@@ -44,12 +44,7 @@ export interface Contact {
 }
 
 export class OtaconClient {
-  constructor(private baseUrl: string) {
-    // Accept self-signed certs for Tailscale
-    if (baseUrl.includes("otacon-")) {
-      process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
-    }
-  }
+  constructor(private baseUrl: string) {}
 
   async action(params: ActionParams): Promise<void> {
     const res = await fetch(`${this.baseUrl}/api/action`, {
@@ -191,6 +186,19 @@ export class OtaconClient {
     }
   }
 
+
+  async notificationAction(key: string, index: number): Promise<void> {
+    const res = await fetch(
+      `${this.baseUrl}/api/notifications/${encodeURIComponent(key)}/action/${index}`,
+      { method: "POST" }
+    );
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(
+        (body as Record<string, string>).error || `HTTP ${res.status}`
+      );
+    }
+  }
 
   async notificationDismiss(key: string): Promise<void> {
     const res = await fetch(

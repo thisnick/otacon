@@ -67,6 +67,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             let state = state.clone();
             move |path| device::dismiss_notification_handler(state, path)
         }))
+        .route("/notifications/{key}/action/{index}", post({
+            let state = state.clone();
+            move |path| device::notification_action_handler(state, path)
+        }))
         // Clipboard
         .route("/clipboard", get({
             let state = state.clone();

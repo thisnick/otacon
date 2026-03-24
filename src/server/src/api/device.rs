@@ -108,6 +108,25 @@ pub async fn dismiss_notification_handler(
     Ok(Json(serde_json::json!({"ok": true})))
 }
 
+pub async fn notification_action_handler(
+    state: Arc<AppState>,
+    Path((key, index)): Path<(String, u32)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if !state.bridge.is_device_owner_available() {
+        return Err(ApiError::Adb(
+            "notification actions require device owner app (not available)".into(),
+        ));
+    }
+    state
+        .bridge
+        .device_post(
+            &format!("/notifications/{}/action/{}", key, index),
+            "",
+        )
+        .await?;
+    Ok(Json(serde_json::json!({"ok": true})))
+}
+
 fn parse_notifications(dump: &str) -> Vec<Notification> {
     let mut notifications = Vec::new();
     let mut current_key = String::new();

@@ -65,6 +65,19 @@ public class OtaconNotificationListener extends NotificationListenerService {
                         if (text != null) obj.put("text", text.toString());
                     }
 
+                    // Include actions
+                    android.app.Notification.Action[] actions = sbn.getNotification().actions;
+                    if (actions != null && actions.length > 0) {
+                        JSONArray actionsArr = new JSONArray();
+                        for (int i = 0; i < actions.length; i++) {
+                            JSONObject actionObj = new JSONObject();
+                            actionObj.put("index", i);
+                            actionObj.put("title", actions[i].title.toString());
+                            actionsArr.put(actionObj);
+                        }
+                        obj.put("actions", actionsArr);
+                    }
+
                     arr.put(obj);
                 }
             }
@@ -79,5 +92,27 @@ public class OtaconNotificationListener extends NotificationListenerService {
     public void dismissNotification(String key) {
         cancelNotification(key);
         Log.i(TAG, "Dismissed notification: " + key);
+    }
+
+    /** Trigger a notification action by key and action index. */
+    public boolean triggerAction(String key, int actionIndex) {
+        try {
+            StatusBarNotification[] notifications = getActiveNotifications();
+            if (notifications == null) return false;
+            for (StatusBarNotification sbn : notifications) {
+                if (sbn.getKey().equals(key)) {
+                    android.app.Notification.Action[] actions = sbn.getNotification().actions;
+                    if (actions != null && actionIndex >= 0 && actionIndex < actions.length) {
+                        actions[actionIndex].actionIntent.send();
+                        Log.i(TAG, "Triggered action " + actionIndex + " on " + key);
+                        return true;
+                    }
+                }
+            }
+            return false;
+        } catch (Exception e) {
+            Log.e(TAG, "Error triggering action", e);
+            return false;
+        }
     }
 }
