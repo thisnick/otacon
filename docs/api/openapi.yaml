@@ -1,0 +1,703 @@
+openapi: 3.1.0
+info:
+  title: Otacon Phone Automation API
+  description: |
+    REST API for controlling an Android phone connected to a Raspberry Pi.
+    Provides UI automation, audio streaming, notifications, SMS, clipboard,
+    and app management.
+  version: 1.0.0
+  license:
+    name: MIT
+
+servers:
+  - url: https://otacon-pi:8080
+    description: Default Tailscale address
+
+paths:
+  # --- Screen ---
+
+  /api/screenshot:
+    get:
+      operationId: getScreenshot
+      summary: Capture phone screen
+      tags: [Screen]
+      responses:
+        '200':
+          description: PNG image of the current phone screen
+          content:
+            image/png:
+              schema:
+                type: string
+                format: binary
+
+  /api/snapshot:
+    get:
+      operationId: getSnapshot
+      summary: Get accessibility tree
+      tags: [Screen]
+      parameters:
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [text, json]
+            default: text
+      responses:
+        '200':
+          description: Accessibility tree
+          content:
+            text/plain:
+              schema:
+                type: string
+                description: Indented text tree with refs
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/A11yNode'
+        '502':
+          $ref: '#/components/responses/AdbError'
+
+  /api/info:
+    get:
+      operationId: getDeviceInfo
+      summary: Get device info
+      tags: [Screen]
+      responses:
+        '200':
+          description: Device metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeviceInfo'
+
+  # --- Actions ---
+
+  /api/action:
+    post:
+      operationId: performAction
+      summary: Perform a UI action
+      tags: [Actions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Action'
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # --- Notifications ---
+
+  /api/notifications:
+    get:
+      operationId: listNotifications
+      summary: List current notifications
+      tags: [Notifications]
+      responses:
+        '200':
+          description: Array of active notifications
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Notification'
+
+  /api/notifications/{key}:
+    delete:
+      operationId: dismissNotification
+      summary: Dismiss a notification
+      tags: [Notifications]
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '502':
+          $ref: '#/components/responses/AdbError'
+
+  /api/notifications/{key}/action/{index}:
+    post:
+      operationId: triggerNotificationAction
+      summary: Trigger a notification action button
+      tags: [Notifications]
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: index
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # --- Clipboard ---
+
+  /api/clipboard:
+    get:
+      operationId: getClipboard
+      summary: Get clipboard text
+      tags: [Clipboard]
+      responses:
+        '200':
+          description: Current clipboard content
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClipboardContent'
+        '502':
+          $ref: '#/components/responses/AdbError'
+    put:
+      operationId: setClipboard
+      summary: Set clipboard text
+      tags: [Clipboard]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClipboardContent'
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+        '502':
+          $ref: '#/components/responses/AdbError'
+
+  # --- SMS ---
+
+  /api/sms/threads:
+    get:
+      operationId: listSmsThreads
+      summary: List SMS conversation threads
+      tags: [SMS]
+      responses:
+        '200':
+          description: Array of SMS threads
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SmsThread'
+
+  /api/sms/threads/{id}/messages:
+    get:
+      operationId: getSmsMessages
+      summary: Get messages in a thread
+      tags: [SMS]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Array of messages sorted by date ascending
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SmsMessage'
+
+  /api/sms/messages:
+    post:
+      operationId: sendSms
+      summary: Send an SMS
+      tags: [SMS]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to, body]
+              properties:
+                to:
+                  type: string
+                  description: Phone number
+                  example: "+1234567890"
+                body:
+                  type: string
+                  description: Message text
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+
+  # --- Apps ---
+
+  /api/apps:
+    get:
+      operationId: listApps
+      summary: List installed apps
+      tags: [Apps]
+      responses:
+        '200':
+          description: User-installed apps
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/App'
+
+  /api/apps/running:
+    get:
+      operationId: listRunningApps
+      summary: List running/foreground apps
+      tags: [Apps]
+      responses:
+        '200':
+          description: Currently running apps
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/App'
+    post:
+      operationId: launchApp
+      summary: Launch an app
+      tags: [Apps]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [package]
+              properties:
+                package:
+                  type: string
+                  example: com.android.chrome
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+
+  /api/apps/running/{package}:
+    delete:
+      operationId: stopApp
+      summary: Force stop an app
+      tags: [Apps]
+      parameters:
+        - name: package
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+
+  # --- Contacts ---
+
+  /api/contacts:
+    get:
+      operationId: searchContacts
+      summary: Search contacts
+      tags: [Contacts]
+      parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: Search query (filters by name)
+      responses:
+        '200':
+          description: Matching contacts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Contact'
+
+components:
+  schemas:
+    # --- Action (discriminated union) ---
+
+    Action:
+      oneOf:
+        - $ref: '#/components/schemas/TapAction'
+        - $ref: '#/components/schemas/LongTapAction'
+        - $ref: '#/components/schemas/SwipeAction'
+        - $ref: '#/components/schemas/PinchAction'
+        - $ref: '#/components/schemas/KeyAction'
+        - $ref: '#/components/schemas/TypeAction'
+        - $ref: '#/components/schemas/SetTextAction'
+        - $ref: '#/components/schemas/ScrollForwardAction'
+        - $ref: '#/components/schemas/ScrollBackwardAction'
+      discriminator:
+        propertyName: action
+        mapping:
+          tap: '#/components/schemas/TapAction'
+          long_tap: '#/components/schemas/LongTapAction'
+          swipe: '#/components/schemas/SwipeAction'
+          pinch: '#/components/schemas/PinchAction'
+          key: '#/components/schemas/KeyAction'
+          type: '#/components/schemas/TypeAction'
+          set_text: '#/components/schemas/SetTextAction'
+          scroll_forward: '#/components/schemas/ScrollForwardAction'
+          scroll_backward: '#/components/schemas/ScrollBackwardAction'
+
+    TapAction:
+      type: object
+      required: [action]
+      properties:
+        action:
+          type: string
+          const: tap
+        x:
+          type: integer
+          description: X coordinate (if tapping by position)
+        y:
+          type: integer
+          description: Y coordinate (if tapping by position)
+        ref:
+          type: string
+          description: Element ref ID (if tapping by ref, e.g. "e5")
+
+    LongTapAction:
+      type: object
+      required: [action]
+      properties:
+        action:
+          type: string
+          const: long_tap
+        x:
+          type: integer
+        y:
+          type: integer
+        ref:
+          type: string
+
+    SwipeAction:
+      type: object
+      required: [action, x1, y1, x2, y2]
+      properties:
+        action:
+          type: string
+          const: swipe
+        x1:
+          type: integer
+        y1:
+          type: integer
+        x2:
+          type: integer
+        y2:
+          type: integer
+        duration_ms:
+          type: integer
+          default: 300
+
+    PinchAction:
+      type: object
+      required: [action, x, y, start_radius, end_radius]
+      properties:
+        action:
+          type: string
+          const: pinch
+        x:
+          type: integer
+          description: Center X
+        y:
+          type: integer
+          description: Center Y
+        start_radius:
+          type: integer
+          description: Starting finger distance from center
+        end_radius:
+          type: integer
+          description: Ending finger distance (larger = zoom in)
+        duration_ms:
+          type: integer
+          default: 500
+
+    KeyAction:
+      type: object
+      required: [action, key]
+      properties:
+        action:
+          type: string
+          const: key
+        key:
+          type: string
+          description: |
+            Key name or raw keycode number. Names: home, back, enter,
+            recents, power, volume_up, volume_down, tab, delete, menu,
+            space, escape, call, end_call
+
+    TypeAction:
+      type: object
+      required: [action, text]
+      properties:
+        action:
+          type: string
+          const: type
+        text:
+          type: string
+          description: Text to type (ASCII only, via ADB input)
+
+    SetTextAction:
+      type: object
+      required: [action, ref, text]
+      properties:
+        action:
+          type: string
+          const: set_text
+        ref:
+          type: string
+          description: Element ref ID (must be an EditText)
+        text:
+          type: string
+          description: Text to set (full Unicode support)
+
+    ScrollForwardAction:
+      type: object
+      required: [action, ref]
+      properties:
+        action:
+          type: string
+          const: scroll_forward
+        ref:
+          type: string
+          description: Scrollable element ref ID
+
+    ScrollBackwardAction:
+      type: object
+      required: [action, ref]
+      properties:
+        action:
+          type: string
+          const: scroll_backward
+        ref:
+          type: string
+
+    # --- Data models ---
+
+    A11yNode:
+      type: object
+      properties:
+        class:
+          type: string
+          example: android.widget.Button
+        text:
+          type: string
+        content_desc:
+          type: string
+        resource_id:
+          type: string
+        bounds:
+          $ref: '#/components/schemas/Bounds'
+        ref_id:
+          type: string
+          description: Stable ref ID (e.g. "e5"). Only on interactive elements.
+        clickable:
+          type: boolean
+        long_clickable:
+          type: boolean
+        checkable:
+          type: boolean
+        checked:
+          type: boolean
+        focusable:
+          type: boolean
+        focused:
+          type: boolean
+        scrollable:
+          type: boolean
+        enabled:
+          type: boolean
+        selected:
+          type: boolean
+        children:
+          type: array
+          items:
+            $ref: '#/components/schemas/A11yNode'
+
+    Bounds:
+      type: object
+      required: [x1, y1, x2, y2]
+      properties:
+        x1:
+          type: integer
+        y1:
+          type: integer
+        x2:
+          type: integer
+        y2:
+          type: integer
+
+    DeviceInfo:
+      type: object
+      properties:
+        activity:
+          type: string
+          nullable: true
+          description: Current foreground activity
+        window:
+          type: string
+          nullable: true
+        model:
+          type: string
+          nullable: true
+        resolution:
+          type: string
+          nullable: true
+          example: "1080 x 2400"
+        bridge:
+          type: boolean
+          description: Device owner app connected
+        snapshot_server:
+          type: boolean
+          description: Snapshot server (app_process) connected
+
+    Notification:
+      type: object
+      properties:
+        key:
+          type: string
+          description: Unique notification key (use for dismiss/action)
+          example: "0|com.google.android.gm|123|null|10045"
+        package:
+          type: string
+          example: com.google.android.gm
+        title:
+          type: string
+          nullable: true
+        text:
+          type: string
+          nullable: true
+        time:
+          type: string
+          nullable: true
+          description: Post time in milliseconds
+        actions:
+          type: array
+          items:
+            $ref: '#/components/schemas/NotificationAction'
+
+    NotificationAction:
+      type: object
+      properties:
+        index:
+          type: integer
+          description: Action index (use for triggering)
+        title:
+          type: string
+          example: Reply
+
+    ClipboardContent:
+      type: object
+      properties:
+        text:
+          type: string
+          nullable: true
+
+    SmsThread:
+      type: object
+      properties:
+        thread_id:
+          type: integer
+        address:
+          type: string
+          example: "+1234567890"
+        snippet:
+          type: string
+          description: Last message text
+        date:
+          type: string
+
+    SmsMessage:
+      type: object
+      properties:
+        id:
+          type: integer
+        address:
+          type: string
+        body:
+          type: string
+        date:
+          type: string
+        type:
+          type: string
+          enum: [received, sent, unknown]
+
+    App:
+      type: object
+      properties:
+        package:
+          type: string
+          example: com.android.chrome
+        label:
+          type: string
+          nullable: true
+
+    Contact:
+      type: object
+      properties:
+        name:
+          type: string
+        phones:
+          type: array
+          items:
+            type: string
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+
+    OkResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+          const: true
+
+  responses:
+    Ok:
+      description: Success
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/OkResponse'
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    AdbError:
+      description: ADB or bridge error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'

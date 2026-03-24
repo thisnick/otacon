@@ -1,0 +1,203 @@
+asyncapi: 3.0.0
+info:
+  title: Otacon WebSocket API
+  description: |
+    WebSocket endpoints for real-time audio streaming and events.
+    Audio is raw PCM — the server dictates the format via an initial
+    config message, and the client must match it.
+  version: 1.0.0
+  license:
+    name: MIT
+
+servers:
+  default:
+    host: otacon-pi:8080
+    protocol: wss
+    description: Default Tailscale address
+
+channels:
+  audioCall:
+    address: /ws/audio/call
+    title: Call Audio (HFP)
+    description: |
+      Bidirectional PCM audio for phone calls.
+      Server sends captured call audio (phone mic → Pi).
+      Client sends mic audio (Pi → phone speaker).
+      Only one client can send audio at a time (playback ownership).
+    messages:
+      audioConfig:
+        $ref: '#/components/messages/AudioConfig'
+      audioFrame:
+        $ref: '#/components/messages/AudioFrame'
+
+  audioMedia:
+    address: /ws/audio/media
+    title: Media Audio (A2DP)
+    description: |
+      Subscribe-only PCM audio from phone media playback.
+      Music, videos, or any media routed through Bluetooth A2DP.
+      Client cannot send audio on this channel.
+    messages:
+      audioConfig:
+        $ref: '#/components/messages/AudioConfig'
+      audioFrame:
+        $ref: '#/components/messages/AudioFrame'
+
+  events:
+    address: /ws/events
+    title: Real-time Events (future)
+    description: |
+      Subscribe-only event stream for notifications, calls,
+      and app state changes. Not yet implemented.
+    messages:
+      event:
+        $ref: '#/components/messages/Event'
+
+operations:
+  receiveCallAudio:
+    action: receive
+    channel:
+      $ref: '#/channels/audioCall'
+    summary: Receive call audio from phone
+    description: |
+      On connect, server sends an AudioConfig text message with the
+      required format (16kHz mono S16_LE for HFP). Then streams
+      AudioFrame binary messages continuously.
+
+  sendCallAudio:
+    action: send
+    channel:
+      $ref: '#/channels/audioCall'
+    summary: Send mic audio to phone call
+    description: |
+      Client sends AudioFrame binary messages matching the format
+      from AudioConfig. Only one client can send at a time —
+      first sender claims playback ownership.
+      Frames are dropped if the phone isn't in a call (no buffering).
+
+  receiveMediaAudio:
+    action: receive
+    channel:
+      $ref: '#/channels/audioMedia'
+    summary: Receive media audio from phone
+    description: |
+      On connect, server sends AudioConfig (44.1kHz stereo S16_LE
+      for A2DP). Then streams AudioFrame binary messages when media
+      is playing. Subscribe-only — client cannot send.
+
+  receiveEvents:
+    action: receive
+    channel:
+      $ref: '#/channels/events'
+    summary: Receive real-time events (future)
+
+components:
+  messages:
+    AudioConfig:
+      name: AudioConfig
+      title: Audio Configuration
+      summary: Server-dictated audio format (sent once on connect)
+      contentType: application/json
+      payload:
+        type: object
+        required: [type, sampleRate, channels]
+        properties:
+          type:
+            type: string
+            const: config
+          sampleRate:
+            type: integer
+            description: Sample rate in Hz
+            examples: [16000, 44100]
+          channels:
+            type: integer
+            description: Number of audio channels
+            examples: [1, 2]
+
+    AudioFrame:
+      name: AudioFrame
+      title: Audio Frame
+      summary: Raw PCM audio data
+      contentType: application/octet-stream
+      payload:
+        type: string
+        format: binary
+        description: |
+          4096 bytes of raw PCM audio, signed 16-bit little-endian (S16_LE).
+
+          Mono (HFP call): 2048 samples per frame.
+          Stereo (A2DP media): 1024 sample pairs per frame, interleaved L/R.
+
+          No framing header — the entire binary message is audio data.
+
+    Event:
+      name: Event
+      title: Real-time Event
+      summary: Notification, call, or app state change
+      contentType: application/json
+      payload:
+        oneOf:
+          - $ref: '#/components/schemas/NotificationReceivedEvent'
+          - $ref: '#/components/schemas/NotificationRemovedEvent'
+          - $ref: '#/components/schemas/CallIncomingEvent'
+          - $ref: '#/components/schemas/AppForegroundEvent'
+        discriminator: event
+
+  schemas:
+    NotificationReceivedEvent:
+      type: object
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          const: notification.received
+        data:
+          type: object
+          properties:
+            key:
+              type: string
+            package:
+              type: string
+            title:
+              type: string
+            text:
+              type: string
+
+    NotificationRemovedEvent:
+      type: object
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          const: notification.removed
+        data:
+          type: object
+          properties:
+            key:
+              type: string
+
+    CallIncomingEvent:
+      type: object
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          const: call.incoming
+        data:
+          type: object
+          properties:
+            number:
+              type: string
+
+    AppForegroundEvent:
+      type: object
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          const: app.foreground
+        data:
+          type: object
+          properties:
+            package:
+              type: string
