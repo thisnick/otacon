@@ -22,7 +22,7 @@ public class BootReceiver extends BroadcastReceiver {
         UserManager.DISALLOW_FACTORY_RESET,
         UserManager.DISALLOW_SAFE_BOOT,
         UserManager.DISALLOW_USB_FILE_TRANSFER,
-        // DISALLOW_ADJUST_VOLUME removed — may interfere with BT audio routing
+        UserManager.DISALLOW_ADJUST_VOLUME,
         UserManager.DISALLOW_AIRPLANE_MODE,
         UserManager.DISALLOW_CONFIG_TETHERING,
         UserManager.DISALLOW_CONFIG_CREDENTIALS,
