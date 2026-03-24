@@ -292,6 +292,14 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
                     }
                 }
 
+                // Check if existing player died (SCO dropped)
+                if let Some(ref mut child) = player {
+                    if let Ok(Some(_)) = child.try_wait() {
+                        // aplay exited — drop it, will restart on next frame
+                        player = None;
+                    }
+                }
+
                 // Start playback if not running
                 if player.is_none() {
                     match Command::new(&playback_cmd[0])
@@ -302,6 +310,7 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
                     {
                         Ok(child) => player = Some(child),
                         Err(e) => {
+                            // aplay can't start (e.g., no SCO link) — drop frame
                             eprintln!("Failed to start playback: {e}");
                             continue;
                         }
@@ -313,6 +322,7 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
                         if stdin.write_all(&data).await.is_err() {
                             let _ = child.kill().await;
                             player = None;
+                            // Frame dropped — aplay died mid-write
                         }
                     }
                 }
