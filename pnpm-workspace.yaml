@@ -1,0 +1,5 @@
+packages:
+  - src/cli
+
+allowBuilds:
+  esbuild: true

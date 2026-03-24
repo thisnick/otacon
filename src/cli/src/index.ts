@@ -4,7 +4,7 @@ process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
 import { program } from "commander";
 import { writeFileSync } from "fs";
-import { OtaconClient } from "./client.js";
+import { OtaconClient, type Action } from "./client.js";
 
 const DEFAULT_HOST = "https://otacon-pi:8080";
 
@@ -27,18 +27,16 @@ program
   .argument("<target...>", 'coordinates "x y" or ref "e5"')
   .action(async (target: string[]) => {
     const client = getClient(program.opts());
+    let action: Action;
     if (target.length === 1 && target[0].match(/^e\d+$/)) {
-      await client.action({ action: "tap", ref: target[0] });
+      action = { action: "tap", ref: target[0] };
     } else if (target.length === 2) {
-      await client.action({
-        action: "tap",
-        x: parseInt(target[0]),
-        y: parseInt(target[1]),
-      });
+      action = { action: "tap", x: parseInt(target[0]), y: parseInt(target[1]) };
     } else {
       console.error('Usage: otacon tap <x> <y> | otacon tap <ref>');
       process.exit(1);
     }
+    await client.action(action);
   });
 
 program
@@ -47,18 +45,16 @@ program
   .argument("<target...>", 'coordinates "x y" or ref "e5"')
   .action(async (target: string[]) => {
     const client = getClient(program.opts());
+    let action: Action;
     if (target.length === 1 && target[0].match(/^e\d+$/)) {
-      await client.action({ action: "long_tap", ref: target[0] });
+      action = { action: "long_tap", ref: target[0] };
     } else if (target.length === 2) {
-      await client.action({
-        action: "long_tap",
-        x: parseInt(target[0]),
-        y: parseInt(target[1]),
-      });
+      action = { action: "long_tap", x: parseInt(target[0]), y: parseInt(target[1]) };
     } else {
       console.error('Usage: otacon long-tap <x> <y> | otacon long-tap <ref>');
       process.exit(1);
     }
+    await client.action(action);
   });
 
 program
@@ -163,11 +159,12 @@ program
   .option("--json", "output as JSON")
   .action(async (opts: { json?: boolean }) => {
     const client = getClient(program.opts());
-    const result = await client.snapshot(opts.json ? "json" : "text");
-    if (typeof result === "string") {
-      console.log(result);
-    } else {
+    if (opts.json) {
+      const result = await client.snapshot("json");
       console.log(JSON.stringify(result, null, 2));
+    } else {
+      const result = await client.snapshot("text");
+      console.log(result);
     }
   });
 

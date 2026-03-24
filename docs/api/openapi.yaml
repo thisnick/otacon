@@ -13,6 +13,8 @@ servers:
   - url: https://otacon-pi:8080
     description: Default Tailscale address
 
+security: []  # No auth — runs on private Tailscale network
+
 paths:
   # --- Screen ---
 
@@ -550,18 +552,14 @@ components:
       type: object
       properties:
         activity:
-          type: string
-          nullable: true
+          type: ["string", "null"]
           description: Current foreground activity
         window:
-          type: string
-          nullable: true
+          type: ["string", "null"]
         model:
-          type: string
-          nullable: true
+          type: ["string", "null"]
         resolution:
-          type: string
-          nullable: true
+          type: ["string", "null"]
           example: "1080 x 2400"
         bridge:
           type: boolean
@@ -581,14 +579,11 @@ components:
           type: string
           example: com.google.android.gm
         title:
-          type: string
-          nullable: true
+          type: ["string", "null"]
         text:
-          type: string
-          nullable: true
+          type: ["string", "null"]
         time:
-          type: string
-          nullable: true
+          type: ["string", "null"]
           description: Post time in milliseconds
         actions:
           type: array
@@ -609,8 +604,7 @@ components:
       type: object
       properties:
         text:
-          type: string
-          nullable: true
+          type: ["string", "null"]
 
     SmsThread:
       type: object
@@ -648,8 +642,7 @@ components:
           type: string
           example: com.android.chrome
         label:
-          type: string
-          nullable: true
+          type: ["string", "null"]
 
     Contact:
       type: object

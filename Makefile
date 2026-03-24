@@ -77,7 +77,7 @@ build-server:
 	cd src/server && cargo build --release
 
 build-cli:
-	cd src/cli && pnpm install && pnpm exec tsc
+	pnpm install && pnpm --filter otacon-cli run build
 
 bluetooth-pair:
 	$(SSH_CMD) "cd $(REMOTE_DIR) && docker compose exec otacon /opt/bluetooth-pair.sh"

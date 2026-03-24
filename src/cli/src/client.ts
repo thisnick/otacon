@@ -1,63 +1,45 @@
-export interface ActionParams {
-  action: string;
-  [key: string]: unknown;
-}
+import type { components } from "./api-types.js";
 
-export interface DeviceInfo {
-  activity: string | null;
-  window: string | null;
-  model: string | null;
-  resolution: string | null;
-}
+// Re-export schema types for convenience
+export type Action = components["schemas"]["Action"];
+export type TapAction = components["schemas"]["TapAction"];
+export type LongTapAction = components["schemas"]["LongTapAction"];
+export type SwipeAction = components["schemas"]["SwipeAction"];
+export type PinchAction = components["schemas"]["PinchAction"];
+export type KeyAction = components["schemas"]["KeyAction"];
+export type TypeAction = components["schemas"]["TypeAction"];
+export type SetTextAction = components["schemas"]["SetTextAction"];
+export type ScrollForwardAction = components["schemas"]["ScrollForwardAction"];
+export type ScrollBackwardAction = components["schemas"]["ScrollBackwardAction"];
+export type A11yNode = components["schemas"]["A11yNode"];
+export type DeviceInfo = components["schemas"]["DeviceInfo"];
+export type Notification = components["schemas"]["Notification"];
+export type NotificationAction = components["schemas"]["NotificationAction"];
+export type ClipboardContent = components["schemas"]["ClipboardContent"];
+export type SmsThread = components["schemas"]["SmsThread"];
+export type SmsMessage = components["schemas"]["SmsMessage"];
+export type App = components["schemas"]["App"];
+export type Contact = components["schemas"]["Contact"];
 
-export interface Notification {
-  key: string;
-  package: string;
-  title: string | null;
-  text: string | null;
-  time: string | null;
-}
-
-export interface SmsThread {
-  thread_id: number;
-  address: string;
-  snippet: string;
-  date: string;
-}
-
-export interface SmsMessage {
-  id: number;
-  address: string;
-  body: string;
-  date: string;
-  type: string;
-}
-
-export interface App {
-  package: string;
-  label: string | null;
-}
-
-export interface Contact {
-  name: string;
-  phones: string[];
+async function throwOnError(res: Response): Promise<void> {
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(
+      (body as { error?: string }).error || `HTTP ${res.status}`
+    );
+  }
 }
 
 export class OtaconClient {
   constructor(private baseUrl: string) {}
 
-  async action(params: ActionParams): Promise<void> {
+  async action(params: Action): Promise<void> {
     const res = await fetch(`${this.baseUrl}/api/action`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),
     });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(
-        (body as Record<string, string>).error || `HTTP ${res.status}`
-      );
-    }
+    await throwOnError(res);
   }
 
   async screenshot(): Promise<Buffer> {
@@ -66,7 +48,9 @@ export class OtaconClient {
     return Buffer.from(await res.arrayBuffer());
   }
 
-  async snapshot(format: "text" | "json" = "text"): Promise<string | object> {
+  async snapshot(format: "text"): Promise<string>;
+  async snapshot(format: "json"): Promise<A11yNode[]>;
+  async snapshot(format: "text" | "json" = "text"): Promise<string | A11yNode[]> {
     const res = await fetch(
       `${this.baseUrl}/api/snapshot?format=${format}`
     );
@@ -85,6 +69,37 @@ export class OtaconClient {
     const res = await fetch(`${this.baseUrl}/api/notifications`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json();
+  }
+
+  async notificationDismiss(key: string): Promise<void> {
+    const res = await fetch(
+      `${this.baseUrl}/api/notifications/${encodeURIComponent(key)}`,
+      { method: "DELETE" }
+    );
+    await throwOnError(res);
+  }
+
+  async notificationAction(key: string, index: number): Promise<void> {
+    const res = await fetch(
+      `${this.baseUrl}/api/notifications/${encodeURIComponent(key)}/action/${index}`,
+      { method: "POST" }
+    );
+    await throwOnError(res);
+  }
+
+  async clipboardGet(): Promise<ClipboardContent> {
+    const res = await fetch(`${this.baseUrl}/api/clipboard`);
+    await throwOnError(res);
+    return res.json();
+  }
+
+  async clipboardSet(text: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/clipboard`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    await throwOnError(res);
   }
 
   async smsThreads(): Promise<SmsThread[]> {
@@ -107,12 +122,7 @@ export class OtaconClient {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ to, body }),
     });
-    if (!res.ok) {
-      const respBody = await res.json().catch(() => ({}));
-      throw new Error(
-        (respBody as Record<string, string>).error || `HTTP ${res.status}`
-      );
-    }
+    await throwOnError(res);
   }
 
   async apps(): Promise<App[]> {
@@ -133,12 +143,7 @@ export class OtaconClient {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ package: pkg }),
     });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(
-        (body as Record<string, string>).error || `HTTP ${res.status}`
-      );
-    }
+    await throwOnError(res);
   }
 
   async appStop(pkg: string): Promise<void> {
@@ -146,12 +151,7 @@ export class OtaconClient {
       `${this.baseUrl}/api/apps/running/${encodeURIComponent(pkg)}`,
       { method: "DELETE" }
     );
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(
-        (body as Record<string, string>).error || `HTTP ${res.status}`
-      );
-    }
+    await throwOnError(res);
   }
 
   async contacts(query?: string): Promise<Contact[]> {
@@ -159,57 +159,5 @@ export class OtaconClient {
     const res = await fetch(`${this.baseUrl}/api/contacts${params}`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json();
-  }
-
-  async clipboardGet(): Promise<{ text: string | null }> {
-    const res = await fetch(`${this.baseUrl}/api/clipboard`);
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(
-        (body as Record<string, string>).error || `HTTP ${res.status}`
-      );
-    }
-    return res.json();
-  }
-
-  async clipboardSet(text: string): Promise<void> {
-    const res = await fetch(`${this.baseUrl}/api/clipboard`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
-    });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(
-        (body as Record<string, string>).error || `HTTP ${res.status}`
-      );
-    }
-  }
-
-
-  async notificationAction(key: string, index: number): Promise<void> {
-    const res = await fetch(
-      `${this.baseUrl}/api/notifications/${encodeURIComponent(key)}/action/${index}`,
-      { method: "POST" }
-    );
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(
-        (body as Record<string, string>).error || `HTTP ${res.status}`
-      );
-    }
-  }
-
-  async notificationDismiss(key: string): Promise<void> {
-    const res = await fetch(
-      `${this.baseUrl}/api/notifications/${encodeURIComponent(key)}`,
-      { method: "DELETE" }
-    );
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      throw new Error(
-        (body as Record<string, string>).error || `HTTP ${res.status}`
-      );
-    }
   }
 }

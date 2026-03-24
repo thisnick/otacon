@@ -578,27 +578,74 @@ function toggleMediaListen() {
   updateButtons();
 }
 
-// --- Mic ---
+// --- Mic (AudioWorklet) ---
+const MIC_WORKLET_CODE = `
+class MicProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this._buf = new Float32Array(2048);
+    this._pos = 0;
+    this._running = true;
+    this.port.onmessage = (e) => { if (e.data === 'stop') this._running = false; };
+  }
+  process(inputs) {
+    if (!this._running) return false;
+    const input = inputs[0];
+    if (!input || !input[0]) return true;
+    const samples = input[0];
+    let i = 0;
+    while (i < samples.length) {
+      const space = this._buf.length - this._pos;
+      const chunk = Math.min(space, samples.length - i);
+      this._buf.set(samples.subarray(i, i + chunk), this._pos);
+      this._pos += chunk;
+      i += chunk;
+      if (this._pos >= this._buf.length) {
+        const pcm = new Int16Array(this._buf.length);
+        let s = 0;
+        for (let j = 0; j < this._buf.length; j++) {
+          pcm[j] = Math.max(-32768, Math.min(32767, this._buf[j] * 32768));
+          s += this._buf[j] * this._buf[j];
+        }
+        this.port.postMessage({pcm: pcm.buffer, rms: Math.sqrt(s / this._buf.length)}, [pcm.buffer]);
+        this._pos = 0;
+      }
+    }
+    return true;
+  }
+}
+registerProcessor('mic-processor', MicProcessor);
+`;
+let micWorkletReady = false;
+
 async function toggleMic() {
   if (!micActive) {
     try {
       micStream = await navigator.mediaDevices.getUserMedia({audio: {sampleRate: HFP_SAMPLE_RATE, channelCount: HFP_CHANNELS, echoCancellation: true}});
-      const ctx = new AudioContext({sampleRate: HFP_SAMPLE_RATE}); const source = ctx.createMediaStreamSource(micStream);
-      micProcessor = ctx.createScriptProcessor(FRAME_SIZE / 2, 1, 1); micProcessor._ctx = ctx;
-      micProcessor.onaudioprocess = (e) => {
-        if (!hfpWs || hfpWs.readyState !== WebSocket.OPEN) return;
-        const f = e.inputBuffer.getChannelData(0); const p = new Int16Array(f.length);
-        for (let i = 0; i < f.length; i++) p[i] = Math.max(-32768, Math.min(32767, f[i] * 32768));
-        hfpWs.send(p.buffer);
-        let s = 0; for (let i = 0; i < f.length; i++) s += f[i] * f[i];
-        document.getElementById('micLevel').style.width = Math.min(100, Math.sqrt(s / f.length) * 300) + '%';
+      const ctx = new AudioContext({sampleRate: HFP_SAMPLE_RATE});
+      if (!micWorkletReady) {
+        const blob = new Blob([MIC_WORKLET_CODE], {type: 'application/javascript'});
+        await ctx.audioWorklet.addModule(URL.createObjectURL(blob));
+        micWorkletReady = true;
+      }
+      const source = ctx.createMediaStreamSource(micStream);
+      const worklet = new AudioWorkletNode(ctx, 'mic-processor');
+      worklet.port.onmessage = (e) => {
+        const {pcm, rms} = e.data;
+        if (hfpWs && hfpWs.readyState === WebSocket.OPEN) hfpWs.send(pcm);
+        document.getElementById('micLevel').style.width = Math.min(100, rms * 300) + '%';
       };
-      source.connect(micProcessor); micProcessor.connect(ctx.destination); micActive = true;
+      source.connect(worklet);
+      worklet.connect(ctx.destination);
+      micProcessor = worklet;
+      micProcessor._ctx = ctx;
+      micActive = true;
     } catch(e) { return; }
   } else {
-    if (micProcessor) { micProcessor.disconnect(); micProcessor._ctx.close(); micProcessor = null; }
+    if (micProcessor) { micProcessor.port.postMessage('stop'); micProcessor.disconnect(); micProcessor._ctx.close(); micProcessor = null; }
     if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
     micActive = false; document.getElementById('micLevel').style.width = '0%';
+    micWorkletReady = false;
   }
   updateButtons();
 }
