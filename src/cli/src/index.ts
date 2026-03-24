@@ -205,7 +205,8 @@ sms
 
 const notifications = program
   .command("notifications")
-  .description("Notification commands");
+  .description("Notification commands")
+  .enablePositionalOptions(true);
 
 notifications
   .command("list")
