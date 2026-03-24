@@ -201,6 +201,12 @@ def connect_wifi():
 def apply_restrictions():
     if not is_device_owner_set():
         return
+    # Clear first to remove stale restrictions from previous versions
+    adb_shell(
+        f'am broadcast -a {DEVICE_OWNER_PKG}.CLEAR_RESTRICTIONS '
+        f'-n {DEVICE_OWNER_PKG}/.BootReceiver'
+    )
+    time.sleep(1)
     adb_shell(
         f'am broadcast -a {DEVICE_OWNER_PKG}.APPLY_RESTRICTIONS '
         f'-n {DEVICE_OWNER_PKG}/.BootReceiver'
