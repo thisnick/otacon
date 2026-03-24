@@ -191,6 +191,20 @@ export class OtaconClient {
     }
   }
 
+  async googleSetup(clientId: string, clientSecret: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/google/setup`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ client_id: clientId, client_secret: clientSecret }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(
+        (body as Record<string, string>).error || `HTTP ${res.status}`
+      );
+    }
+  }
+
   async googleAccounts(): Promise<string[]> {
     const res = await fetch(`${this.baseUrl}/api/google/accounts`);
     if (!res.ok) {

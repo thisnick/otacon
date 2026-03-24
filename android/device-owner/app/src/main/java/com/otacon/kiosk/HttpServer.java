@@ -63,7 +63,10 @@ public class HttpServer extends NanoHTTPD {
                 return handleBluetoothPair(session);
             }
 
-            // Google accounts
+            // Google accounts & OAuth
+            if ("/google/setup".equals(uri) && method == Method.POST) {
+                return handleGoogleSetup(session);
+            }
             if ("/google/accounts".equals(uri) && method == Method.GET) {
                 return handleGoogleAccounts();
             }
@@ -318,13 +321,32 @@ public class HttpServer extends NanoHTTPD {
 
     // --- Google Accounts ---
 
+    private GoogleAuth googleAuth;
+
+    private GoogleAuth getGoogleAuth() {
+        if (googleAuth == null) {
+            googleAuth = new GoogleAuth(context);
+        }
+        return googleAuth;
+    }
+
+    private Response handleGoogleSetup(IHTTPSession session) throws Exception {
+        Map<String, String> bodyMap = new java.util.HashMap<>();
+        session.parseBody(bodyMap);
+        String body = bodyMap.get("postData");
+        JSONObject req = new JSONObject(body);
+        String clientId = req.getString("client_id");
+        String clientSecret = req.getString("client_secret");
+        getGoogleAuth().storeCredentials(clientId, clientSecret);
+        return newFixedLengthResponse(Response.Status.OK, MIME_JSON, "{\"ok\": true}");
+    }
+
     private Response handleGoogleAccounts() {
         try {
-            android.accounts.AccountManager am = android.accounts.AccountManager.get(context);
-            android.accounts.Account[] accounts = am.getAccountsByType("com.google");
+            String[] accounts = getGoogleAuth().getAccounts();
             org.json.JSONArray arr = new org.json.JSONArray();
-            for (android.accounts.Account account : accounts) {
-                arr.put(account.name);
+            for (String account : accounts) {
+                arr.put(account);
             }
             return newFixedLengthResponse(Response.Status.OK, MIME_JSON, arr.toString());
         } catch (Exception e) {
@@ -341,73 +363,12 @@ public class HttpServer extends NanoHTTPD {
         String email = req.getString("account");
         String scope = req.getString("scope");
 
-        android.accounts.AccountManager am = android.accounts.AccountManager.get(context);
+        JSONObject result = getGoogleAuth().getToken(email, scope);
 
-        // Find the account
-        android.accounts.Account target = null;
-        for (android.accounts.Account account : am.getAccountsByType("com.google")) {
-            if (account.name.equals(email)) {
-                target = account;
-                break;
-            }
-        }
-        if (target == null) {
-            return newFixedLengthResponse(Response.Status.NOT_FOUND, MIME_JSON,
-                "{\"error\": \"account not found: " + email + "\"}");
-        }
-
-        // Request token — this may return immediately or require consent
-        String authScope = "oauth2:" + scope;
-        try {
-            android.accounts.AccountManagerFuture<android.os.Bundle> future =
-                am.getAuthToken(target, authScope, null, false, null, null);
-            android.os.Bundle result = future.getResult(30, java.util.concurrent.TimeUnit.SECONDS);
-
-            String token = result.getString(android.accounts.AccountManager.KEY_AUTHTOKEN);
-            if (token != null) {
-                Log.i(TAG, "Got token for " + email + " scope=" + scope);
-                JSONObject resp = new JSONObject();
-                resp.put("token", token);
-                resp.put("expires_in", 3600);
-                return newFixedLengthResponse(Response.Status.OK, MIME_JSON, resp.toString());
-            }
-
-            // Consent needed — there's an intent to launch
-            android.content.Intent intent = result.getParcelable(
-                android.accounts.AccountManager.KEY_INTENT, android.content.Intent.class);
-            if (intent != null) {
-                Log.i(TAG, "Consent needed for " + email + " scope=" + scope + ", launching intent");
-                intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
-                context.startActivity(intent);
-
-                // Wait for user/auto-tap to grant consent, then retry
-                for (int i = 0; i < 30; i++) {
-                    Thread.sleep(1000);
-                    try {
-                        android.accounts.AccountManagerFuture<android.os.Bundle> retry =
-                            am.getAuthToken(target, authScope, null, false, null, null);
-                        android.os.Bundle retryResult = retry.getResult(5, java.util.concurrent.TimeUnit.SECONDS);
-                        String retryToken = retryResult.getString(android.accounts.AccountManager.KEY_AUTHTOKEN);
-                        if (retryToken != null) {
-                            Log.i(TAG, "Got token after consent for " + email);
-                            JSONObject resp = new JSONObject();
-                            resp.put("token", retryToken);
-                            resp.put("expires_in", 3600);
-                            return newFixedLengthResponse(Response.Status.OK, MIME_JSON, resp.toString());
-                        }
-                    } catch (Exception ignored) {}
-                }
-
-                return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_JSON,
-                    "{\"error\": \"consent timeout — grant permission on the phone\"}");
-            }
-
+        if (result.has("error")) {
             return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_JSON,
-                "{\"error\": \"no token and no consent intent returned\"}");
-        } catch (Exception e) {
-            Log.e(TAG, "Token request failed", e);
-            return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_JSON,
-                "{\"error\": \"" + e.getMessage() + "\"}");
+                result.toString());
         }
+        return newFixedLengthResponse(Response.Status.OK, MIME_JSON, result.toString());
     }
 }

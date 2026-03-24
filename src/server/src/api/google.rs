@@ -1,4 +1,4 @@
-use axum::extract::Query;
+use axum::extract::{Json, Query};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use std::sync::Arc;
@@ -10,6 +10,30 @@ use crate::AppState;
 pub struct TokenQuery {
     pub scope: String,
     pub account: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct SetupBody {
+    pub client_id: String,
+    pub client_secret: String,
+}
+
+pub async fn setup_handler(
+    state: Arc<AppState>,
+    Json(body): Json<SetupBody>,
+) -> Result<axum::Json<serde_json::Value>, ApiError> {
+    if !state.bridge.is_device_owner_available() {
+        return Err(ApiError::Adb(
+            "google setup requires device owner app (not available)".into(),
+        ));
+    }
+    let payload = serde_json::json!({
+        "client_id": body.client_id,
+        "client_secret": body.client_secret,
+    })
+    .to_string();
+    state.bridge.device_post("/google/setup", &payload).await?;
+    Ok(axum::Json(serde_json::json!({"ok": true})))
 }
 
 pub async fn accounts_handler(state: Arc<AppState>) -> Result<Response, ApiError> {

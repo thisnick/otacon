@@ -86,6 +86,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         // Contacts
         .route("/contacts", get(contacts::handler))
         // Google
+        .route("/google/setup", post({
+            let state = state.clone();
+            move |body| google::setup_handler(state, body)
+        }))
         .route("/google/accounts", get({
             let state = state.clone();
             move || google::accounts_handler(state)

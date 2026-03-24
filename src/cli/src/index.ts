@@ -266,6 +266,24 @@ const SCOPE_SHORTCUTS: Record<string, string> = {
 const google = program.command("google").description("Google account commands");
 
 google
+  .command("setup")
+  .description("Configure OAuth credentials (one-time)")
+  .argument("<path>", "path to credentials.json from Google Cloud Console")
+  .action(async (path: string) => {
+    const client = getClient(program.opts());
+    const fs = await import("fs");
+    const raw = JSON.parse(fs.readFileSync(path, "utf-8"));
+    // Google Cloud Console exports as {"installed": {"client_id": ..., "client_secret": ...}}
+    const creds = raw.installed || raw.web || raw;
+    if (!creds.client_id || !creds.client_secret) {
+      console.error("Invalid credentials.json — must contain client_id and client_secret");
+      process.exit(1);
+    }
+    await client.googleSetup(creds.client_id, creds.client_secret);
+    console.error("OAuth credentials configured");
+  });
+
+google
   .command("accounts")
   .description("List signed-in Google accounts")
   .action(async () => {
