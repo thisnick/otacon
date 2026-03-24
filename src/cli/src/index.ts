@@ -218,8 +218,9 @@ notifications
 
 notifications
   .command("dismiss")
-  .description("Dismiss a notification by key")
+  .description("Dismiss a notification by key (use -- before keys starting with -)")
   .argument("<key>", "notification key")
+  .passThroughOptions(true)
   .action(async (key: string) => {
     const client = getClient(program.opts());
     await client.notificationDismiss(key);
