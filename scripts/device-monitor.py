@@ -324,10 +324,19 @@ def main():
 
         log.info('Device setup complete')
 
-        # Monitor connection
+        # Monitor connection + keep services alive
         while is_device_connected(serial):
             adb('forward', 'tcp:9090', 'tcp:9090')
             adb('forward', 'tcp:9091', 'tcp:9091')
+
+            # Restart snapshot server if process died
+            proc_check = adb_shell('pgrep -f snapshot-server.jar')
+            if not proc_check.strip():
+                log.warning('Snapshot server dead — restarting')
+                start_snapshot_server()
+                time.sleep(3)
+                adb('forward', 'tcp:9091', 'tcp:9091')
+
             time.sleep(10)
 
         log.info(f'Device {serial} disconnected')
