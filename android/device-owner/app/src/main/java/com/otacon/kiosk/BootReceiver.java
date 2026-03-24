@@ -109,6 +109,9 @@ public class BootReceiver extends BroadcastReceiver {
         for (String restriction : USER_RESTRICTIONS) {
             dpm.clearUserRestriction(admin, restriction);
         }
+        // Also clear restrictions that were previously applied but removed from the list
+        dpm.clearUserRestriction(admin, UserManager.DISALLOW_CONFIG_BLUETOOTH);
+        dpm.clearUserRestriction(admin, UserManager.DISALLOW_ADJUST_VOLUME);
         dpm.setCameraDisabled(admin, false);
 
         // Clear any password policy so PIN can be removed
