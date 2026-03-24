@@ -17,7 +17,7 @@ public class BootReceiver extends BroadcastReceiver {
 
     private static final String[] USER_RESTRICTIONS = {
         UserManager.DISALLOW_CONFIG_WIFI,
-        // DISALLOW_CONFIG_BLUETOOTH removed — may interfere with BlueALSA audio
+        UserManager.DISALLOW_CONFIG_BLUETOOTH,
         UserManager.DISALLOW_CONFIG_LOCATION,
         UserManager.DISALLOW_FACTORY_RESET,
         UserManager.DISALLOW_SAFE_BOOT,
@@ -93,6 +93,14 @@ public class BootReceiver extends BroadcastReceiver {
         // Disable camera
         dpm.setCameraDisabled(admin, true);
         Log.i(TAG, "Camera disabled");
+
+        // Disable lock screen
+        try {
+            dpm.setKeyguardDisabled(admin, true);
+            Log.i(TAG, "Keyguard disabled");
+        } catch (Exception e) {
+            Log.w(TAG, "Could not disable keyguard: " + e.getMessage());
+        }
 
         Log.i(TAG, "All restrictions applied");
     }
