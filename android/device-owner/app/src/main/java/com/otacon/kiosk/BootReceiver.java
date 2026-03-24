@@ -112,6 +112,15 @@ public class BootReceiver extends BroadcastReceiver {
         }
         dpm.setCameraDisabled(admin, false);
 
+        // Clear any password policy so PIN can be removed
+        dpm.setPasswordQuality(admin, DevicePolicyManager.PASSWORD_QUALITY_UNSPECIFIED);
+        try {
+            dpm.setKeyguardDisabled(admin, false);
+        } catch (Exception ignored) {}
+        try {
+            dpm.clearResetPasswordToken(admin);
+        } catch (Exception ignored) {}
+
         Log.i(TAG, "All restrictions cleared");
     }
 }
