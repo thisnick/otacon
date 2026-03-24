@@ -205,6 +205,8 @@ def apply_restrictions():
         f'am broadcast -a {DEVICE_OWNER_PKG}.APPLY_RESTRICTIONS '
         f'-n {DEVICE_OWNER_PKG}/.BootReceiver'
     )
+    # Ensure notification listener is enabled
+    adb_shell(f'cmd notification allow_listener {DEVICE_OWNER_PKG}/.OtaconNotificationListener')
     log.info('Restrictions applied')
 
 
