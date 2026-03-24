@@ -1,6 +1,7 @@
 .PHONY: build up down logs push provision deploy-docker setup-pi \
        phone-setup phone-reset health pigen pigen-flash pigen-config \
-       wake cli bluetooth-pair bluetooth-connect bluetooth-status bluetooth-watch
+       wake cli build-all build-server build-cli \
+       bluetooth-pair bluetooth-connect bluetooth-status bluetooth-watch
 
 PI_HOST ?= otacon-pi
 PI_USER ?= nick
@@ -68,6 +69,15 @@ wake:
 # CLI — pass arguments via ARGS, e.g.: make cli ARGS="snapshot --json"
 cli:
 	@cd src/cli && node --no-warnings --import tsx/esm src/index.ts $(ARGS)
+
+# Build everything locally
+build-all: build-server build-cli
+
+build-server:
+	cd src/server && cargo build --release
+
+build-cli:
+	cd src/cli && pnpm install && pnpm exec tsc
 
 bluetooth-pair:
 	$(SSH_CMD) "cd $(REMOTE_DIR) && docker compose exec otacon /opt/bluetooth-pair.sh"
