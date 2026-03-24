@@ -22,7 +22,7 @@ public class BootReceiver extends BroadcastReceiver {
         UserManager.DISALLOW_FACTORY_RESET,
         UserManager.DISALLOW_SAFE_BOOT,
         UserManager.DISALLOW_USB_FILE_TRANSFER,
-        UserManager.DISALLOW_ADJUST_VOLUME,
+        // DISALLOW_ADJUST_VOLUME — confirmed breaks BlueALSA BT audio on Samsung
         UserManager.DISALLOW_AIRPLANE_MODE,
         UserManager.DISALLOW_CONFIG_TETHERING,
         UserManager.DISALLOW_CONFIG_CREDENTIALS,
