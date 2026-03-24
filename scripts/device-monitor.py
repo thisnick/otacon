@@ -259,8 +259,8 @@ def pair_bluetooth():
             break
 
     pair_thread.join(timeout=30)
-    result = pair_result.get('data', {})
-    status = result.get('status', result.get('error', 'unknown'))
+    result = pair_result.get('data') or {}
+    status = result.get('status', result.get('error', 'unknown')) if isinstance(result, dict) else str(result)
     log.info(f'Bluetooth pairing: {status}')
 
 
