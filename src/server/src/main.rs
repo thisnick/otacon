@@ -295,7 +295,6 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
                 // Check if existing player died (SCO dropped)
                 if let Some(ref mut child) = player {
                     if let Ok(Some(_)) = child.try_wait() {
-                        // aplay exited — drop it, will restart on next frame
                         player = None;
                     }
                 }
@@ -308,9 +307,20 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
                         .stderr(Stdio::null())
                         .spawn()
                     {
-                        Ok(child) => player = Some(child),
+                        Ok(child) => {
+                            // Shrink pipe buffer to minimize latency —
+                            // only ~1 frame can queue, rest is dropped
+                            #[cfg(target_os = "linux")]
+                            if let Some(ref stdin) = child.stdin {
+                                use std::os::unix::io::AsRawFd;
+                                let fd = stdin.as_raw_fd();
+                                unsafe {
+                                    libc::fcntl(fd, libc::F_SETPIPE_SZ, FRAME_SIZE as i32);
+                                }
+                            }
+                            player = Some(child);
+                        }
                         Err(e) => {
-                            // aplay can't start (e.g., no SCO link) — drop frame
                             eprintln!("Failed to start playback: {e}");
                             continue;
                         }
@@ -319,10 +329,20 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
 
                 if let Some(ref mut child) = player {
                     if let Some(ref mut stdin) = child.stdin {
-                        if stdin.write_all(&data).await.is_err() {
-                            let _ = child.kill().await;
-                            player = None;
-                            // Frame dropped — aplay died mid-write
+                        // Use try_write to avoid blocking if pipe is full — drop frame instead
+                        match tokio::time::timeout(
+                            std::time::Duration::from_millis(10),
+                            stdin.write_all(&data),
+                        ).await {
+                            Ok(Ok(())) => {} // written successfully
+                            Ok(Err(_)) => {
+                                // write error — aplay died
+                                let _ = child.kill().await;
+                                player = None;
+                            }
+                            Err(_) => {
+                                // timeout — pipe full, drop frame to stay real-time
+                            }
                         }
                     }
                 }
