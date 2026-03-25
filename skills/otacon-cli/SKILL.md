@@ -160,6 +160,19 @@ otacon apps stop com.android.chrome
 otacon contacts search "John"
 ```
 
+## WebSocket Events
+
+Subscribe to real-time events via WebSocket at `wss://otacon-pi:8080/ws/events`. The server sends JSON text messages with `{event, data}` structure. On connect, the current state of all active audio sinks is sent.
+
+| Event | Description |
+|-------|-------------|
+| `audio.sink.active` | Bluetooth audio sink became active (call started, media playing). Includes `profile`, `codec`, `sampleRate`, `channels`. |
+| `audio.sink.inactive` | Bluetooth audio sink became inactive. Includes `profile`. |
+| `notification.received` | New notification on phone |
+| `notification.removed` | Notification dismissed |
+| `call.incoming` | Incoming phone call |
+| `app.foreground` | App came to foreground |
+
 ## Tips
 
 - Prefer **ref-based actions** (`tap e5`) over coordinate-based (`tap 540 1200`) — refs are stable across screen sizes and orientations.

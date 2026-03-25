@@ -1,4 +1,5 @@
 mod api;
+mod dbus_monitor;
 
 use axum::{
     Router,
@@ -8,6 +9,7 @@ use axum::{
 };
 use futures::{SinkExt, StreamExt};
 use std::{
+    collections::HashMap,
     env,
     net::SocketAddr,
     process::Stdio,
@@ -123,6 +125,10 @@ pub struct AppState {
     snapshot_cache: Mutex<Option<api::snapshot::SnapshotCache>>,
     /// Bridge to device owner app's HTTP server
     pub bridge: Arc<api::bridge::BridgeState>,
+    /// Broadcast channel for JSON event messages (sink state, etc.)
+    events_tx: broadcast::Sender<String>,
+    /// Currently active audio sinks (D-Bus path → event data)
+    active_sinks: Arc<Mutex<HashMap<String, serde_json::Value>>>,
 }
 
 #[tokio::main]
@@ -152,6 +158,9 @@ async fn main() {
     let bridge = Arc::new(api::bridge::BridgeState::new());
     api::bridge::spawn_health_checker(bridge.clone());
 
+    let (events_tx, _) = broadcast::channel::<String>(256);
+    let active_sinks = Arc::new(Mutex::new(HashMap::new()));
+
     let state = Arc::new(AppState {
         capture_tx: capture_tx.clone(),
         a2dp_tx,
@@ -159,7 +168,14 @@ async fn main() {
         audio_config,
         snapshot_cache: Mutex::new(Some(api::snapshot::SnapshotCache::default())),
         bridge,
+        events_tx,
+        active_sinks,
     });
+
+    // Start D-Bus monitor for BlueALSA sink state (Bluetooth backend only)
+    if matches!(state.audio_config.backend, AudioBackend::Bluetooth) {
+        dbus_monitor::spawn_monitor(state.events_tx.clone(), state.active_sinks.clone());
+    }
 
     tokio::spawn(capture_audio(capture_cmd, capture_tx));
 
@@ -172,6 +188,10 @@ async fn main() {
         .route("/ws/audio/media", get({
             let state = state.clone();
             move |ws| ws_media_handler(ws, state)
+        }))
+        .route("/ws/events", get({
+            let state = state.clone();
+            move |ws| ws_events_handler(ws, state)
         }))
         .route("/audio", get({
             move || mp3_stream_handler(mp3_cmd)
@@ -394,6 +414,59 @@ async fn handle_ws_media(socket: WebSocket, state: Arc<AppState>) {
         if ws_tx.send(Message::Binary(data.into())).await.is_err() {
             break;
         }
+    }
+}
+
+/// WebSocket handler: subscribe-only event stream
+async fn ws_events_handler(ws: WebSocketUpgrade, state: Arc<AppState>) -> Response {
+    ws.on_upgrade(move |socket| handle_ws_events(socket, state))
+}
+
+async fn handle_ws_events(socket: WebSocket, state: Arc<AppState>) {
+    let (mut ws_tx, mut ws_rx) = socket.split();
+    let mut rx = state.events_tx.subscribe();
+
+    // Send current state of active sinks so the client doesn't miss prior events
+    {
+        let sinks = state.active_sinks.lock().await;
+        for (_path, event_data) in sinks.iter() {
+            let msg = serde_json::json!({
+                "event": "audio.sink.active",
+                "data": event_data,
+            });
+            if ws_tx.send(Message::Text(msg.to_string().into())).await.is_err() {
+                return;
+            }
+        }
+    }
+
+    let send_task = tokio::spawn(async move {
+        loop {
+            match rx.recv().await {
+                Ok(event_json) => {
+                    if ws_tx.send(Message::Text(event_json.into())).await.is_err() {
+                        break;
+                    }
+                }
+                Err(broadcast::error::RecvError::Lagged(n)) => {
+                    eprintln!("Events client lagged, skipped {n} messages");
+                }
+                Err(broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
+
+    let drain_task = tokio::spawn(async move {
+        while let Some(Ok(msg)) = ws_rx.next().await {
+            if matches!(msg, Message::Close(_)) {
+                break;
+            }
+        }
+    });
+
+    tokio::select! {
+        _ = send_task => {},
+        _ = drain_task => {},
     }
 }
 

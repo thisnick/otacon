@@ -1,13 +1,13 @@
 #!/bin/bash
 set -e
 
-# Set up VNC password
+# Set up VNC auth — password if set, otherwise no auth
 if [ -n "${VNC_PASSWORD}" ]; then
     echo "${VNC_PASSWORD}" | vncpasswd -f > /tmp/vncpasswd
     chmod 600 /tmp/vncpasswd
+    export VNC_AUTH_ARGS="-rfbauth /tmp/vncpasswd"
 else
-    echo "WARNING: VNC_PASSWORD not set, VNC login will fail"
-    vncpasswd -f <<< "" > /tmp/vncpasswd
+    export VNC_AUTH_ARGS="-SecurityTypes None"
 fi
 
 # Wait for ADB device (needed for display resolution before supervisord starts)

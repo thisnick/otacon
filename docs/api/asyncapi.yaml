@@ -45,10 +45,11 @@ channels:
 
   events:
     address: /ws/events
-    title: Real-time Events (future)
+    title: Real-time Events
     description: |
-      Subscribe-only event stream for notifications, calls,
-      and app state changes. Not yet implemented.
+      Subscribe-only event stream for audio sink state, notifications,
+      calls, and app state changes. On connect, the server sends the
+      current state of all active audio sinks.
     messages:
       event:
         $ref: '#/components/messages/Event'
@@ -89,7 +90,11 @@ operations:
     action: receive
     channel:
       $ref: '#/channels/events'
-    summary: Receive real-time events (future)
+    summary: Receive real-time events
+    description: |
+      Subscribe-only JSON text messages. On connect, the server sends
+      audio.sink.active events for any currently active sinks. Then
+      streams events as they occur.
 
 components:
   messages:
@@ -133,10 +138,12 @@ components:
     Event:
       name: Event
       title: Real-time Event
-      summary: Notification, call, or app state change
+      summary: Audio sink state, notification, call, or app state change
       contentType: application/json
       payload:
         oneOf:
+          - $ref: '#/components/schemas/AudioSinkActiveEvent'
+          - $ref: '#/components/schemas/AudioSinkInactiveEvent'
           - $ref: '#/components/schemas/NotificationReceivedEvent'
           - $ref: '#/components/schemas/NotificationRemovedEvent'
           - $ref: '#/components/schemas/CallIncomingEvent'
@@ -144,6 +151,48 @@ components:
         discriminator: event
 
   schemas:
+    AudioSinkActiveEvent:
+      type: object
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          const: audio.sink.active
+        data:
+          type: object
+          required: [profile]
+          properties:
+            profile:
+              type: string
+              enum: [hfp, a2dp]
+              description: Bluetooth audio profile
+            codec:
+              type: string
+              description: Audio codec (e.g., mSBC, SBC, AAC)
+            sampleRate:
+              type: integer
+              description: Sample rate in Hz
+              examples: [16000, 44100]
+            channels:
+              type: integer
+              description: Number of audio channels
+              examples: [1, 2]
+
+    AudioSinkInactiveEvent:
+      type: object
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          const: audio.sink.inactive
+        data:
+          type: object
+          required: [profile]
+          properties:
+            profile:
+              type: string
+              enum: [hfp, a2dp]
+
     NotificationReceivedEvent:
       type: object
       required: [event, data]
