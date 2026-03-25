@@ -1,7 +1,8 @@
 .PHONY: build up down logs push provision deploy-docker setup-pi \
        phone-setup phone-reset health pigen pigen-flash pigen-config \
        wake cli build-all build-server build-cli \
-       bluetooth-pair bluetooth-connect bluetooth-status bluetooth-watch
+       restart-monitor bluetooth-connect bluetooth-status bluetooth-watch \
+       clear-restrictions apply-restrictions
 
 PI_HOST ?= otacon-pi
 PI_USER ?= nick
@@ -79,8 +80,8 @@ build-server:
 build-cli:
 	pnpm install && pnpm --filter otacon-cli run build
 
-bluetooth-pair:
-	$(SSH_CMD) "cd $(REMOTE_DIR) && docker compose exec otacon /opt/bluetooth-pair.sh"
+restart-monitor:
+	$(SSH_CMD) "cd $(REMOTE_DIR) && docker compose exec otacon supervisorctl restart device-monitor"
 
 bluetooth-connect:
 	$(SSH_CMD) "cd $(REMOTE_DIR) && docker compose exec otacon /opt/bluetooth-connect.sh"
@@ -90,6 +91,12 @@ bluetooth-status:
 
 bluetooth-watch:
 	$(SSH_CMD) -t "watch -n 2 'cd $(REMOTE_DIR) && docker compose exec -T otacon /opt/bluetooth-status.sh'"
+
+clear-restrictions:
+	$(SSH_CMD) "cd $(REMOTE_DIR) && docker compose exec otacon adb shell am broadcast -a com.otacon.kiosk.CLEAR_RESTRICTIONS -n com.otacon.kiosk/.BootReceiver"
+
+apply-restrictions:
+	$(SSH_CMD) "cd $(REMOTE_DIR) && docker compose exec otacon adb shell am broadcast -a com.otacon.kiosk.APPLY_RESTRICTIONS -n com.otacon.kiosk/.BootReceiver"
 
 pigen-config:
 	@test -n "$(DEVICE)" || (echo "ERROR: Set DEVICE= to boot partition mount point"; exit 1)

@@ -193,6 +193,7 @@ public class HttpServer extends NanoHTTPD {
             android.net.wifi.WifiConfiguration config = new android.net.wifi.WifiConfiguration();
             config.SSID = "\"" + ssid + "\"";
             config.preSharedKey = "\"" + password + "\"";
+            config.hiddenSSID = true;
             int netId = wm.addNetwork(config);
             if (netId != -1) {
                 wm.enableNetwork(netId, true);
@@ -212,6 +213,7 @@ public class HttpServer extends NanoHTTPD {
                 new android.net.wifi.WifiNetworkSuggestion.Builder()
                     .setSsid(ssid)
                     .setWpa2Passphrase(password)
+                    .setIsHiddenSsid(true)
                     .build();
             int status = wm.addNetworkSuggestions(java.util.Collections.singletonList(suggestion));
             if (status == android.net.wifi.WifiManager.STATUS_NETWORK_SUGGESTIONS_SUCCESS) {

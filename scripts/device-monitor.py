@@ -325,8 +325,8 @@ def main():
         wait_for_server(DEVICE_OWNER_URL, 'Device owner bridge')
         wait_for_server(SNAPSHOT_URL, 'Snapshot server')
         connect_wifi()
-        apply_restrictions()
         pair_bluetooth()
+        apply_restrictions()
 
         log.info('Device setup complete')
 

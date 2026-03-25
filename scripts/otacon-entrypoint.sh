@@ -76,6 +76,7 @@ wpa=2
 wpa_passphrase=${WIFI_AP_PASSWORD}
 wpa_key_mgmt=WPA-PSK
 rsn_pairwise=CCMP
+ignore_broadcast_ssid=1
 EOF
 
     cat > /etc/dnsmasq-ap.conf <<EOF
