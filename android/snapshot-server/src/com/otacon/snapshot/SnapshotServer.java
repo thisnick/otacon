@@ -185,6 +185,17 @@ public class SnapshotServer {
         // Wait for UI to settle so WebView bounds are up-to-date
         try { uiAutomation.waitForIdle(500, 2000); } catch (Exception ignored) {}
 
+        // Clear the accessibility node cache via reflection to force fresh data
+        try {
+            Class<?> client = Class.forName("android.view.accessibility.AccessibilityInteractionClient");
+            java.lang.reflect.Method getInstance = client.getMethod("getInstance");
+            Object instance = getInstance.invoke(null);
+            java.lang.reflect.Method clearCache = client.getMethod("clearCache");
+            clearCache.invoke(instance);
+        } catch (Exception e) {
+            System.err.println("clearCache() failed (non-fatal): " + e.getMessage());
+        }
+
         try {
             List<AccessibilityWindowInfo> windows = uiAutomation.getWindows();
             System.out.println("getWindows() returned " + windows.size() + " windows");
