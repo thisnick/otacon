@@ -63,6 +63,11 @@ impl BridgeState {
         http_post(&self.client, DEVICE_OWNER_URL, path, body).await
     }
 
+    /// PUT to the device owner app.
+    pub async fn device_put(&self, path: &str, body: &str) -> Result<String, ApiError> {
+        http_put(&self.client, DEVICE_OWNER_URL, path, body).await
+    }
+
     /// DELETE to the device owner app.
     pub async fn device_delete(&self, path: &str) -> Result<String, ApiError> {
         let url = format!("{DEVICE_OWNER_URL}{path}");
@@ -109,6 +114,23 @@ async fn http_post(client: &reqwest::Client, base: &str, path: &str, body: &str)
     let text = resp.text().await.map_err(|e| ApiError::Adb(format!("bridge read error: {e}")))?;
     if !status.is_success() {
         return Err(ApiError::Adb(format!("bridge POST {path} returned {status}: {text}")));
+    }
+    Ok(text)
+}
+
+async fn http_put(client: &reqwest::Client, base: &str, path: &str, body: &str) -> Result<String, ApiError> {
+    let url = format!("{base}{path}");
+    let resp = client
+        .put(&url)
+        .header("Content-Type", "application/json; charset=utf-8")
+        .body(body.to_string())
+        .send()
+        .await
+        .map_err(|e| ApiError::Adb(format!("bridge PUT {path} failed: {e}")))?;
+    let status = resp.status();
+    let text = resp.text().await.map_err(|e| ApiError::Adb(format!("bridge read error: {e}")))?;
+    if !status.is_success() {
+        return Err(ApiError::Adb(format!("bridge PUT {path} returned {status}: {text}")));
     }
     Ok(text)
 }

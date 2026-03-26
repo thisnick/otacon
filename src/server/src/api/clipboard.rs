@@ -54,6 +54,6 @@ pub async fn set_handler(
         ));
     }
     let payload = serde_json::json!({"text": body.text}).to_string();
-    state.bridge.device_post("/clipboard", &payload).await?;
+    state.bridge.device_put("/clipboard", &payload).await?;
     Ok(Json(serde_json::json!({"ok": true})))
 }
