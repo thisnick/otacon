@@ -340,6 +340,89 @@ program
     await client.open(uri);
   });
 
+// --- Recording ---
+
+const record = program
+  .command("record")
+  .description("Screen recording (interactive: holds TTY, Ctrl+C to stop)")
+  .option("-d, --duration <seconds>", "max recording duration", "30")
+  .option("-o, --output <path>", "output file path (default: recording.mp4)")
+  .action(async (opts: { duration: string; output?: string }) => {
+    const client = getClient(program.opts());
+    const maxDuration = parseInt(opts.duration);
+    const outPath = opts.output || "recording.mp4";
+    const wsUrl = client.recordWsUrl(maxDuration);
+
+    // Dynamic import for WebSocket (Node.js built-in in v22+, or ws package)
+    const WebSocket = (await import("ws")).default;
+    const ws = new WebSocket(wsUrl, { rejectUnauthorized: false });
+    const chunks: Buffer[] = [];
+
+    ws.on("message", (data: Buffer, isBinary: boolean) => {
+      if (isBinary) {
+        chunks.push(Buffer.from(data));
+      } else {
+        const msg = JSON.parse(data.toString());
+        if (msg.type === "status") {
+          process.stderr.write(`\rRecording... ${msg.elapsed}s / ${msg.max_duration}s  [Ctrl+C to stop]`);
+        } else if (msg.error) {
+          console.error(`\nError: ${msg.error}`);
+          process.exit(1);
+        }
+      }
+    });
+
+    ws.on("close", () => {
+      if (chunks.length > 0) {
+        writeFileSync(outPath, Buffer.concat(chunks));
+        console.error(`\nSaved to ${outPath}`);
+      } else {
+        console.error("\nNo recording data received");
+      }
+    });
+
+    ws.on("error", (err: Error) => {
+      console.error(`\nWebSocket error: ${err.message}`);
+      process.exit(1);
+    });
+
+    // Ctrl+C sends stop
+    process.on("SIGINT", () => {
+      ws.send(JSON.stringify({ action: "stop" }));
+    });
+  });
+
+record
+  .command("start")
+  .description("Start recording (headless, for agents)")
+  .option("-d, --duration <seconds>", "max recording duration", "30")
+  .action(async (opts: { duration: string }) => {
+    const client = getClient(program.opts());
+    await client.recordStart(parseInt(opts.duration));
+    console.error("Recording started");
+  });
+
+record
+  .command("stop")
+  .description("Stop recording and save video")
+  .option("-o, --output <path>", "output file path (default: recording.mp4)")
+  .action(async (opts: { output?: string }) => {
+    const client = getClient(program.opts());
+    const mp4 = await client.recordStop();
+    const outPath = opts.output || "recording.mp4";
+    writeFileSync(outPath, mp4);
+    console.error(`Saved to ${outPath}`);
+  });
+
+record
+  .command("status")
+  .description("Check recording status")
+  .action(async () => {
+    const client = getClient(program.opts());
+    const status = await client.recordStatus();
+    console.log(JSON.stringify(status, null, 2));
+  });
+
 // --- Run ---
 
 program.parseAsync().catch((err) => {

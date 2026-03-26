@@ -6,6 +6,7 @@ pub mod clipboard;
 pub mod contacts;
 pub mod device;
 pub mod open;
+pub mod record;
 pub mod screenshot;
 pub mod sms;
 pub mod snapshot;
@@ -78,6 +79,9 @@ impl IntoResponse for ApiError {
         apps::launch_handler,
         apps::stop_handler,
         open::handler,
+        record::start_handler,
+        record::stop_handler,
+        record::status_handler,
     ),
     components(schemas(
         action::Action, action::TapParams, action::SwipeParams, action::PinchParams,
@@ -89,6 +93,7 @@ impl IntoResponse for ApiError {
         apps::App, apps::LaunchBody,
         contacts::Contact,
         open::OpenBody,
+        record::StartRecordBody, record::RecordStatus,
         OkResponse, ErrorResponse,
     ))
 )]
@@ -159,6 +164,19 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/apps/running/{package}", delete(apps::stop_handler))
         // Open URI
         .route("/open", post(open::handler))
+        // Recording
+        .route("/record/start", post({
+            let state = state.clone();
+            move |body| record::start_handler(state, body)
+        }))
+        .route("/record/stop", post({
+            let state = state.clone();
+            move || record::stop_handler(state)
+        }))
+        .route("/record/status", get({
+            let state = state.clone();
+            move || record::status_handler(state)
+        }))
         // OpenAPI spec
         .route("/docs/openapi.json", get(|| async {
             let spec = ApiDoc::openapi().to_json().unwrap();

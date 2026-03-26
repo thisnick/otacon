@@ -397,6 +397,92 @@
                 }
             }
         },
+        "/api/record/start": {
+            "post": {
+                "tags": [
+                    "Recording"
+                ],
+                "operationId": "startRecording",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/StartRecordBody"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "Recording started",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/OkResponse"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Recording already in progress",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/record/status": {
+            "get": {
+                "tags": [
+                    "Recording"
+                ],
+                "operationId": "getRecordingStatus",
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/RecordStatus"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/record/stop": {
+            "post": {
+                "tags": [
+                    "Recording"
+                ],
+                "operationId": "stopRecording",
+                "responses": {
+                    "200": {
+                        "description": "MP4 video",
+                        "content": {
+                            "video/mp4": {}
+                        }
+                    },
+                    "404": {
+                        "description": "No active recording",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/screenshot": {
             "get": {
                 "tags": [
@@ -1090,6 +1176,33 @@
                     }
                 }
             },
+            "RecordStatus": {
+                "type": "object",
+                "required": [
+                    "recording"
+                ],
+                "properties": {
+                    "elapsed": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ],
+                        "format": "int32",
+                        "minimum": 0
+                    },
+                    "max_duration": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ],
+                        "format": "int32",
+                        "minimum": 0
+                    },
+                    "recording": {
+                        "type": "boolean"
+                    }
+                }
+            },
             "ScrollParams": {
                 "type": "object",
                 "required": [
@@ -1194,6 +1307,17 @@
                     "thread_id": {
                         "type": "integer",
                         "format": "int64"
+                    }
+                }
+            },
+            "StartRecordBody": {
+                "type": "object",
+                "properties": {
+                    "max_duration": {
+                        "type": "integer",
+                        "format": "int32",
+                        "description": "Max recording duration in seconds (default 30, max 180)",
+                        "minimum": 0
                     }
                 }
             },

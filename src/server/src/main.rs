@@ -129,6 +129,8 @@ pub struct AppState {
     events_tx: broadcast::Sender<String>,
     /// Currently active audio sinks (D-Bus path → event data)
     active_sinks: Arc<Mutex<HashMap<String, serde_json::Value>>>,
+    /// Screen recording state
+    recording: api::record::RecordingState,
 }
 
 #[tokio::main]
@@ -178,6 +180,7 @@ async fn main() {
         bridge,
         events_tx,
         active_sinks,
+        recording: Arc::new(Mutex::new(None)),
     });
 
     // Start D-Bus monitor for BlueALSA sink state (Bluetooth backend only)
@@ -196,6 +199,16 @@ async fn main() {
         .route("/ws/audio/media", get({
             let state = state.clone();
             move |ws| ws_media_handler(ws, state)
+        }))
+        .route("/ws/record", get({
+            let state = state.clone();
+            move |ws: WebSocketUpgrade, query: axum::extract::Query<HashMap<String, String>>| {
+                let max_duration: u32 = query.0.get("max_duration")
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(30)
+                    .min(180);
+                async move { ws.on_upgrade(move |socket| handle_ws_record(socket, state, max_duration)) }
+            }
         }))
         .route("/ws/events", get({
             let state = state.clone();
@@ -475,6 +488,100 @@ async fn handle_ws_events(socket: WebSocket, state: Arc<AppState>) {
     tokio::select! {
         _ = send_task => {},
         _ = drain_task => {},
+    }
+}
+
+/// WebSocket handler: screen recording with live status
+async fn handle_ws_record(socket: WebSocket, state: Arc<AppState>, max_duration: u32) {
+    let (mut ws_tx, mut ws_rx) = socket.split();
+
+    // Check if already recording
+    {
+        let guard = state.recording.lock().await;
+        if guard.is_some() {
+            let _ = ws_tx.send(Message::Text(
+                r#"{"error":"recording already in progress"}"#.into()
+            )).await;
+            return;
+        }
+    }
+
+    // Start recording
+    let start_body = api::record::StartRecordBody { max_duration };
+    let start_result = api::record::start_handler(state.clone(), axum::extract::Json(start_body)).await;
+    if start_result.is_err() {
+        let _ = ws_tx.send(Message::Text(
+            r#"{"error":"failed to start recording"}"#.into()
+        )).await;
+        return;
+    }
+
+    let started = std::time::Instant::now();
+
+    // Status update loop + listen for stop command
+    let state_clone = state.clone();
+    loop {
+        tokio::select! {
+            // Send status every second
+            _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
+                let elapsed = started.elapsed().as_secs() as u32;
+                let msg = serde_json::json!({
+                    "type": "status",
+                    "elapsed": elapsed.min(max_duration),
+                    "max_duration": max_duration,
+                });
+                if ws_tx.send(Message::Text(msg.to_string().into())).await.is_err() {
+                    break; // Client disconnected
+                }
+                // Check if recording auto-stopped
+                if elapsed >= max_duration {
+                    break;
+                }
+                // Check if process exited
+                let mut guard = state_clone.recording.lock().await;
+                if let Some(ref mut info) = *guard {
+                    if info.child.try_wait().ok().flatten().is_some() {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+            // Listen for client messages
+            msg = ws_rx.next() => {
+                match msg {
+                    Some(Ok(Message::Text(text))) => {
+                        if text.contains("stop") {
+                            break;
+                        }
+                    }
+                    Some(Ok(Message::Close(_))) | None => break,
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    // Stop and send the mp4
+    let info = {
+        let mut g = state.recording.lock().await;
+        g.take()
+    };
+
+    if let Some(info) = info {
+        match api::record::stop_and_retrieve(info).await {
+            Ok(response) => {
+                // Extract body bytes from the response
+                let (_, body) = response.into_parts();
+                let bytes = axum::body::to_bytes(body, 100_000_000).await.unwrap_or_default();
+                let _ = ws_tx.send(Message::Binary(bytes.to_vec().into())).await;
+            }
+            Err(_) => {
+                let _ = ws_tx.send(Message::Text(
+                    r#"{"error":"failed to retrieve recording"}"#.into()
+                )).await;
+            }
+        }
     }
 }
 

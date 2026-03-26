@@ -164,4 +164,37 @@ export class OtaconClient {
     });
     await throwOnError(res);
   }
+
+  async recordStart(maxDuration: number = 30): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/record/start`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ max_duration: maxDuration }),
+    });
+    await throwOnError(res);
+  }
+
+  async recordStop(): Promise<Buffer> {
+    const res = await fetch(`${this.baseUrl}/api/record/stop`, {
+      method: "POST",
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(
+        (body as { error?: string }).error || `HTTP ${res.status}`
+      );
+    }
+    return Buffer.from(await res.arrayBuffer());
+  }
+
+  async recordStatus(): Promise<{ recording: boolean; elapsed?: number; max_duration?: number }> {
+    const res = await fetch(`${this.baseUrl}/api/record/status`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  }
+
+  recordWsUrl(maxDuration: number = 30): string {
+    const base = this.baseUrl.replace(/^http/, "ws");
+    return `${base}/ws/record?max_duration=${maxDuration}`;
+  }
 }

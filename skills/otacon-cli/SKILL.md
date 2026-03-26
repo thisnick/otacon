@@ -166,6 +166,24 @@ otacon open "tel:+1234567890"
 otacon open "instagram://user?username=example"
 ```
 
+### Screen Recording
+
+```bash
+# Interactive: holds TTY, shows progress, Ctrl+C to stop
+otacon record                    # 30s max, saves to recording.mp4
+otacon record -d 60              # 60s max
+otacon record -d 60 -o video.mp4 # custom output
+
+# Headless (for agents):
+otacon record start              # start recording, 30s max
+otacon record start -d 60        # start recording, 60s max
+otacon record status             # check if recording + elapsed time
+otacon record stop               # stop and save to recording.mp4
+otacon record stop -o video.mp4  # stop and save to custom path
+```
+
+Recording is video only (h264 mp4, no audio). Max duration is 180s. Only one recording at a time. If not stopped explicitly, recording auto-stops at the max duration — call `record stop` to retrieve the file.
+
 ### Contacts
 
 ```bash
