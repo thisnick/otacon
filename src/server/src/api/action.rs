@@ -106,31 +106,17 @@ pub async fn handler(
 }
 
 async fn handle_tap(state: Arc<AppState>, p: TapParams, long: bool) -> Result<(), ApiError> {
-    let action_name = if long { "long_click" } else { "click" };
-
-    // Ref-based tap: try snapshot server first, fall back to coordinate tap
+    // Ref-based tap: resolve bounds and use coordinate tap (input tap).
+    // We don't use performAction(ACTION_CLICK) because it returns true
+    // but silently fails on WebView elements (known Android limitation).
     if let Some(ref ref_id) = p.ref_id {
-        if state.bridge.is_snapshot_available() {
-            let body = serde_json::json!({"action": action_name, "ref": ref_id}).to_string();
-            let result = state.bridge.snapshot_post("/action", &body).await?;
-            // If performAction succeeded, we're done
-            if result.contains("\"ok\":true") || result.contains("\"ok\": true") {
-                return Ok(());
-            }
-            // performAction failed (e.g. WebView elements) — fall through to coordinate tap
-            eprintln!("performAction({action_name}) failed for {ref_id}, falling back to coordinate tap");
-        }
-
-        // Coordinate fallback: get bounds from snapshot server or cache
         let bounds = if state.bridge.is_snapshot_available() {
-            // Get fresh bounds from snapshot server
             let snap = state.bridge.snapshot_get("/snapshot?format=json").await?;
             let tree: serde_json::Value = serde_json::from_str(&snap)
                 .map_err(|e| ApiError::Adb(format!("parse snapshot: {e}")))?;
             find_ref_bounds(&tree, ref_id)
                 .ok_or_else(|| ApiError::NotFound(format!("ref {ref_id} not found")))?
         } else {
-            // ADB fallback: look up cached bounds
             let guard = state.snapshot_cache.lock().await;
             let cache = guard
                 .as_ref()
