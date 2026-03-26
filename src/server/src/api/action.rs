@@ -302,31 +302,55 @@ async fn handle_pinch(p: PinchParams) -> Result<(), ApiError> {
 
 async fn handle_key(p: KeyParams) -> Result<(), ApiError> {
     let key_lower = p.key.to_lowercase();
-    let keycode = match key_lower.as_str() {
-        "home" => "3".to_string(),
-        "back" => "4".to_string(),
-        "call" => "5".to_string(),
-        "end_call" | "endcall" => "6".to_string(),
-        "power" => "26".to_string(),
-        "volume_up" => "24".to_string(),
-        "volume_down" => "25".to_string(),
-        "menu" => "82".to_string(),
-        "enter" => "66".to_string(),
-        "delete" | "backspace" => "67".to_string(),
-        "tab" => "61".to_string(),
-        "recents" | "app_switch" => "187".to_string(),
-        "space" => "62".to_string(),
-        "escape" | "esc" => "111".to_string(),
-        other => {
-            if other.chars().all(|c| c.is_ascii_digit()) {
-                other.to_string()
-            } else {
-                return Err(ApiError::BadRequest(format!("unknown key: {other}")));
-            }
-        }
-    };
+
+    // Handle modifier combos like "ctrl+v", "ctrl+a", "shift+tab"
+    if key_lower.contains('+') {
+        let parts: Vec<&str> = key_lower.split('+').collect();
+        let keycodes: Result<Vec<String>, _> = parts
+            .iter()
+            .map(|k| key_to_code(k.trim()))
+            .collect();
+        let codes = keycodes?;
+        let args = codes.join(" ");
+        adb_shell(&format!("input keycombination {args}")).await?;
+        return Ok(());
+    }
+
+    let keycode = key_to_code(&key_lower)?;
     adb_shell(&format!("input keyevent {keycode}")).await?;
     Ok(())
+}
+
+fn key_to_code(name: &str) -> Result<String, ApiError> {
+    match name {
+        "home" => Ok("3".into()),
+        "back" => Ok("4".into()),
+        "call" => Ok("5".into()),
+        "end_call" | "endcall" => Ok("6".into()),
+        "power" => Ok("26".into()),
+        "volume_up" => Ok("24".into()),
+        "volume_down" => Ok("25".into()),
+        "menu" => Ok("82".into()),
+        "enter" => Ok("66".into()),
+        "delete" | "backspace" => Ok("67".into()),
+        "tab" => Ok("61".into()),
+        "recents" | "app_switch" => Ok("187".into()),
+        "space" => Ok("62".into()),
+        "escape" | "esc" => Ok("111".into()),
+        "ctrl" | "ctrl_left" => Ok("113".into()),
+        "ctrl_right" => Ok("114".into()),
+        "shift" | "shift_left" => Ok("59".into()),
+        "shift_right" => Ok("60".into()),
+        "alt" | "alt_left" => Ok("57".into()),
+        "alt_right" => Ok("58".into()),
+        // Letters a-z
+        s if s.len() == 1 && s.chars().next().unwrap().is_ascii_lowercase() => {
+            Ok((s.chars().next().unwrap() as u32 - 'a' as u32 + 29).to_string())
+        }
+        // Raw keycodes
+        s if s.chars().all(|c| c.is_ascii_digit()) => Ok(s.into()),
+        other => Err(ApiError::BadRequest(format!("unknown key: {other}"))),
+    }
 }
 
 async fn handle_type(p: TypeParams) -> Result<(), ApiError> {
