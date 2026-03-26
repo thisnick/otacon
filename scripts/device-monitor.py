@@ -124,6 +124,8 @@ def configure_screen():
     else:
         log.info(f'PIN already set or failed: {result}')
     adb_shell('svc data disable')
+    # Disable RCS (Google Messages) — forces SMS-only, works with content://sms
+    adb_shell('pm disable-user --user 0 com.google.android.apps.messaging')
     # Only wake if screen is off (keyevent 26 is a toggle)
     display_state = adb_shell('dumpsys display | grep "mScreenState"')
     if 'OFF' in display_state or 'mScreenState=0' in display_state:

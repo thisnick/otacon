@@ -100,7 +100,7 @@ async fn http_post(client: &reqwest::Client, base: &str, path: &str, body: &str)
     let url = format!("{base}{path}");
     let resp = client
         .post(&url)
-        .header("Content-Type", "application/json")
+        .header("Content-Type", "application/json; charset=utf-8")
         .body(body.to_string())
         .send()
         .await
