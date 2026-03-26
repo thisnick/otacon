@@ -88,6 +88,52 @@
                 }
             }
         },
+        "/api/apps/install": {
+            "post": {
+                "tags": [
+                    "Apps"
+                ],
+                "operationId": "installApp",
+                "requestBody": {
+                    "description": "APK binary",
+                    "content": {
+                        "application/octet-stream": {
+                            "schema": {
+                                "type": "array",
+                                "items": {
+                                    "type": "integer",
+                                    "format": "int32",
+                                    "minimum": 0
+                                }
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/OkResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/apps/running": {
             "get": {
                 "tags": [

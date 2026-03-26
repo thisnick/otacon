@@ -149,6 +149,15 @@ export class OtaconClient {
     await throwOnError(res);
   }
 
+  async appInstall(apkData: Buffer): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/apps/install`, {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: new Uint8Array(apkData),
+    });
+    await throwOnError(res);
+  }
+
   async contacts(query?: string): Promise<Contact[]> {
     const params = query ? `?q=${encodeURIComponent(query)}` : "";
     const res = await fetch(`${this.baseUrl}/api/contacts${params}`);

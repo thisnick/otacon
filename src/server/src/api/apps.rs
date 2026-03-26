@@ -3,7 +3,7 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
-use super::adb::adb_shell;
+use super::adb::{adb, adb_shell};
 use super::{ApiError, OkResponse};
 
 #[derive(Serialize, ToSchema)]
@@ -103,4 +103,39 @@ pub async fn launch_handler(Json(body): Json<LaunchBody>) -> Result<Json<serde_j
 pub async fn stop_handler(Path(package): Path<String>) -> Result<Json<serde_json::Value>, ApiError> {
     adb_shell(&format!("am force-stop {package}")).await?;
     Ok(Json(serde_json::json!({"ok": true})))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/apps/install",
+    tag = "Apps",
+    operation_id = "installApp",
+    request_body(content = Vec<u8>, content_type = "application/octet-stream", description = "APK binary"),
+    responses(
+        (status = 200, body = OkResponse),
+        (status = 400, body = super::ErrorResponse),
+    )
+)]
+pub async fn install_handler(body: axum::body::Bytes) -> Result<Json<serde_json::Value>, ApiError> {
+    if body.is_empty() {
+        return Err(ApiError::BadRequest("empty APK body".into()));
+    }
+
+    // Write APK to temp file
+    let tmp_path = "/tmp/otacon_install.apk";
+    tokio::fs::write(tmp_path, &body).await
+        .map_err(|e| ApiError::Adb(format!("failed to write APK: {e}")))?;
+
+    // Install via ADB
+    let output = adb(&["install", "-r", tmp_path]).await?;
+    let result = String::from_utf8_lossy(&output);
+
+    // Clean up
+    let _ = tokio::fs::remove_file(tmp_path).await;
+
+    if result.contains("Success") {
+        Ok(Json(serde_json::json!({"ok": true})))
+    } else {
+        Err(ApiError::Adb(format!("install failed: {}", result.trim())))
+    }
 }

@@ -151,6 +151,9 @@ otacon apps launch com.android.chrome
 
 # Force stop an app
 otacon apps stop com.android.chrome
+
+# Install an APK (sideload)
+otacon apps install /path/to/app.apk
 ```
 
 ### Screen Recording

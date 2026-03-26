@@ -3,7 +3,7 @@
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
 import { program } from "commander";
-import { writeFileSync } from "fs";
+import { readFileSync, writeFileSync } from "fs";
 import { OtaconClient, type Action } from "./client.js";
 
 const DEFAULT_HOST = "https://otacon-pi:8080";
@@ -300,6 +300,17 @@ apps
   .action(async (pkg: string) => {
     const client = getClient(program.opts());
     await client.appStop(pkg);
+  });
+
+apps
+  .command("install")
+  .description("Install an APK")
+  .argument("<apk>", "path to APK file")
+  .action(async (apk: string) => {
+    const client = getClient(program.opts());
+    const data = readFileSync(apk);
+    await client.appInstall(data);
+    console.error(`Installed ${apk}`);
   });
 
 // --- Contacts ---

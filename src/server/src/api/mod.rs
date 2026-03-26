@@ -78,6 +78,7 @@ impl IntoResponse for ApiError {
         apps::running_handler,
         apps::launch_handler,
         apps::stop_handler,
+        apps::install_handler,
         open::handler,
         record::start_handler,
         record::stop_handler,
@@ -162,6 +163,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(apps::running_handler).post(apps::launch_handler),
         )
         .route("/apps/running/{package}", delete(apps::stop_handler))
+        .route("/apps/install", post(apps::install_handler))
         // Open URI
         .route("/open", post(open::handler))
         // Recording
