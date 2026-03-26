@@ -5,6 +5,7 @@ pub mod bridge;
 pub mod clipboard;
 pub mod contacts;
 pub mod device;
+pub mod open;
 pub mod screenshot;
 pub mod sms;
 pub mod snapshot;
@@ -98,4 +99,6 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(apps::running_handler).post(apps::launch_handler),
         )
         .route("/apps/running/{package}", delete(apps::stop_handler))
+        // Open URI
+        .route("/open", post(open::handler))
 }

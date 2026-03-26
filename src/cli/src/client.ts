@@ -160,4 +160,13 @@ export class OtaconClient {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json();
   }
+
+  async open(uri: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/open`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ uri }),
+    });
+    await throwOnError(res);
+  }
 }

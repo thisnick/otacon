@@ -331,6 +331,17 @@ program
     console.log(JSON.stringify(info, null, 2));
   });
 
+// --- Open ---
+
+program
+  .command("open")
+  .description("Open a URI with the registered app")
+  .argument("<uri>", "URI to open (https://, tel:, app deep links, etc.)")
+  .action(async (uri: string) => {
+    const client = getClient(program.opts());
+    await client.open(uri);
+  });
+
 // --- Run ---
 
 program.parseAsync().catch((err) => {

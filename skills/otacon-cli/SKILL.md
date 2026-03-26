@@ -153,6 +153,19 @@ otacon apps launch com.android.chrome
 otacon apps stop com.android.chrome
 ```
 
+### Open URI
+
+```bash
+# Open a URL in the registered app (browser, deep link, etc.)
+otacon open "https://www.xiaohongshu.com/explore/123"
+
+# Open a phone number in the dialer
+otacon open "tel:+1234567890"
+
+# Open an app deep link
+otacon open "instagram://user?username=example"
+```
+
 ### Contacts
 
 ```bash

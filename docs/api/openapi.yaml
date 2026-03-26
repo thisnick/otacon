@@ -332,6 +332,29 @@ paths:
                 items:
                   $ref: '#/components/schemas/Contact'
 
+  # --- Open URI ---
+
+  /api/open:
+    post:
+      operationId: openUri
+      summary: Open a URI with the registered app
+      tags: [Apps]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [uri]
+              properties:
+                uri:
+                  type: string
+                  description: URI to open (https://, tel:, mailto:, app deep links, etc.)
+                  example: https://www.xiaohongshu.com/explore/123
+      responses:
+        '200':
+          $ref: '#/components/responses/Ok'
+
 components:
   schemas:
     # --- Action (discriminated union) ---

@@ -261,6 +261,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/open": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Open a URI with the registered app */
+        post: operations["openUri"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -839,6 +856,28 @@ export interface operations {
                     "application/json": components["schemas"]["Contact"][];
                 };
             };
+        };
+    };
+    openUri: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * @description URI to open (https://, tel:, mailto:, app deep links, etc.)
+                     * @example https://www.xiaohongshu.com/explore/123
+                     */
+                    uri: string;
+                };
+            };
+        };
+        responses: {
+            200: components["responses"]["Ok"];
         };
     };
 }
