@@ -1,7 +1,7 @@
 use axum::extract::Path;
 use axum::Json;
-use axum::response::{IntoResponse, Response};
-use serde::Serialize;
+
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
 
@@ -10,14 +10,41 @@ use super::{ApiError, OkResponse};
 use crate::AppState;
 
 #[derive(Serialize, ToSchema)]
+#[schema(description = "Device metadata and connection status")]
 pub struct DeviceInfo {
+    /// Current foreground activity
     activity: Option<String>,
     window: Option<String>,
     model: Option<String>,
+    /// e.g. "1080x2316"
     resolution: Option<String>,
+    /// SIM phone number (e.g. "+15551234567")
     phone_number: Option<String>,
+    /// Device owner app connected
     bridge: bool,
+    /// Snapshot server (app_process) connected
     snapshot_server: bool,
+}
+
+#[derive(Serialize, Deserialize, ToSchema)]
+#[schema(description = "Phone notification")]
+pub struct Notification {
+    /// Unique notification key (use for dismiss/action)
+    key: String,
+    package: String,
+    title: Option<String>,
+    text: Option<String>,
+    /// Post time in milliseconds
+    time: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actions: Option<Vec<NotificationAction>>,
+}
+
+#[derive(Serialize, Deserialize, ToSchema)]
+pub struct NotificationAction {
+    /// Action index (use for triggering)
+    index: u32,
+    title: String,
 }
 
 #[utoipa::path(
@@ -96,35 +123,28 @@ async fn get_focused_window() -> Result<String, ApiError> {
         .unwrap_or_else(|| out.to_string()))
 }
 
-#[derive(Serialize)]
-pub struct Notification {
-    key: String,
-    package: String,
-    title: Option<String>,
-    text: Option<String>,
-    time: Option<String>,
-}
-
 #[utoipa::path(
     get,
     path = "/api/notifications",
     tag = "Notifications",
     operation_id = "listNotifications",
-    responses((status = 200, description = "Array of notifications", body = Vec<serde_json::Value>))
+    responses((status = 200, description = "Array of active notifications", body = Vec<Notification>))
 )]
 pub async fn notifications_handler(
     state: Arc<AppState>,
-) -> Result<Response, ApiError> {
+) -> Result<Json<Vec<Notification>>, ApiError> {
     // Fast path: device owner app
     if state.bridge.is_device_owner_available() {
         let body = state.bridge.device_get("/notifications").await?;
-        return Ok(([("content-type", "application/json")], body).into_response());
+        let notifications: Vec<Notification> = serde_json::from_str(&body)
+            .unwrap_or_default();
+        return Ok(Json(notifications));
     }
 
     // Slow path: parse dumpsys
     let out = adb_shell("dumpsys notification --noredact").await?;
     let notifications = parse_notifications(&out);
-    Ok(Json(notifications).into_response())
+    Ok(Json(notifications))
 }
 
 #[utoipa::path(
@@ -187,7 +207,7 @@ fn parse_notifications(dump: &str) -> Vec<Notification> {
     let mut current_pkg = String::new();
     let mut current_title: Option<String> = None;
     let mut current_text: Option<String> = None;
-    let mut current_time: Option<String> = None;
+    let mut current_time: Option<i64> = None;
     let mut in_notification = false;
 
     for line in dump.lines() {
@@ -202,6 +222,7 @@ fn parse_notifications(dump: &str) -> Vec<Notification> {
                     title: current_title.take(),
                     text: current_text.take(),
                     time: current_time.take(),
+                    actions: None,
                 });
             }
             in_notification = true;
@@ -226,7 +247,7 @@ fn parse_notifications(dump: &str) -> Vec<Notification> {
             } else if let Some(rest) = trimmed.strip_prefix("android.text=") {
                 current_text = Some(rest.to_string());
             } else if let Some(rest) = trimmed.strip_prefix("postTime=") {
-                current_time = Some(rest.to_string());
+                current_time = rest.parse().ok();
             }
         }
     }
@@ -239,6 +260,7 @@ fn parse_notifications(dump: &str) -> Vec<Notification> {
             title: current_title,
             text: current_text,
             time: current_time,
+            actions: None,
         });
     }
 

@@ -1,11 +1,17 @@
 use axum::extract::Json;
-use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
 
 use super::{ApiError, OkResponse};
 use crate::AppState;
+
+#[derive(Deserialize, Serialize, ToSchema)]
+#[schema(description = "Clipboard text content")]
+pub struct ClipboardContent {
+    /// Current clipboard text (null if empty)
+    pub text: Option<String>,
+}
 
 #[derive(Deserialize, Serialize, ToSchema)]
 pub struct SetClipboardBody {
@@ -17,16 +23,17 @@ pub struct SetClipboardBody {
     path = "/api/clipboard",
     tag = "Clipboard",
     operation_id = "getClipboard",
-    responses((status = 200, description = "Clipboard content"))
+    responses((status = 200, description = "Current clipboard content", body = ClipboardContent))
 )]
-pub async fn get_handler(state: Arc<AppState>) -> Result<Response, ApiError> {
+pub async fn get_handler(state: Arc<AppState>) -> Result<Json<ClipboardContent>, ApiError> {
     if !state.bridge.is_device_owner_available() {
         return Err(ApiError::Adb(
             "clipboard requires device owner app (not available)".into(),
         ));
     }
     let body = state.bridge.device_get("/clipboard").await?;
-    Ok(([("content-type", "application/json")], body).into_response())
+    let content: ClipboardContent = serde_json::from_str(&body).unwrap_or(ClipboardContent { text: None });
+    Ok(Json(content))
 }
 
 #[utoipa::path(

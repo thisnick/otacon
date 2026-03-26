@@ -324,16 +324,27 @@ export interface components {
             /** Format: int32 */
             y2: number;
         };
+        /** @description Clipboard text content */
+        ClipboardContent: {
+            /** @description Current clipboard text (null if empty) */
+            text?: string | null;
+        };
         Contact: {
             name: string;
             phones: string[];
         };
+        /** @description Device metadata and connection status */
         DeviceInfo: {
+            /** @description Current foreground activity */
             activity?: string | null;
+            /** @description Device owner app connected */
             bridge: boolean;
             model?: string | null;
+            /** @description SIM phone number (e.g. "+15551234567") */
             phone_number?: string | null;
+            /** @description e.g. "1080x2316" */
             resolution?: string | null;
+            /** @description Snapshot server (app_process) connected */
             snapshot_server: boolean;
             window?: string | null;
         };
@@ -341,10 +352,33 @@ export interface components {
             error: string;
         };
         KeyParams: {
+            /** @description Key name (home, back, enter, power, etc.) or raw keycode number */
             key: string;
         };
         LaunchBody: {
             package: string;
+        };
+        /** @description Phone notification */
+        Notification: {
+            actions?: components["schemas"]["NotificationAction"][] | null;
+            /** @description Unique notification key (use for dismiss/action) */
+            key: string;
+            package: string;
+            text?: string | null;
+            /**
+             * Format: int64
+             * @description Post time in milliseconds
+             */
+            time?: number | null;
+            title?: string | null;
+        };
+        NotificationAction: {
+            /**
+             * Format: int32
+             * @description Action index (use for triggering)
+             */
+            index: number;
+            title: string;
         };
         OkResponse: {
             ok: boolean;
@@ -353,18 +387,34 @@ export interface components {
             uri: string;
         };
         PinchParams: {
-            /** Format: int32 */
+            /**
+             * Format: int32
+             * @description Duration in ms (default 500)
+             */
             duration_ms?: number;
-            /** Format: int32 */
+            /**
+             * Format: int32
+             * @description Ending finger distance (larger = zoom in)
+             */
             end_radius: number;
-            /** Format: int32 */
+            /**
+             * Format: int32
+             * @description Starting finger distance from center
+             */
             start_radius: number;
-            /** Format: int32 */
+            /**
+             * Format: int32
+             * @description Center X
+             */
             x: number;
-            /** Format: int32 */
+            /**
+             * Format: int32
+             * @description Center Y
+             */
             y: number;
         };
         ScrollParams: {
+            /** @description Scrollable element ref ID */
             ref: string;
         };
         SendSmsBody: {
@@ -375,7 +425,9 @@ export interface components {
             text: string;
         };
         SetTextParams: {
+            /** @description Element ref ID (must be an EditText) */
             ref: string;
+            /** @description Text to set (full Unicode support) */
             text: string;
         };
         SmsMessage: {
@@ -394,7 +446,10 @@ export interface components {
             thread_id: number;
         };
         SwipeParams: {
-            /** Format: int32 */
+            /**
+             * Format: int32
+             * @description Duration in ms (default 300)
+             */
             duration_ms?: number;
             /** Format: int32 */
             x1: number;
@@ -406,13 +461,21 @@ export interface components {
             y2: number;
         };
         TapParams: {
+            /** @description Element ref ID (if tapping by ref, e.g. "e5") */
             ref?: string | null;
-            /** Format: int32 */
+            /**
+             * Format: int32
+             * @description X coordinate (if tapping by position)
+             */
             x?: number | null;
-            /** Format: int32 */
+            /**
+             * Format: int32
+             * @description Y coordinate (if tapping by position)
+             */
             y?: number | null;
         };
         TypeParams: {
+            /** @description Text to type (ASCII only, via ADB input) */
             text: string;
         };
     };
@@ -557,12 +620,14 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Clipboard content */
+            /** @description Current clipboard content */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["ClipboardContent"];
+                };
             };
         };
     };
@@ -639,13 +704,13 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Array of notifications */
+            /** @description Array of active notifications */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown[];
+                    "application/json": components["schemas"]["Notification"][];
                 };
             };
         };

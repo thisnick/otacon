@@ -22,8 +22,11 @@ pub enum Action {
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct TapParams {
+    /// X coordinate (if tapping by position)
     x: Option<i32>,
+    /// Y coordinate (if tapping by position)
     y: Option<i32>,
+    /// Element ref ID (if tapping by ref, e.g. "e5")
     #[serde(rename = "ref")]
     ref_id: Option<String>,
 }
@@ -34,6 +37,7 @@ pub struct SwipeParams {
     y1: i32,
     x2: i32,
     y2: i32,
+    /// Duration in ms (default 300)
     #[serde(default = "default_swipe_duration")]
     duration_ms: u32,
 }
@@ -44,10 +48,15 @@ fn default_swipe_duration() -> u32 {
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct PinchParams {
+    /// Center X
     x: i32,
+    /// Center Y
     y: i32,
+    /// Starting finger distance from center
     start_radius: i32,
+    /// Ending finger distance (larger = zoom in)
     end_radius: i32,
+    /// Duration in ms (default 500)
     #[serde(default = "default_pinch_duration")]
     duration_ms: u32,
 }
@@ -58,23 +67,28 @@ fn default_pinch_duration() -> u32 {
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct KeyParams {
+    /// Key name (home, back, enter, power, etc.) or raw keycode number
     key: String,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct TypeParams {
+    /// Text to type (ASCII only, via ADB input)
     text: String,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct SetTextParams {
+    /// Element ref ID (must be an EditText)
     #[serde(rename = "ref")]
     ref_id: String,
+    /// Text to set (full Unicode support)
     text: String,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct ScrollParams {
+    /// Scrollable element ref ID
     #[serde(rename = "ref")]
     ref_id: String,
 }

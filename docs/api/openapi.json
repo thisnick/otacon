@@ -177,7 +177,14 @@
                 "operationId": "getClipboard",
                 "responses": {
                     "200": {
-                        "description": "Clipboard content"
+                        "description": "Current clipboard content",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ClipboardContent"
+                                }
+                            }
+                        }
                     }
                 }
             },
@@ -272,12 +279,14 @@
                 "operationId": "listNotifications",
                 "responses": {
                     "200": {
-                        "description": "Array of notifications",
+                        "description": "Array of active notifications",
                         "content": {
                             "application/json": {
                                 "schema": {
                                     "type": "array",
-                                    "items": {}
+                                    "items": {
+                                        "$ref": "#/components/schemas/Notification"
+                                    }
                                 }
                             }
                         }
@@ -842,6 +851,19 @@
                     }
                 }
             },
+            "ClipboardContent": {
+                "type": "object",
+                "description": "Clipboard text content",
+                "properties": {
+                    "text": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "description": "Current clipboard text (null if empty)"
+                    }
+                }
+            },
             "Contact": {
                 "type": "object",
                 "required": [
@@ -862,6 +884,7 @@
             },
             "DeviceInfo": {
                 "type": "object",
+                "description": "Device metadata and connection status",
                 "required": [
                     "bridge",
                     "snapshot_server"
@@ -871,10 +894,12 @@
                         "type": [
                             "string",
                             "null"
-                        ]
+                        ],
+                        "description": "Current foreground activity"
                     },
                     "bridge": {
-                        "type": "boolean"
+                        "type": "boolean",
+                        "description": "Device owner app connected"
                     },
                     "model": {
                         "type": [
@@ -886,16 +911,19 @@
                         "type": [
                             "string",
                             "null"
-                        ]
+                        ],
+                        "description": "SIM phone number (e.g. \"+15551234567\")"
                     },
                     "resolution": {
                         "type": [
                             "string",
                             "null"
-                        ]
+                        ],
+                        "description": "e.g. \"1080x2316\""
                     },
                     "snapshot_server": {
-                        "type": "boolean"
+                        "type": "boolean",
+                        "description": "Snapshot server (app_process) connected"
                     },
                     "window": {
                         "type": [
@@ -923,7 +951,8 @@
                 ],
                 "properties": {
                     "key": {
-                        "type": "string"
+                        "type": "string",
+                        "description": "Key name (home, back, enter, power, etc.) or raw keycode number"
                     }
                 }
             },
@@ -934,6 +963,70 @@
                 ],
                 "properties": {
                     "package": {
+                        "type": "string"
+                    }
+                }
+            },
+            "Notification": {
+                "type": "object",
+                "description": "Phone notification",
+                "required": [
+                    "key",
+                    "package"
+                ],
+                "properties": {
+                    "actions": {
+                        "type": [
+                            "array",
+                            "null"
+                        ],
+                        "items": {
+                            "$ref": "#/components/schemas/NotificationAction"
+                        }
+                    },
+                    "key": {
+                        "type": "string",
+                        "description": "Unique notification key (use for dismiss/action)"
+                    },
+                    "package": {
+                        "type": "string"
+                    },
+                    "text": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "time": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ],
+                        "format": "int64",
+                        "description": "Post time in milliseconds"
+                    },
+                    "title": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    }
+                }
+            },
+            "NotificationAction": {
+                "type": "object",
+                "required": [
+                    "index",
+                    "title"
+                ],
+                "properties": {
+                    "index": {
+                        "type": "integer",
+                        "format": "int32",
+                        "description": "Action index (use for triggering)",
+                        "minimum": 0
+                    },
+                    "title": {
                         "type": "string"
                     }
                 }
@@ -972,23 +1065,28 @@
                     "duration_ms": {
                         "type": "integer",
                         "format": "int32",
+                        "description": "Duration in ms (default 500)",
                         "minimum": 0
                     },
                     "end_radius": {
                         "type": "integer",
-                        "format": "int32"
+                        "format": "int32",
+                        "description": "Ending finger distance (larger = zoom in)"
                     },
                     "start_radius": {
                         "type": "integer",
-                        "format": "int32"
+                        "format": "int32",
+                        "description": "Starting finger distance from center"
                     },
                     "x": {
                         "type": "integer",
-                        "format": "int32"
+                        "format": "int32",
+                        "description": "Center X"
                     },
                     "y": {
                         "type": "integer",
-                        "format": "int32"
+                        "format": "int32",
+                        "description": "Center Y"
                     }
                 }
             },
@@ -999,7 +1097,8 @@
                 ],
                 "properties": {
                     "ref": {
-                        "type": "string"
+                        "type": "string",
+                        "description": "Scrollable element ref ID"
                     }
                 }
             },
@@ -1037,10 +1136,12 @@
                 ],
                 "properties": {
                     "ref": {
-                        "type": "string"
+                        "type": "string",
+                        "description": "Element ref ID (must be an EditText)"
                     },
                     "text": {
-                        "type": "string"
+                        "type": "string",
+                        "description": "Text to set (full Unicode support)"
                     }
                 }
             },
@@ -1108,6 +1209,7 @@
                     "duration_ms": {
                         "type": "integer",
                         "format": "int32",
+                        "description": "Duration in ms (default 300)",
                         "minimum": 0
                     },
                     "x1": {
@@ -1135,21 +1237,24 @@
                         "type": [
                             "string",
                             "null"
-                        ]
+                        ],
+                        "description": "Element ref ID (if tapping by ref, e.g. \"e5\")"
                     },
                     "x": {
                         "type": [
                             "integer",
                             "null"
                         ],
-                        "format": "int32"
+                        "format": "int32",
+                        "description": "X coordinate (if tapping by position)"
                     },
                     "y": {
                         "type": [
                             "integer",
                             "null"
                         ],
-                        "format": "int32"
+                        "format": "int32",
+                        "description": "Y coordinate (if tapping by position)"
                     }
                 }
             },
@@ -1160,7 +1265,8 @@
                 ],
                 "properties": {
                     "text": {
-                        "type": "string"
+                        "type": "string",
+                        "description": "Text to type (ASCII only, via ADB input)"
                     }
                 }
             }
