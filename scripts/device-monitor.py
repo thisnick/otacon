@@ -123,6 +123,7 @@ def configure_screen():
         log.info('PIN set to 0000')
     else:
         log.info(f'PIN already set or failed: {result}')
+    adb_shell('svc data disable')
     # Only wake if screen is off (keyevent 26 is a toggle)
     display_state = adb_shell('dumpsys display | grep "mScreenState"')
     if 'OFF' in display_state or 'mScreenState=0' in display_state:
@@ -144,6 +145,8 @@ def provision_device_owner():
             result = adb('install', '-r', APK_PATH, timeout=30)
             if 'Success' in result:
                 log.info('APK updated')
+        # Grant runtime permissions that device owner needs
+        adb_shell(f'pm grant {DEVICE_OWNER_PKG} android.permission.SEND_SMS')
         # Kick-start HTTP server (BootReceiver starts it on any broadcast)
         adb_shell(
             f'am broadcast -a {DEVICE_OWNER_PKG}.CLEAR_RESTRICTIONS '

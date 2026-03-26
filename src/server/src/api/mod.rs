@@ -85,7 +85,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/sms/threads/{id}/messages",
             get(sms::messages_handler),
         )
-        .route("/sms/messages", post(sms::send_handler))
+        .route("/sms/messages", post({
+            let state = state.clone();
+            move |body| sms::send_handler(state, body)
+        }))
         // Contacts
         .route("/contacts", get(contacts::handler))
         // Apps

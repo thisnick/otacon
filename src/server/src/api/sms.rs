@@ -1,9 +1,11 @@
 use axum::extract::Path;
 use axum::Json;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 use super::adb::{adb_shell, parse_content_row};
 use super::ApiError;
+use crate::AppState;
 
 #[derive(Serialize)]
 pub struct SmsThread {
@@ -85,15 +87,14 @@ pub async fn messages_handler(Path(thread_id): Path<String>) -> Result<Json<Vec<
     Ok(Json(messages))
 }
 
-pub async fn send_handler(Json(body): Json<SendSmsBody>) -> Result<Json<serde_json::Value>, ApiError> {
-    // Use service call isms to actually send SMS
-    // Method 5 works on most Android versions
-    let cmd = format!(
-        "service call isms 5 i32 0 s16 \"com.android.mms.service\" s16 \"null\" s16 \"{}\" s16 \"null\" s16 \"'{}'\" s16 \"null\" s16 \"null\"",
-        body.to,
-        body.body.replace('\'', "\\'")
-    );
-    adb_shell(&cmd).await?;
-    Ok(Json(serde_json::json!({"ok": true})))
+pub async fn send_handler(state: Arc<AppState>, Json(body): Json<SendSmsBody>) -> Result<Json<serde_json::Value>, ApiError> {
+    let payload = serde_json::json!({
+        "to": body.to,
+        "body": body.body,
+    });
+    let result = state.bridge.device_post("/sms/send", &payload.to_string()).await?;
+    let parsed: serde_json::Value = serde_json::from_str(&result)
+        .map_err(|e| ApiError::Adb(format!("Invalid response: {e}")))?;
+    Ok(Json(parsed))
 }
 

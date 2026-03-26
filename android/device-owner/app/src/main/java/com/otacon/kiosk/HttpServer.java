@@ -71,6 +71,11 @@ public class HttpServer extends NanoHTTPD {
                 return handleBluetoothPair(session);
             }
 
+            // SMS
+            if ("/sms/send".equals(uri) && method == Method.POST) {
+                return handleSmsSend(session);
+            }
+
             // Clipboard
             if ("/clipboard".equals(uri) && method == Method.GET) {
                 return handleGetClipboard();
@@ -330,6 +335,28 @@ public class HttpServer extends NanoHTTPD {
             try { context.unregisterReceiver(pairingReceiver); } catch (Exception ignored) {}
             pairingReceiver = null;
         }
+    }
+
+    // --- SMS ---
+
+    private Response handleSmsSend(IHTTPSession session) throws Exception {
+        Map<String, String> bodyMap = new java.util.HashMap<>();
+        session.parseBody(bodyMap);
+        String body = bodyMap.get("postData");
+        JSONObject req = new JSONObject(body);
+        String to = req.getString("to");
+        String message = req.getString("body");
+
+        android.telephony.SmsManager sms = android.telephony.SmsManager.getDefault();
+        java.util.ArrayList<String> parts = sms.divideMessage(message);
+        if (parts.size() == 1) {
+            sms.sendTextMessage(to, null, message, null, null);
+        } else {
+            sms.sendMultipartTextMessage(to, null, parts, null, null);
+        }
+        Log.i(TAG, "SMS sent to " + to + " (" + parts.size() + " part(s))");
+        return newFixedLengthResponse(Response.Status.OK, MIME_JSON,
+            "{\"ok\": true, \"parts\": " + parts.size() + "}");
     }
 
 }
