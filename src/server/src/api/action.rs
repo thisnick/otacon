@@ -108,24 +108,30 @@ pub async fn handler(
 async fn handle_tap(state: Arc<AppState>, p: TapParams, long: bool) -> Result<(), ApiError> {
     if let Some(ref ref_id) = p.ref_id {
         let ref_info = resolve_ref(&state, ref_id).await?;
+        let (x, y) = bounds_center(&ref_info.bounds);
+
+        // Check if element is visible on screen
+        let screen = get_screen_size().await;
+        if let Some((sw, sh)) = screen {
+            if x < 0 || y < 0 || x > sw || y > sh {
+                return Err(ApiError::BadRequest(format!(
+                    "element {ref_id} is off-screen (center {x},{y} outside {sw}x{sh}) — scroll it into view first"
+                )));
+            }
+        }
 
         if ref_info.in_webview {
-            // WebView: performAction returns true but silently fails.
-            // Use coordinate tap instead.
-            let (x, y) = bounds_center(&ref_info.bounds);
             if long {
                 adb_shell(&format!("input swipe {x} {y} {x} {y} 1000")).await?;
             } else {
                 adb_shell(&format!("input tap {x} {y}")).await?;
             }
         } else {
-            // Native: use performAction via snapshot server
             let action_name = if long { "long_click" } else { "click" };
             if state.bridge.is_snapshot_available() {
                 let body = serde_json::json!({"action": action_name, "ref": ref_id}).to_string();
                 state.bridge.snapshot_post("/action", &body).await?;
             } else {
-                let (x, y) = bounds_center(&ref_info.bounds);
                 if long {
                     adb_shell(&format!("input swipe {x} {y} {x} {y} 1000")).await?;
                 } else {
@@ -189,6 +195,16 @@ fn find_ref_info(node: &serde_json::Value, ref_id: &str, in_webview: bool) -> Op
         }
     }
     None
+}
+
+async fn get_screen_size() -> Option<(i32, i32)> {
+    let out = adb_shell("wm size").await.ok()?;
+    // "Physical size: 1080x2316"
+    let size = out.split(':').last()?.trim();
+    let mut parts = size.split('x');
+    let w = parts.next()?.trim().parse().ok()?;
+    let h = parts.next()?.trim().parse().ok()?;
+    Some((w, h))
 }
 
 fn bounds_center(bounds: &(i32, i32, i32, i32)) -> (i32, i32) {
