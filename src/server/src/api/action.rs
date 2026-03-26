@@ -110,17 +110,27 @@ async fn handle_tap(state: Arc<AppState>, p: TapParams, long: bool) -> Result<()
         let ref_info = resolve_ref(&state, ref_id).await?;
         let (x, y) = bounds_center(&ref_info.bounds);
 
-        // Check if element is visible on screen
-        let screen = get_screen_size().await;
-        if let Some((sw, sh)) = screen {
-            if x < 0 || y < 0 || x > sw || y > sh {
-                return Err(ApiError::BadRequest(format!(
-                    "element {ref_id} is off-screen (center {x},{y} outside {sw}x{sh}) — scroll it into view first"
-                )));
-            }
-        }
-
         if ref_info.in_webview {
+            // For WebView elements, scroll into view if off-screen, then coordinate tap
+            let screen = get_screen_size().await;
+            let mut x = x;
+            let mut y = y;
+            if let Some((sw, sh)) = screen {
+                if x < 0 || y < 0 || x > sw || y > sh {
+                    // Try ACTION_FOCUS to scroll element into view
+                    if state.bridge.is_snapshot_available() {
+                        let body = serde_json::json!({"action": "focus", "ref": ref_id}).to_string();
+                        state.bridge.snapshot_post("/action", &body).await.ok();
+                        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                        // Re-resolve bounds after scroll
+                        if let Ok(new_info) = resolve_ref(&state, ref_id).await {
+                            let (nx, ny) = bounds_center(&new_info.bounds);
+                            x = nx;
+                            y = ny;
+                        }
+                    }
+                }
+            }
             if long {
                 adb_shell(&format!("input swipe {x} {y} {x} {y} 1000")).await?;
             } else {
