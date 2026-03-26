@@ -78,11 +78,13 @@ public class BootReceiver extends BroadcastReceiver {
             return;
         }
 
-        // Set media volume to max before locking it
+        // Set all audio volumes to max
         AudioManager am = context.getSystemService(AudioManager.class);
-        int maxVol = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
-        am.setStreamVolume(AudioManager.STREAM_MUSIC, maxVol, 0);
-        Log.i(TAG, "Media volume set to max: " + maxVol);
+        for (int stream : new int[]{AudioManager.STREAM_MUSIC, AudioManager.STREAM_VOICE_CALL}) {
+            int maxVol = am.getStreamMaxVolume(stream);
+            am.setStreamVolume(stream, maxVol, 0);
+        }
+        Log.i(TAG, "Media volume set to max: " + am.getStreamMaxVolume(AudioManager.STREAM_MUSIC));
 
         // Apply user restrictions
         for (String restriction : USER_RESTRICTIONS) {

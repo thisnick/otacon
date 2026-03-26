@@ -144,6 +144,11 @@ def provision_device_owner():
             result = adb('install', '-r', APK_PATH, timeout=30)
             if 'Success' in result:
                 log.info('APK updated')
+        # Kick-start HTTP server (BootReceiver starts it on any broadcast)
+        adb_shell(
+            f'am broadcast -a {DEVICE_OWNER_PKG}.CLEAR_RESTRICTIONS '
+            f'-n {DEVICE_OWNER_PKG}/.BootReceiver'
+        )
         return
 
     log.info('Device owner not set — provisioning...')
@@ -240,6 +245,25 @@ def pair_bluetooth():
 
     log.info(f'Checking Bluetooth pairing with Pi ({pi_mac})...')
 
+    # Get phone's BT MAC and remove any stale paired devices
+    phone_bt_mac = adb_shell('settings get secure bluetooth_address').strip()
+    if phone_bt_mac and phone_bt_mac != 'null':
+        # List all paired devices and remove any that aren't the current phone
+        try:
+            paired = subprocess.run(
+                ['bluetoothctl', 'devices'], capture_output=True, text=True, timeout=5,
+            ).stdout
+            for line in paired.splitlines():
+                parts = line.split()
+                if len(parts) >= 2:
+                    mac = parts[1]
+                    if mac.upper() != phone_bt_mac.upper():
+                        log.info(f'Removing stale BT device: {mac}')
+                        subprocess.run(['bluetoothctl', 'remove', mac], timeout=5,
+                                       capture_output=True)
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+
     # Start pairing in background thread
     pair_result = {}
     pair_done = threading.Event()
@@ -253,18 +277,19 @@ def pair_bluetooth():
     pair_thread = threading.Thread(target=do_pair, daemon=True)
     pair_thread.start()
 
-    # Auto-tap Samsung's pairing confirmation dialog
-    for _ in range(20):
+    # Auto-tap Samsung's pairing confirmation dialog.
+    # Keep polling even after pair API returns — the dialog may appear after createBond().
+    tapped = False
+    for _ in range(30):
         time.sleep(1)
-        if pair_done.is_set():
-            break
         ref = find_pair_button()
         if ref:
             log.info(f"Auto-tapping 'Pair' button ({ref})")
             http_post(f'{SNAPSHOT_URL}/action', {'action': 'click', 'ref': ref})
+            tapped = True
             break
 
-    pair_thread.join(timeout=30)
+    pair_thread.join(timeout=10 if tapped else 30)
     result = pair_result.get('data') or {}
     status = result.get('status', result.get('error', 'unknown')) if isinstance(result, dict) else str(result)
     log.info(f'Bluetooth pairing: {status}')
@@ -322,7 +347,7 @@ def main():
         provision_device_owner()
         start_snapshot_server()
         setup_port_forwards()
-        wait_for_server(DEVICE_OWNER_URL, 'Device owner bridge')
+        wait_for_server(DEVICE_OWNER_URL, 'Device owner bridge', retries=60)
         wait_for_server(SNAPSHOT_URL, 'Snapshot server')
         connect_wifi()
         pair_bluetooth()
