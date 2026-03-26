@@ -25,7 +25,7 @@ public class BootReceiver extends BroadcastReceiver {
         // DISALLOW_ADJUST_VOLUME — confirmed breaks BlueALSA BT audio on Samsung
         UserManager.DISALLOW_AIRPLANE_MODE,
         UserManager.DISALLOW_CONFIG_TETHERING,
-        UserManager.DISALLOW_CONFIG_CREDENTIALS,
+        // DISALLOW_CONFIG_CREDENTIALS — removed so accounts can be managed
     };
 
     @Override
@@ -122,6 +122,7 @@ public class BootReceiver extends BroadcastReceiver {
         // Also clear restrictions that were previously applied but removed from the list
         dpm.clearUserRestriction(admin, UserManager.DISALLOW_CONFIG_BLUETOOTH);
         dpm.clearUserRestriction(admin, UserManager.DISALLOW_ADJUST_VOLUME);
+        dpm.clearUserRestriction(admin, UserManager.DISALLOW_CONFIG_CREDENTIALS);
         dpm.setCameraDisabled(admin, false);
 
         // Clear any password policy so PIN can be removed
