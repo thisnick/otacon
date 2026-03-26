@@ -14,16 +14,18 @@ pub struct DeviceInfo {
     window: Option<String>,
     model: Option<String>,
     resolution: Option<String>,
+    phone_number: Option<String>,
     bridge: bool,
     snapshot_server: bool,
 }
 
 pub async fn info_handler(state: Arc<AppState>) -> Result<Json<DeviceInfo>, ApiError> {
-    let (activity, window, model, resolution) = tokio::join!(
+    let (activity, window, model, resolution, phone_number) = tokio::join!(
         get_current_activity(),
         get_focused_window(),
         adb_shell("getprop ro.product.model"),
         adb_shell("wm size"),
+        get_phone_number(),
     );
 
     Ok(Json(DeviceInfo {
@@ -33,9 +35,29 @@ pub async fn info_handler(state: Arc<AppState>) -> Result<Json<DeviceInfo>, ApiE
         resolution: resolution
             .ok()
             .and_then(|s| s.split(':').last().map(|s| s.trim().to_string())),
+        phone_number: phone_number.ok(),
         bridge: state.bridge.is_device_owner_available(),
         snapshot_server: state.bridge.is_snapshot_available(),
     }))
+}
+
+async fn get_phone_number() -> Result<String, ApiError> {
+    let out = adb_shell("service call iphonesubinfo 16 s16 com.android.shell").await?;
+    // Parse digits from parcel output like: '1.5.1.0.2.9.0.1.1.7.8...'
+    let number: String = out
+        .chars()
+        .filter(|c| c.is_ascii_digit() || *c == '+')
+        .collect();
+    if number.is_empty() {
+        return Err(ApiError::Adb("no phone number found".into()));
+    }
+    // Add + prefix if not present
+    let formatted = if number.starts_with('+') || number.starts_with('1') {
+        format!("+{}", number.trim_start_matches('+'))
+    } else {
+        format!("+{number}")
+    };
+    Ok(formatted)
 }
 
 async fn get_current_activity() -> Result<String, ApiError> {
