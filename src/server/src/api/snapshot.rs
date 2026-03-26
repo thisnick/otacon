@@ -5,6 +5,7 @@ use quick_xml::reader::Reader;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Write as FmtWrite;
+use utoipa::ToSchema;
 
 use super::adb::adb;
 use super::ApiError;
@@ -56,7 +57,7 @@ impl SnapshotCache {
 }
 
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct Bounds {
     pub x1: i32,
     pub y1: i32,
@@ -64,7 +65,8 @@ pub struct Bounds {
     pub y2: i32,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
+#[schema(no_recursion)]
 pub struct A11yNode {
     pub class: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -328,6 +330,16 @@ fn render_text(nodes: &[A11yNode], indent: usize, out: &mut String) {
     }
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/snapshot",
+    tag = "Screen",
+    operation_id = "getSnapshot",
+    params(("format" = Option<String>, Query, description = "Output format: text or json")),
+    responses(
+        (status = 200, description = "Accessibility tree"),
+    )
+)]
 pub async fn handler(
     state: std::sync::Arc<super::AppState>,
     Query(query): Query<SnapshotQuery>,

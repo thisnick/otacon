@@ -1,16 +1,24 @@
 use axum::extract::Json;
 use axum::response::{IntoResponse, Response};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use utoipa::ToSchema;
 
-use super::ApiError;
+use super::{ApiError, OkResponse};
 use crate::AppState;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct SetClipboardBody {
     text: String,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/clipboard",
+    tag = "Clipboard",
+    operation_id = "getClipboard",
+    responses((status = 200, description = "Clipboard content"))
+)]
 pub async fn get_handler(state: Arc<AppState>) -> Result<Response, ApiError> {
     if !state.bridge.is_device_owner_available() {
         return Err(ApiError::Adb(
@@ -21,6 +29,14 @@ pub async fn get_handler(state: Arc<AppState>) -> Result<Response, ApiError> {
     Ok(([("content-type", "application/json")], body).into_response())
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/clipboard",
+    tag = "Clipboard",
+    operation_id = "setClipboard",
+    request_body = SetClipboardBody,
+    responses((status = 200, body = OkResponse))
+)]
 pub async fn set_handler(
     state: Arc<AppState>,
     Json(body): Json<SetClipboardBody>,

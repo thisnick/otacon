@@ -1,11 +1,12 @@
 use axum::extract::Query;
 use axum::Json;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use super::adb::{adb_shell, parse_content_row};
 use super::ApiError;
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct Contact {
     name: String,
     phones: Vec<String>,
@@ -16,6 +17,14 @@ pub struct ContactsQuery {
     pub q: Option<String>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/contacts",
+    tag = "Contacts",
+    operation_id = "searchContacts",
+    params(("q" = Option<String>, Query, description = "Search query")),
+    responses((status = 200, body = Vec<Contact>))
+)]
 pub async fn handler(Query(query): Query<ContactsQuery>) -> Result<Json<Vec<Contact>>, ApiError> {
     let out = if let Some(ref q) = query.q {
         // Filter by name

@@ -1,0 +1,1169 @@
+{
+    "openapi": "3.1.0",
+    "info": {
+        "title": "Otacon Phone Automation API",
+        "description": "REST API for controlling an Android phone connected to a Raspberry Pi.",
+        "license": {
+            "name": "MIT"
+        },
+        "version": "1.0.0"
+    },
+    "servers": [
+        {
+            "url": "https://otacon-pi:8080",
+            "description": "Default Tailscale address"
+        }
+    ],
+    "paths": {
+        "/api/action": {
+            "post": {
+                "tags": [
+                    "Actions"
+                ],
+                "operationId": "performAction",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Action"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "Action performed successfully",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/OkResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad request",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Reference not found",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ErrorResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/apps": {
+            "get": {
+                "tags": [
+                    "Apps"
+                ],
+                "operationId": "listApps",
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/App"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/apps/running": {
+            "get": {
+                "tags": [
+                    "Apps"
+                ],
+                "operationId": "listRunningApps",
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/App"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "tags": [
+                    "Apps"
+                ],
+                "operationId": "launchApp",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/LaunchBody"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/OkResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/apps/running/{package}": {
+            "delete": {
+                "tags": [
+                    "Apps"
+                ],
+                "operationId": "stopApp",
+                "parameters": [
+                    {
+                        "name": "package",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/OkResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/clipboard": {
+            "get": {
+                "tags": [
+                    "Clipboard"
+                ],
+                "operationId": "getClipboard",
+                "responses": {
+                    "200": {
+                        "description": "Clipboard content"
+                    }
+                }
+            },
+            "put": {
+                "tags": [
+                    "Clipboard"
+                ],
+                "operationId": "setClipboard",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SetClipboardBody"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/OkResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/contacts": {
+            "get": {
+                "tags": [
+                    "Contacts"
+                ],
+                "operationId": "searchContacts",
+                "parameters": [
+                    {
+                        "name": "q",
+                        "in": "query",
+                        "description": "Search query",
+                        "required": false,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/Contact"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/info": {
+            "get": {
+                "tags": [
+                    "Screen"
+                ],
+                "operationId": "getDeviceInfo",
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/DeviceInfo"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/notifications": {
+            "get": {
+                "tags": [
+                    "Notifications"
+                ],
+                "operationId": "listNotifications",
+                "responses": {
+                    "200": {
+                        "description": "Array of notifications",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/notifications/{key}": {
+            "delete": {
+                "tags": [
+                    "Notifications"
+                ],
+                "operationId": "dismissNotification",
+                "parameters": [
+                    {
+                        "name": "key",
+                        "in": "path",
+                        "description": "Notification key",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/OkResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/notifications/{key}/action/{index}": {
+            "post": {
+                "tags": [
+                    "Notifications"
+                ],
+                "operationId": "triggerNotificationAction",
+                "parameters": [
+                    {
+                        "name": "key",
+                        "in": "path",
+                        "description": "Notification key",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "index",
+                        "in": "path",
+                        "description": "Action index",
+                        "required": true,
+                        "schema": {
+                            "type": "integer",
+                            "format": "int32",
+                            "minimum": 0
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/OkResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/open": {
+            "post": {
+                "tags": [
+                    "Apps"
+                ],
+                "operationId": "openUri",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/OpenBody"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/OkResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/screenshot": {
+            "get": {
+                "tags": [
+                    "Screen"
+                ],
+                "operationId": "getScreenshot",
+                "responses": {
+                    "200": {
+                        "description": "PNG image of the current phone screen",
+                        "content": {
+                            "image/png": {}
+                        }
+                    }
+                }
+            }
+        },
+        "/api/sms/messages": {
+            "post": {
+                "tags": [
+                    "SMS"
+                ],
+                "operationId": "sendSms",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SendSmsBody"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/OkResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/sms/threads": {
+            "get": {
+                "tags": [
+                    "SMS"
+                ],
+                "operationId": "listSmsThreads",
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/SmsThread"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/sms/threads/{id}/messages": {
+            "get": {
+                "tags": [
+                    "SMS"
+                ],
+                "operationId": "getSmsMessages",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/SmsMessage"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/snapshot": {
+            "get": {
+                "tags": [
+                    "Screen"
+                ],
+                "operationId": "getSnapshot",
+                "parameters": [
+                    {
+                        "name": "format",
+                        "in": "query",
+                        "description": "Output format: text or json",
+                        "required": false,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Accessibility tree"
+                    }
+                }
+            }
+        }
+    },
+    "components": {
+        "schemas": {
+            "A11yNode": {
+                "type": "object",
+                "required": [
+                    "class",
+                    "clickable",
+                    "checkable",
+                    "checked",
+                    "focusable",
+                    "focused",
+                    "scrollable",
+                    "enabled",
+                    "selected",
+                    "long_clickable",
+                    "children"
+                ],
+                "properties": {
+                    "bounds": {
+                        "oneOf": [
+                            {
+                                "type": "null"
+                            },
+                            {
+                                "$ref": "#/components/schemas/Bounds"
+                            }
+                        ]
+                    },
+                    "checkable": {
+                        "type": "boolean"
+                    },
+                    "checked": {
+                        "type": "boolean"
+                    },
+                    "children": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/A11yNode"
+                        }
+                    },
+                    "class": {
+                        "type": "string"
+                    },
+                    "clickable": {
+                        "type": "boolean"
+                    },
+                    "content_desc": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "enabled": {
+                        "type": "boolean"
+                    },
+                    "focusable": {
+                        "type": "boolean"
+                    },
+                    "focused": {
+                        "type": "boolean"
+                    },
+                    "long_clickable": {
+                        "type": "boolean"
+                    },
+                    "ref_id": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "resource_id": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "scrollable": {
+                        "type": "boolean"
+                    },
+                    "selected": {
+                        "type": "boolean"
+                    },
+                    "text": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    }
+                }
+            },
+            "Action": {
+                "oneOf": [
+                    {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/TapParams"
+                            },
+                            {
+                                "type": "object",
+                                "required": [
+                                    "action"
+                                ],
+                                "properties": {
+                                    "action": {
+                                        "type": "string",
+                                        "enum": [
+                                            "tap"
+                                        ]
+                                    }
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/TapParams"
+                            },
+                            {
+                                "type": "object",
+                                "required": [
+                                    "action"
+                                ],
+                                "properties": {
+                                    "action": {
+                                        "type": "string",
+                                        "enum": [
+                                            "long_tap"
+                                        ]
+                                    }
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/SwipeParams"
+                            },
+                            {
+                                "type": "object",
+                                "required": [
+                                    "action"
+                                ],
+                                "properties": {
+                                    "action": {
+                                        "type": "string",
+                                        "enum": [
+                                            "swipe"
+                                        ]
+                                    }
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/PinchParams"
+                            },
+                            {
+                                "type": "object",
+                                "required": [
+                                    "action"
+                                ],
+                                "properties": {
+                                    "action": {
+                                        "type": "string",
+                                        "enum": [
+                                            "pinch"
+                                        ]
+                                    }
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/KeyParams"
+                            },
+                            {
+                                "type": "object",
+                                "required": [
+                                    "action"
+                                ],
+                                "properties": {
+                                    "action": {
+                                        "type": "string",
+                                        "enum": [
+                                            "key"
+                                        ]
+                                    }
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/TypeParams"
+                            },
+                            {
+                                "type": "object",
+                                "required": [
+                                    "action"
+                                ],
+                                "properties": {
+                                    "action": {
+                                        "type": "string",
+                                        "enum": [
+                                            "type"
+                                        ]
+                                    }
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/SetTextParams"
+                            },
+                            {
+                                "type": "object",
+                                "required": [
+                                    "action"
+                                ],
+                                "properties": {
+                                    "action": {
+                                        "type": "string",
+                                        "enum": [
+                                            "set_text"
+                                        ]
+                                    }
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/ScrollParams"
+                            },
+                            {
+                                "type": "object",
+                                "required": [
+                                    "action"
+                                ],
+                                "properties": {
+                                    "action": {
+                                        "type": "string",
+                                        "enum": [
+                                            "scroll_forward"
+                                        ]
+                                    }
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/ScrollParams"
+                            },
+                            {
+                                "type": "object",
+                                "required": [
+                                    "action"
+                                ],
+                                "properties": {
+                                    "action": {
+                                        "type": "string",
+                                        "enum": [
+                                            "scroll_backward"
+                                        ]
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            "App": {
+                "type": "object",
+                "required": [
+                    "package"
+                ],
+                "properties": {
+                    "label": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "package": {
+                        "type": "string"
+                    }
+                }
+            },
+            "Bounds": {
+                "type": "object",
+                "required": [
+                    "x1",
+                    "y1",
+                    "x2",
+                    "y2"
+                ],
+                "properties": {
+                    "x1": {
+                        "type": "integer",
+                        "format": "int32"
+                    },
+                    "x2": {
+                        "type": "integer",
+                        "format": "int32"
+                    },
+                    "y1": {
+                        "type": "integer",
+                        "format": "int32"
+                    },
+                    "y2": {
+                        "type": "integer",
+                        "format": "int32"
+                    }
+                }
+            },
+            "Contact": {
+                "type": "object",
+                "required": [
+                    "name",
+                    "phones"
+                ],
+                "properties": {
+                    "name": {
+                        "type": "string"
+                    },
+                    "phones": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    }
+                }
+            },
+            "DeviceInfo": {
+                "type": "object",
+                "required": [
+                    "bridge",
+                    "snapshot_server"
+                ],
+                "properties": {
+                    "activity": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "bridge": {
+                        "type": "boolean"
+                    },
+                    "model": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "phone_number": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "resolution": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "snapshot_server": {
+                        "type": "boolean"
+                    },
+                    "window": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    }
+                }
+            },
+            "ErrorResponse": {
+                "type": "object",
+                "required": [
+                    "error"
+                ],
+                "properties": {
+                    "error": {
+                        "type": "string"
+                    }
+                }
+            },
+            "KeyParams": {
+                "type": "object",
+                "required": [
+                    "key"
+                ],
+                "properties": {
+                    "key": {
+                        "type": "string"
+                    }
+                }
+            },
+            "LaunchBody": {
+                "type": "object",
+                "required": [
+                    "package"
+                ],
+                "properties": {
+                    "package": {
+                        "type": "string"
+                    }
+                }
+            },
+            "OkResponse": {
+                "type": "object",
+                "required": [
+                    "ok"
+                ],
+                "properties": {
+                    "ok": {
+                        "type": "boolean"
+                    }
+                }
+            },
+            "OpenBody": {
+                "type": "object",
+                "required": [
+                    "uri"
+                ],
+                "properties": {
+                    "uri": {
+                        "type": "string"
+                    }
+                }
+            },
+            "PinchParams": {
+                "type": "object",
+                "required": [
+                    "x",
+                    "y",
+                    "start_radius",
+                    "end_radius"
+                ],
+                "properties": {
+                    "duration_ms": {
+                        "type": "integer",
+                        "format": "int32",
+                        "minimum": 0
+                    },
+                    "end_radius": {
+                        "type": "integer",
+                        "format": "int32"
+                    },
+                    "start_radius": {
+                        "type": "integer",
+                        "format": "int32"
+                    },
+                    "x": {
+                        "type": "integer",
+                        "format": "int32"
+                    },
+                    "y": {
+                        "type": "integer",
+                        "format": "int32"
+                    }
+                }
+            },
+            "ScrollParams": {
+                "type": "object",
+                "required": [
+                    "ref"
+                ],
+                "properties": {
+                    "ref": {
+                        "type": "string"
+                    }
+                }
+            },
+            "SendSmsBody": {
+                "type": "object",
+                "required": [
+                    "to",
+                    "body"
+                ],
+                "properties": {
+                    "body": {
+                        "type": "string"
+                    },
+                    "to": {
+                        "type": "string"
+                    }
+                }
+            },
+            "SetClipboardBody": {
+                "type": "object",
+                "required": [
+                    "text"
+                ],
+                "properties": {
+                    "text": {
+                        "type": "string"
+                    }
+                }
+            },
+            "SetTextParams": {
+                "type": "object",
+                "required": [
+                    "ref",
+                    "text"
+                ],
+                "properties": {
+                    "ref": {
+                        "type": "string"
+                    },
+                    "text": {
+                        "type": "string"
+                    }
+                }
+            },
+            "SmsMessage": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "address",
+                    "body",
+                    "date",
+                    "type"
+                ],
+                "properties": {
+                    "address": {
+                        "type": "string"
+                    },
+                    "body": {
+                        "type": "string"
+                    },
+                    "date": {
+                        "type": "string"
+                    },
+                    "id": {
+                        "type": "integer",
+                        "format": "int64"
+                    },
+                    "type": {
+                        "type": "string"
+                    }
+                }
+            },
+            "SmsThread": {
+                "type": "object",
+                "required": [
+                    "thread_id",
+                    "address",
+                    "snippet",
+                    "date"
+                ],
+                "properties": {
+                    "address": {
+                        "type": "string"
+                    },
+                    "date": {
+                        "type": "string"
+                    },
+                    "snippet": {
+                        "type": "string"
+                    },
+                    "thread_id": {
+                        "type": "integer",
+                        "format": "int64"
+                    }
+                }
+            },
+            "SwipeParams": {
+                "type": "object",
+                "required": [
+                    "x1",
+                    "y1",
+                    "x2",
+                    "y2"
+                ],
+                "properties": {
+                    "duration_ms": {
+                        "type": "integer",
+                        "format": "int32",
+                        "minimum": 0
+                    },
+                    "x1": {
+                        "type": "integer",
+                        "format": "int32"
+                    },
+                    "x2": {
+                        "type": "integer",
+                        "format": "int32"
+                    },
+                    "y1": {
+                        "type": "integer",
+                        "format": "int32"
+                    },
+                    "y2": {
+                        "type": "integer",
+                        "format": "int32"
+                    }
+                }
+            },
+            "TapParams": {
+                "type": "object",
+                "properties": {
+                    "ref": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "x": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ],
+                        "format": "int32"
+                    },
+                    "y": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ],
+                        "format": "int32"
+                    }
+                }
+            },
+            "TypeParams": {
+                "type": "object",
+                "required": [
+                    "text"
+                ],
+                "properties": {
+                    "text": {
+                        "type": "string"
+                    }
+                }
+            }
+        }
+    }
+}

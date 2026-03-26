@@ -2,20 +2,15 @@ import type { components } from "./api-types.js";
 
 // Re-export schema types for convenience
 export type Action = components["schemas"]["Action"];
-export type TapAction = components["schemas"]["TapAction"];
-export type LongTapAction = components["schemas"]["LongTapAction"];
-export type SwipeAction = components["schemas"]["SwipeAction"];
-export type PinchAction = components["schemas"]["PinchAction"];
-export type KeyAction = components["schemas"]["KeyAction"];
-export type TypeAction = components["schemas"]["TypeAction"];
-export type SetTextAction = components["schemas"]["SetTextAction"];
-export type ScrollForwardAction = components["schemas"]["ScrollForwardAction"];
-export type ScrollBackwardAction = components["schemas"]["ScrollBackwardAction"];
+export type TapParams = components["schemas"]["TapParams"];
+export type SwipeParams = components["schemas"]["SwipeParams"];
+export type PinchParams = components["schemas"]["PinchParams"];
+export type KeyParams = components["schemas"]["KeyParams"];
+export type TypeParams = components["schemas"]["TypeParams"];
+export type SetTextParams = components["schemas"]["SetTextParams"];
+export type ScrollParams = components["schemas"]["ScrollParams"];
 export type A11yNode = components["schemas"]["A11yNode"];
 export type DeviceInfo = components["schemas"]["DeviceInfo"];
-export type Notification = components["schemas"]["Notification"];
-export type NotificationAction = components["schemas"]["NotificationAction"];
-export type ClipboardContent = components["schemas"]["ClipboardContent"];
 export type SmsThread = components["schemas"]["SmsThread"];
 export type SmsMessage = components["schemas"]["SmsMessage"];
 export type App = components["schemas"]["App"];
@@ -87,7 +82,7 @@ export class OtaconClient {
     await throwOnError(res);
   }
 
-  async clipboardGet(): Promise<ClipboardContent> {
+  async clipboardGet(): Promise<{ text: string | null }> {
     const res = await fetch(`${this.baseUrl}/api/clipboard`);
     await throwOnError(res);
     return res.json();

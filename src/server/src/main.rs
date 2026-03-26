@@ -133,6 +133,14 @@ pub struct AppState {
 
 #[tokio::main]
 async fn main() {
+    // Export OpenAPI spec and exit (for CLI type generation)
+    if env::args().any(|a| a == "--export-openapi") {
+        use utoipa::OpenApi;
+        let spec = api::ApiDoc::openapi().to_json().unwrap();
+        println!("{spec}");
+        return;
+    }
+
     let port: u16 = env::var("AUDIO_PORT")
         .ok()
         .and_then(|v| v.parse().ok())

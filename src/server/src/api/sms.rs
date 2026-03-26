@@ -2,12 +2,13 @@ use axum::extract::Path;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use utoipa::ToSchema;
 
 use super::adb::{adb_shell, parse_content_row};
-use super::ApiError;
+use super::{ApiError, OkResponse};
 use crate::AppState;
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct SmsThread {
     thread_id: i64,
     address: String,
@@ -15,7 +16,7 @@ pub struct SmsThread {
     date: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct SmsMessage {
     id: i64,
     address: String,
@@ -25,12 +26,19 @@ pub struct SmsMessage {
     msg_type: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct SendSmsBody {
     pub to: String,
     pub body: String,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/sms/threads",
+    tag = "SMS",
+    operation_id = "listSmsThreads",
+    responses((status = 200, body = Vec<SmsThread>))
+)]
 pub async fn threads_handler() -> Result<Json<Vec<SmsThread>>, ApiError> {
     // Query SMS threads via content provider
     // Note: Android doesn't have a clean "threads" content URI with snippets,
@@ -60,6 +68,14 @@ pub async fn threads_handler() -> Result<Json<Vec<SmsThread>>, ApiError> {
     Ok(Json(threads))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/sms/threads/{id}/messages",
+    tag = "SMS",
+    operation_id = "getSmsMessages",
+    params(("id" = String, Path)),
+    responses((status = 200, body = Vec<SmsMessage>))
+)]
 pub async fn messages_handler(Path(thread_id): Path<String>) -> Result<Json<Vec<SmsMessage>>, ApiError> {
     let out = adb_shell(&format!(
         "content query --uri content://sms --projection _id:address:body:date:type --where \"thread_id={}\" --sort 'date ASC'",
@@ -87,6 +103,14 @@ pub async fn messages_handler(Path(thread_id): Path<String>) -> Result<Json<Vec<
     Ok(Json(messages))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/sms/messages",
+    tag = "SMS",
+    operation_id = "sendSms",
+    request_body = SendSmsBody,
+    responses((status = 200, body = OkResponse))
+)]
 pub async fn send_handler(state: Arc<AppState>, Json(body): Json<SendSmsBody>) -> Result<Json<serde_json::Value>, ApiError> {
     let payload = serde_json::json!({
         "to": body.to,

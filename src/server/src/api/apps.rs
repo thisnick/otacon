@@ -1,17 +1,25 @@
 use axum::extract::Path;
 use axum::Json;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use super::adb::adb_shell;
-use super::ApiError;
+use super::{ApiError, OkResponse};
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct App {
     package: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     label: Option<String>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/apps",
+    tag = "Apps",
+    operation_id = "listApps",
+    responses((status = 200, body = Vec<App>))
+)]
 pub async fn list_handler() -> Result<Json<Vec<App>>, ApiError> {
     let out = adb_shell("pm list packages -3").await?;
     let apps: Vec<App> = out
@@ -26,6 +34,13 @@ pub async fn list_handler() -> Result<Json<Vec<App>>, ApiError> {
     Ok(Json(apps))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/apps/running",
+    tag = "Apps",
+    operation_id = "listRunningApps",
+    responses((status = 200, body = Vec<App>))
+)]
 pub async fn running_handler() -> Result<Json<Vec<App>>, ApiError> {
     // Get recently used / running apps
     let out = adb_shell(
@@ -54,11 +69,19 @@ pub async fn running_handler() -> Result<Json<Vec<App>>, ApiError> {
     Ok(Json(packages))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, ToSchema)]
 pub struct LaunchBody {
     pub package: String,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/apps/running",
+    tag = "Apps",
+    operation_id = "launchApp",
+    request_body = LaunchBody,
+    responses((status = 200, body = OkResponse))
+)]
 pub async fn launch_handler(Json(body): Json<LaunchBody>) -> Result<Json<serde_json::Value>, ApiError> {
     // Use monkey to launch the main activity of the package
     adb_shell(&format!(
@@ -69,6 +92,14 @@ pub async fn launch_handler(Json(body): Json<LaunchBody>) -> Result<Json<serde_j
     Ok(Json(serde_json::json!({"ok": true})))
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/apps/running/{package}",
+    tag = "Apps",
+    operation_id = "stopApp",
+    params(("package" = String, Path)),
+    responses((status = 200, body = OkResponse))
+)]
 pub async fn stop_handler(Path(package): Path<String>) -> Result<Json<serde_json::Value>, ApiError> {
     adb_shell(&format!("am force-stop {package}")).await?;
     Ok(Json(serde_json::json!({"ok": true})))

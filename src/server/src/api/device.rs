@@ -3,12 +3,13 @@ use axum::Json;
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
 use std::sync::Arc;
+use utoipa::ToSchema;
 
 use super::adb::adb_shell;
-use super::ApiError;
+use super::{ApiError, OkResponse};
 use crate::AppState;
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct DeviceInfo {
     activity: Option<String>,
     window: Option<String>,
@@ -19,6 +20,13 @@ pub struct DeviceInfo {
     snapshot_server: bool,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/info",
+    tag = "Screen",
+    operation_id = "getDeviceInfo",
+    responses((status = 200, body = DeviceInfo))
+)]
 pub async fn info_handler(state: Arc<AppState>) -> Result<Json<DeviceInfo>, ApiError> {
     let (activity, window, model, resolution, phone_number) = tokio::join!(
         get_current_activity(),
@@ -97,6 +105,13 @@ pub struct Notification {
     time: Option<String>,
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/notifications",
+    tag = "Notifications",
+    operation_id = "listNotifications",
+    responses((status = 200, description = "Array of notifications", body = Vec<serde_json::Value>))
+)]
 pub async fn notifications_handler(
     state: Arc<AppState>,
 ) -> Result<Response, ApiError> {
@@ -112,6 +127,14 @@ pub async fn notifications_handler(
     Ok(Json(notifications).into_response())
 }
 
+#[utoipa::path(
+    delete,
+    path = "/api/notifications/{key}",
+    tag = "Notifications",
+    operation_id = "dismissNotification",
+    params(("key" = String, Path, description = "Notification key")),
+    responses((status = 200, body = OkResponse))
+)]
 pub async fn dismiss_notification_handler(
     state: Arc<AppState>,
     Path(key): Path<String>,
@@ -128,6 +151,17 @@ pub async fn dismiss_notification_handler(
     Ok(Json(serde_json::json!({"ok": true})))
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/notifications/{key}/action/{index}",
+    tag = "Notifications",
+    operation_id = "triggerNotificationAction",
+    params(
+        ("key" = String, Path, description = "Notification key"),
+        ("index" = u32, Path, description = "Action index"),
+    ),
+    responses((status = 200, body = OkResponse))
+)]
 pub async fn notification_action_handler(
     state: Arc<AppState>,
     Path((key, index)): Path<(String, u32)>,

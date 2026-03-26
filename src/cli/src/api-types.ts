@@ -4,15 +4,30 @@
  */
 
 export interface paths {
-    "/api/screenshot": {
+    "/api/action": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Capture phone screen */
-        get: operations["getScreenshot"];
+        get?: never;
+        put?: never;
+        post: operations["performAction"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/apps": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listApps"];
         put?: never;
         post?: never;
         delete?: never;
@@ -21,15 +36,62 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/snapshot": {
+    "/api/apps/running": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get accessibility tree */
-        get: operations["getSnapshot"];
+        get: operations["listRunningApps"];
+        put?: never;
+        post: operations["launchApp"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/apps/running/{package}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["stopApp"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/clipboard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getClipboard"];
+        put: operations["setClipboard"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/contacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["searchContacts"];
         put?: never;
         post?: never;
         delete?: never;
@@ -45,27 +107,9 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get device info */
         get: operations["getDeviceInfo"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/action": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Perform a UI action */
-        post: operations["performAction"];
         delete?: never;
         options?: never;
         head?: never;
@@ -79,7 +123,6 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List current notifications */
         get: operations["listNotifications"];
         put?: never;
         post?: never;
@@ -99,7 +142,6 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Dismiss a notification */
         delete: operations["dismissNotification"];
         options?: never;
         head?: never;
@@ -115,7 +157,6 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Trigger a notification action button */
         post: operations["triggerNotificationAction"];
         delete?: never;
         options?: never;
@@ -123,50 +164,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/clipboard": {
+    "/api/open": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get clipboard text */
-        get: operations["getClipboard"];
-        /** Set clipboard text */
-        put: operations["setClipboard"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/sms/threads": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List SMS conversation threads */
-        get: operations["listSmsThreads"];
+        get?: never;
         put?: never;
-        post?: never;
+        post: operations["openUri"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/sms/threads/{id}/messages": {
+    "/api/screenshot": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get messages in a thread */
-        get: operations["getSmsMessages"];
+        get: operations["getScreenshot"];
         put?: never;
         post?: never;
         delete?: never;
@@ -184,7 +205,6 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Send an SMS */
         post: operations["sendSms"];
         delete?: never;
         options?: never;
@@ -192,15 +212,14 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/apps": {
+    "/api/sms/threads": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** List installed apps */
-        get: operations["listApps"];
+        get: operations["listSmsThreads"];
         put?: never;
         post?: never;
         delete?: never;
@@ -209,50 +228,14 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/apps/running": {
+    "/api/sms/threads/{id}/messages": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** List running/foreground apps */
-        get: operations["listRunningApps"];
-        put?: never;
-        /** Launch an app */
-        post: operations["launchApp"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/apps/running/{package}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        /** Force stop an app */
-        delete: operations["stopApp"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/contacts": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Search contacts */
-        get: operations["searchContacts"];
+        get: operations["getSmsMessages"];
         put?: never;
         post?: never;
         delete?: never;
@@ -261,17 +244,16 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/open": {
+    "/api/snapshot": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        get: operations["getSnapshot"];
         put?: never;
-        /** Open a URI with the registered app */
-        post: operations["openUri"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -282,242 +264,159 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        Action: components["schemas"]["TapAction"] | components["schemas"]["LongTapAction"] | components["schemas"]["SwipeAction"] | components["schemas"]["PinchAction"] | components["schemas"]["KeyAction"] | components["schemas"]["TypeAction"] | components["schemas"]["SetTextAction"] | components["schemas"]["ScrollForwardAction"] | components["schemas"]["ScrollBackwardAction"];
-        TapAction: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            action: "tap";
-            /** @description X coordinate (if tapping by position) */
-            x?: number;
-            /** @description Y coordinate (if tapping by position) */
-            y?: number;
-            /** @description Element ref ID (if tapping by ref, e.g. "e5") */
-            ref?: string;
-        };
-        LongTapAction: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            action: "long_tap";
-            x?: number;
-            y?: number;
-            ref?: string;
-        };
-        SwipeAction: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            action: "swipe";
-            x1: number;
-            y1: number;
-            x2: number;
-            y2: number;
-            /** @default 300 */
-            duration_ms: number;
-        };
-        PinchAction: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            action: "pinch";
-            /** @description Center X */
-            x: number;
-            /** @description Center Y */
-            y: number;
-            /** @description Starting finger distance from center */
-            start_radius: number;
-            /** @description Ending finger distance (larger = zoom in) */
-            end_radius: number;
-            /** @default 500 */
-            duration_ms: number;
-        };
-        KeyAction: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            action: "key";
-            /**
-             * @description Key name or raw keycode number. Names: home, back, enter,
-             *     recents, power, volume_up, volume_down, tab, delete, menu,
-             *     space, escape, call, end_call
-             */
-            key: string;
-        };
-        TypeAction: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            action: "type";
-            /** @description Text to type (ASCII only, via ADB input) */
-            text: string;
-        };
-        SetTextAction: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            action: "set_text";
-            /** @description Element ref ID (must be an EditText) */
-            ref: string;
-            /** @description Text to set (full Unicode support) */
-            text: string;
-        };
-        ScrollForwardAction: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            action: "scroll_forward";
-            /** @description Scrollable element ref ID */
-            ref: string;
-        };
-        ScrollBackwardAction: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            action: "scroll_backward";
-            ref: string;
-        };
         A11yNode: {
-            /** @example android.widget.Button */
-            class?: string;
-            text?: string;
-            content_desc?: string;
-            resource_id?: string;
-            bounds?: components["schemas"]["Bounds"];
-            /** @description Stable ref ID (e.g. "e5"). Only on interactive elements. */
-            ref_id?: string;
-            clickable?: boolean;
-            long_clickable?: boolean;
-            checkable?: boolean;
-            checked?: boolean;
-            focusable?: boolean;
-            focused?: boolean;
-            scrollable?: boolean;
-            enabled?: boolean;
-            selected?: boolean;
-            children?: components["schemas"]["A11yNode"][];
+            bounds?: null | components["schemas"]["Bounds"];
+            checkable: boolean;
+            checked: boolean;
+            children: components["schemas"]["A11yNode"][];
+            class: string;
+            clickable: boolean;
+            content_desc?: string | null;
+            enabled: boolean;
+            focusable: boolean;
+            focused: boolean;
+            long_clickable: boolean;
+            ref_id?: string | null;
+            resource_id?: string | null;
+            scrollable: boolean;
+            selected: boolean;
+            text?: string | null;
+        };
+        Action: (components["schemas"]["TapParams"] & {
+            /** @enum {string} */
+            action: "tap";
+        }) | (components["schemas"]["TapParams"] & {
+            /** @enum {string} */
+            action: "long_tap";
+        }) | (components["schemas"]["SwipeParams"] & {
+            /** @enum {string} */
+            action: "swipe";
+        }) | (components["schemas"]["PinchParams"] & {
+            /** @enum {string} */
+            action: "pinch";
+        }) | (components["schemas"]["KeyParams"] & {
+            /** @enum {string} */
+            action: "key";
+        }) | (components["schemas"]["TypeParams"] & {
+            /** @enum {string} */
+            action: "type";
+        }) | (components["schemas"]["SetTextParams"] & {
+            /** @enum {string} */
+            action: "set_text";
+        }) | (components["schemas"]["ScrollParams"] & {
+            /** @enum {string} */
+            action: "scroll_forward";
+        }) | (components["schemas"]["ScrollParams"] & {
+            /** @enum {string} */
+            action: "scroll_backward";
+        });
+        App: {
+            label?: string | null;
+            package: string;
         };
         Bounds: {
+            /** Format: int32 */
             x1: number;
-            y1: number;
+            /** Format: int32 */
             x2: number;
+            /** Format: int32 */
+            y1: number;
+            /** Format: int32 */
             y2: number;
         };
-        DeviceInfo: {
-            /** @description Current foreground activity */
-            activity?: string | null;
-            window?: string | null;
-            model?: string | null;
-            /** @example 1080 x 2400 */
-            resolution?: string | null;
-            /** @description Device owner app connected */
-            bridge?: boolean;
-            /** @description Snapshot server (app_process) connected */
-            snapshot_server?: boolean;
-        };
-        Notification: {
-            /**
-             * @description Unique notification key (use for dismiss/action)
-             * @example 0|com.google.android.gm|123|null|10045
-             */
-            key?: string;
-            /** @example com.google.android.gm */
-            package?: string;
-            title?: string | null;
-            text?: string | null;
-            /** @description Post time in milliseconds */
-            time?: string | null;
-            actions?: components["schemas"]["NotificationAction"][];
-        };
-        NotificationAction: {
-            /** @description Action index (use for triggering) */
-            index?: number;
-            /** @example Reply */
-            title?: string;
-        };
-        ClipboardContent: {
-            text?: string | null;
-        };
-        SmsThread: {
-            thread_id?: number;
-            /** @example +1234567890 */
-            address?: string;
-            /** @description Last message text */
-            snippet?: string;
-            date?: string;
-        };
-        SmsMessage: {
-            id?: number;
-            address?: string;
-            body?: string;
-            date?: string;
-            /** @enum {string} */
-            type?: "received" | "sent" | "unknown";
-        };
-        App: {
-            /** @example com.android.chrome */
-            package?: string;
-            label?: string | null;
-        };
         Contact: {
-            name?: string;
-            phones?: string[];
+            name: string;
+            phones: string[];
+        };
+        DeviceInfo: {
+            activity?: string | null;
+            bridge: boolean;
+            model?: string | null;
+            phone_number?: string | null;
+            resolution?: string | null;
+            snapshot_server: boolean;
+            window?: string | null;
         };
         ErrorResponse: {
             error: string;
         };
+        KeyParams: {
+            key: string;
+        };
+        LaunchBody: {
+            package: string;
+        };
         OkResponse: {
-            /** @constant */
-            ok: true;
+            ok: boolean;
+        };
+        OpenBody: {
+            uri: string;
+        };
+        PinchParams: {
+            /** Format: int32 */
+            duration_ms?: number;
+            /** Format: int32 */
+            end_radius: number;
+            /** Format: int32 */
+            start_radius: number;
+            /** Format: int32 */
+            x: number;
+            /** Format: int32 */
+            y: number;
+        };
+        ScrollParams: {
+            ref: string;
+        };
+        SendSmsBody: {
+            body: string;
+            to: string;
+        };
+        SetClipboardBody: {
+            text: string;
+        };
+        SetTextParams: {
+            ref: string;
+            text: string;
+        };
+        SmsMessage: {
+            address: string;
+            body: string;
+            date: string;
+            /** Format: int64 */
+            id: number;
+            type: string;
+        };
+        SmsThread: {
+            address: string;
+            date: string;
+            snippet: string;
+            /** Format: int64 */
+            thread_id: number;
+        };
+        SwipeParams: {
+            /** Format: int32 */
+            duration_ms?: number;
+            /** Format: int32 */
+            x1: number;
+            /** Format: int32 */
+            x2: number;
+            /** Format: int32 */
+            y1: number;
+            /** Format: int32 */
+            y2: number;
+        };
+        TapParams: {
+            ref?: string | null;
+            /** Format: int32 */
+            x?: number | null;
+            /** Format: int32 */
+            y?: number | null;
+        };
+        TypeParams: {
+            text: string;
         };
     };
-    responses: {
-        /** @description Success */
-        Ok: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content: {
-                "application/json": components["schemas"]["OkResponse"];
-            };
-        };
-        /** @description Invalid request */
-        BadRequest: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content: {
-                "application/json": components["schemas"]["ErrorResponse"];
-            };
-        };
-        /** @description Resource not found */
-        NotFound: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content: {
-                "application/json": components["schemas"]["ErrorResponse"];
-            };
-        };
-        /** @description ADB or bridge error */
-        AdbError: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content: {
-                "application/json": components["schemas"]["ErrorResponse"];
-            };
-        };
-    };
+    responses: never;
     parameters: never;
     requestBodies: never;
     headers: never;
@@ -525,70 +424,6 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-    getScreenshot: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description PNG image of the current phone screen */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "image/png": string;
-                };
-            };
-        };
-    };
-    getSnapshot: {
-        parameters: {
-            query?: {
-                format?: "text" | "json";
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Accessibility tree */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "text/plain": string;
-                    "application/json": components["schemas"]["A11yNode"][];
-                };
-            };
-            502: components["responses"]["AdbError"];
-        };
-    };
-    getDeviceInfo: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Device metadata */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DeviceInfo"];
-                };
-            };
-        };
-    };
     performAction: {
         parameters: {
             query?: never;
@@ -602,164 +437,33 @@ export interface operations {
             };
         };
         responses: {
-            200: components["responses"]["Ok"];
-            400: components["responses"]["BadRequest"];
-            404: components["responses"]["NotFound"];
-        };
-    };
-    listNotifications: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Array of active notifications */
+            /** @description Action performed successfully */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Notification"][];
+                    "application/json": components["schemas"]["OkResponse"];
                 };
             };
-        };
-    };
-    dismissNotification: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                key: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: components["responses"]["Ok"];
-            502: components["responses"]["AdbError"];
-        };
-    };
-    triggerNotificationAction: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                key: string;
-                index: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: components["responses"]["Ok"];
-            404: components["responses"]["NotFound"];
-        };
-    };
-    getClipboard: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Current clipboard content */
-            200: {
+            /** @description Bad request */
+            400: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ClipboardContent"];
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-            502: components["responses"]["AdbError"];
-        };
-    };
-    setClipboard: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ClipboardContent"];
-            };
-        };
-        responses: {
-            200: components["responses"]["Ok"];
-            502: components["responses"]["AdbError"];
-        };
-    };
-    listSmsThreads: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Array of SMS threads */
-            200: {
+            /** @description Reference not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SmsThread"][];
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
-        };
-    };
-    getSmsMessages: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Array of messages sorted by date ascending */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SmsMessage"][];
-                };
-            };
-        };
-    };
-    sendSms: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": {
-                    /**
-                     * @description Phone number
-                     * @example +1234567890
-                     */
-                    to: string;
-                    /** @description Message text */
-                    body: string;
-                };
-            };
-        };
-        responses: {
-            200: components["responses"]["Ok"];
         };
     };
     listApps: {
@@ -771,7 +475,6 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description User-installed apps */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -791,7 +494,6 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Currently running apps */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -811,14 +513,18 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    /** @example com.android.chrome */
-                    package: string;
-                };
+                "application/json": components["schemas"]["LaunchBody"];
             };
         };
         responses: {
-            200: components["responses"]["Ok"];
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkResponse"];
+                };
+            };
         };
     };
     stopApp: {
@@ -832,13 +538,61 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            200: components["responses"]["Ok"];
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkResponse"];
+                };
+            };
+        };
+    };
+    getClipboard: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Clipboard content */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    setClipboard: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetClipboardBody"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkResponse"];
+                };
+            };
         };
     };
     searchContacts: {
         parameters: {
             query?: {
-                /** @description Search query (filters by name) */
+                /** @description Search query */
                 q?: string;
             };
             header?: never;
@@ -847,13 +601,97 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Matching contacts */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
                     "application/json": components["schemas"]["Contact"][];
+                };
+            };
+        };
+    };
+    getDeviceInfo: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeviceInfo"];
+                };
+            };
+        };
+    };
+    listNotifications: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Array of notifications */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown[];
+                };
+            };
+        };
+    };
+    dismissNotification: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Notification key */
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkResponse"];
+                };
+            };
+        };
+    };
+    triggerNotificationAction: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Notification key */
+                key: string;
+                /** @description Action index */
+                index: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkResponse"];
                 };
             };
         };
@@ -867,17 +705,122 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    /**
-                     * @description URI to open (https://, tel:, mailto:, app deep links, etc.)
-                     * @example https://www.xiaohongshu.com/explore/123
-                     */
-                    uri: string;
-                };
+                "application/json": components["schemas"]["OpenBody"];
             };
         };
         responses: {
-            200: components["responses"]["Ok"];
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkResponse"];
+                };
+            };
+        };
+    };
+    getScreenshot: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description PNG image of the current phone screen */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": unknown;
+                };
+            };
+        };
+    };
+    sendSms: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SendSmsBody"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkResponse"];
+                };
+            };
+        };
+    };
+    listSmsThreads: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SmsThread"][];
+                };
+            };
+        };
+    };
+    getSmsMessages: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SmsMessage"][];
+                };
+            };
+        };
+    };
+    getSnapshot: {
+        parameters: {
+            query?: {
+                /** @description Output format: text or json */
+                format?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accessibility tree */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
         };
     };
 }

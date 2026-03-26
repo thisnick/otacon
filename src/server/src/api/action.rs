@@ -1,11 +1,12 @@
 use axum::extract::Json;
 use serde::Deserialize;
 use std::sync::Arc;
+use utoipa::ToSchema;
 
 use super::adb::adb_shell;
-use super::{ApiError, AppState};
+use super::{ApiError, AppState, ErrorResponse, OkResponse};
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 #[serde(tag = "action", rename_all = "snake_case")]
 pub enum Action {
     Tap(TapParams),
@@ -19,7 +20,7 @@ pub enum Action {
     ScrollBackward(ScrollParams),
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct TapParams {
     x: Option<i32>,
     y: Option<i32>,
@@ -27,7 +28,7 @@ pub struct TapParams {
     ref_id: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct SwipeParams {
     x1: i32,
     y1: i32,
@@ -41,7 +42,7 @@ fn default_swipe_duration() -> u32 {
     300
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct PinchParams {
     x: i32,
     y: i32,
@@ -55,29 +56,41 @@ fn default_pinch_duration() -> u32 {
     500
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct KeyParams {
     key: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct TypeParams {
     text: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct SetTextParams {
     #[serde(rename = "ref")]
     ref_id: String,
     text: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct ScrollParams {
     #[serde(rename = "ref")]
     ref_id: String,
 }
 
+#[utoipa::path(
+    post,
+    path = "/api/action",
+    tag = "Actions",
+    operation_id = "performAction",
+    request_body = Action,
+    responses(
+        (status = 200, description = "Action performed successfully", body = OkResponse),
+        (status = 400, description = "Bad request", body = ErrorResponse),
+        (status = 404, description = "Reference not found", body = ErrorResponse),
+    )
+)]
 pub async fn handler(
     state: Arc<AppState>,
     Json(action): Json<Action>,

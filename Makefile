@@ -2,7 +2,8 @@
        phone-setup phone-reset health pigen pigen-flash pigen-config \
        wake cli build-all build-server build-cli \
        restart-monitor bluetooth-connect bluetooth-status bluetooth-watch \
-       clear-restrictions apply-restrictions
+       clear-restrictions apply-restrictions \
+       generate generate-api generate-types validate-api
 
 PI_HOST ?= otacon-pi
 PI_USER ?= nick
@@ -97,6 +98,20 @@ clear-restrictions:
 
 apply-restrictions:
 	$(SSH_CMD) "cd $(REMOTE_DIR) && docker compose exec otacon adb shell am broadcast -a com.otacon.kiosk.APPLY_RESTRICTIONS -n com.otacon.kiosk/.BootReceiver"
+
+generate-api:
+	cd src/server && cargo run -- --export-openapi | python3 -m json.tool > ../../docs/api/openapi.json
+
+generate-types:
+	pnpm --filter otacon-cli run generate
+
+generate: generate-api generate-types
+
+validate-api:
+	@cd src/server && cargo run -- --export-openapi | python3 -m json.tool > /tmp/otacon-spec-check.json 2>/dev/null
+	@diff -q docs/api/openapi.json /tmp/otacon-spec-check.json > /dev/null 2>&1 \
+		|| (echo "ERROR: openapi.json is out of date — run 'make generate'" && exit 1)
+	@echo "API spec is up to date"
 
 pigen-config:
 	@test -n "$(DEVICE)" || (echo "ERROR: Set DEVICE= to boot partition mount point"; exit 1)
