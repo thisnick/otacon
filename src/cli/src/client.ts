@@ -193,8 +193,4 @@ export class OtaconClient {
     return res.json();
   }
 
-  recordWsUrl(maxDuration: number = 30): string {
-    const base = this.baseUrl.replace(/^http/, "ws");
-    return `${base}/ws/record?max_duration=${maxDuration}`;
-  }
 }

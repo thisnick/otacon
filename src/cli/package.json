@@ -13,12 +13,10 @@
     "dev": "tsx src/index.ts"
   },
   "dependencies": {
-    "commander": "^13.0.0",
-    "ws": "^8.20.0"
+    "commander": "^13.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "@types/ws": "^8.18.1",
     "openapi-typescript": "^7.13.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"

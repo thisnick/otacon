@@ -351,45 +351,41 @@ const record = program
     const client = getClient(program.opts());
     const maxDuration = parseInt(opts.duration);
     const outPath = opts.output || "recording.mp4";
-    const wsUrl = client.recordWsUrl(maxDuration);
 
-    // Dynamic import for WebSocket (Node.js built-in in v22+, or ws package)
-    const WebSocket = (await import("ws")).default;
-    const ws = new WebSocket(wsUrl, { rejectUnauthorized: false });
-    const chunks: Buffer[] = [];
+    await client.recordStart(maxDuration);
 
-    ws.on("message", (data: Buffer, isBinary: boolean) => {
-      if (isBinary) {
-        chunks.push(Buffer.from(data));
-      } else {
-        const msg = JSON.parse(data.toString());
-        if (msg.type === "status") {
-          process.stderr.write(`\rRecording... ${msg.elapsed}s / ${msg.max_duration}s  [Ctrl+C to stop]`);
-        } else if (msg.error) {
-          console.error(`\nError: ${msg.error}`);
-          process.exit(1);
-        }
+    let stopping = false;
+    process.on("SIGINT", async () => {
+      if (stopping) return;
+      stopping = true;
+      process.stderr.write("\nStopping...\n");
+      try {
+        const mp4 = await client.recordStop();
+        writeFileSync(outPath, mp4);
+        console.error(`Saved to ${outPath}`);
+      } catch (e: unknown) {
+        console.error(`Failed to save: ${(e as Error).message}`);
       }
+      process.exit(0);
     });
 
-    ws.on("close", () => {
-      if (chunks.length > 0) {
-        writeFileSync(outPath, Buffer.concat(chunks));
-        console.error(`\nSaved to ${outPath}`);
-      } else {
-        console.error("\nNo recording data received");
-      }
-    });
+    // Poll status
+    for (let i = 1; i <= maxDuration; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      if (stopping) return;
+      try {
+        const status = await client.recordStatus();
+        if (!status.recording) break;
+        process.stderr.write(`\rRecording... ${status.elapsed}s / ${maxDuration}s  [Ctrl+C to stop]`);
+      } catch { break; }
+    }
 
-    ws.on("error", (err: Error) => {
-      console.error(`\nWebSocket error: ${err.message}`);
-      process.exit(1);
-    });
-
-    // Ctrl+C sends stop
-    process.on("SIGINT", () => {
-      ws.send(JSON.stringify({ action: "stop" }));
-    });
+    if (!stopping) {
+      process.stderr.write("\nAuto-stopped. Saving...\n");
+      const mp4 = await client.recordStop();
+      writeFileSync(outPath, mp4);
+      console.error(`Saved to ${outPath}`);
+    }
   });
 
 record
