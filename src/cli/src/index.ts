@@ -141,16 +141,14 @@ program
 program
   .command("screenshot")
   .description("Take a screenshot")
-  .option("-o, --output <path>", "output file path")
+
+  .option("-o, --output <path>", "output file path (default: screenshot.png)")
   .action(async (opts: { output?: string }) => {
     const client = getClient(program.opts());
     const png = await client.screenshot();
-    if (opts.output) {
-      writeFileSync(opts.output, png);
-      console.error(`Saved to ${opts.output}`);
-    } else {
-      process.stdout.write(png);
-    }
+    const outPath = opts.output || "screenshot.png";
+    writeFileSync(outPath, png);
+    console.error(`Saved to ${outPath}`);
   });
 
 program
