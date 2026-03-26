@@ -163,7 +163,8 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(apps::running_handler).post(apps::launch_handler),
         )
         .route("/apps/running/{package}", delete(apps::stop_handler))
-        .route("/apps/install", post(apps::install_handler))
+        .route("/apps/install", post(apps::install_handler)
+            .layer(axum::extract::DefaultBodyLimit::max(512 * 1024 * 1024)))
         // Open URI
         .route("/open", post(open::handler))
         // Recording
