@@ -106,40 +106,32 @@ pub async fn handler(
 }
 
 async fn handle_tap(state: Arc<AppState>, p: TapParams, long: bool) -> Result<(), ApiError> {
-    // Ref-based tap: resolve bounds and use coordinate tap (input tap).
-    // We don't use performAction(ACTION_CLICK) because it returns true
-    // but silently fails on WebView elements (known Android limitation).
     if let Some(ref ref_id) = p.ref_id {
-        let bounds = if state.bridge.is_snapshot_available() {
-            let snap = state.bridge.snapshot_get("/snapshot?format=json").await?;
-            let tree: serde_json::Value = serde_json::from_str(&snap)
-                .map_err(|e| ApiError::Adb(format!("parse snapshot: {e}")))?;
-            find_ref_bounds(&tree, ref_id)
-                .ok_or_else(|| ApiError::NotFound(format!("ref {ref_id} not found")))?
-        } else {
-            let guard = state.snapshot_cache.lock().await;
-            let cache = guard
-                .as_ref()
-                .ok_or_else(|| ApiError::BadRequest("no snapshot taken yet — call GET /api/snapshot first".into()))?;
-            if !cache.is_valid() {
-                return Err(ApiError::BadRequest(
-                    "snapshot expired or invalidated — call GET /api/snapshot to refresh".into(),
-                ));
-            }
-            let b = cache
-                .ref_bounds
-                .get(ref_id)
-                .ok_or_else(|| ApiError::NotFound(format!("ref {ref_id} not in current snapshot")))?;
-            let bounds = (b.x1, b.y1, b.x2, b.y2);
-            drop(guard);
-            bounds
-        };
+        let ref_info = resolve_ref(&state, ref_id).await?;
 
-        let (x, y) = ((bounds.0 + bounds.2) / 2, (bounds.1 + bounds.3) / 2);
-        if long {
-            adb_shell(&format!("input swipe {x} {y} {x} {y} 1000")).await?;
+        if ref_info.in_webview {
+            // WebView: performAction returns true but silently fails.
+            // Use coordinate tap instead.
+            let (x, y) = bounds_center(&ref_info.bounds);
+            if long {
+                adb_shell(&format!("input swipe {x} {y} {x} {y} 1000")).await?;
+            } else {
+                adb_shell(&format!("input tap {x} {y}")).await?;
+            }
         } else {
-            adb_shell(&format!("input tap {x} {y}")).await?;
+            // Native: use performAction via snapshot server
+            let action_name = if long { "long_click" } else { "click" };
+            if state.bridge.is_snapshot_available() {
+                let body = serde_json::json!({"action": action_name, "ref": ref_id}).to_string();
+                state.bridge.snapshot_post("/action", &body).await?;
+            } else {
+                let (x, y) = bounds_center(&ref_info.bounds);
+                if long {
+                    adb_shell(&format!("input swipe {x} {y} {x} {y} 1000")).await?;
+                } else {
+                    adb_shell(&format!("input tap {x} {y}")).await?;
+                }
+            }
         }
         return Ok(());
     }
@@ -159,33 +151,78 @@ async fn handle_tap(state: Arc<AppState>, p: TapParams, long: bool) -> Result<()
     ))
 }
 
-/// Find bounds (x1, y1, x2, y2) for a ref_id in the snapshot JSON tree.
-fn find_ref_bounds(node: &serde_json::Value, ref_id: &str) -> Option<(i32, i32, i32, i32)> {
+/// Info about a ref found in the snapshot tree.
+struct RefInfo {
+    bounds: (i32, i32, i32, i32),
+    in_webview: bool,
+}
+
+/// Find bounds and WebView context for a ref_id in the snapshot JSON tree.
+fn find_ref_info(node: &serde_json::Value, ref_id: &str, in_webview: bool) -> Option<RefInfo> {
     if let Some(arr) = node.as_array() {
         for child in arr {
-            if let Some(b) = find_ref_bounds(child, ref_id) {
-                return Some(b);
+            if let Some(r) = find_ref_info(child, ref_id, in_webview) {
+                return Some(r);
             }
         }
         return None;
     }
+    let is_webview = in_webview
+        || node.get("class").and_then(|v| v.as_str()).map_or(false, |c| c.contains("WebView"));
     if node.get("ref_id").and_then(|v| v.as_str()) == Some(ref_id) {
         let bounds = node.get("bounds")?;
-        return Some((
-            bounds["x1"].as_i64()? as i32,
-            bounds["y1"].as_i64()? as i32,
-            bounds["x2"].as_i64()? as i32,
-            bounds["y2"].as_i64()? as i32,
-        ));
+        return Some(RefInfo {
+            bounds: (
+                bounds["x1"].as_i64()? as i32,
+                bounds["y1"].as_i64()? as i32,
+                bounds["x2"].as_i64()? as i32,
+                bounds["y2"].as_i64()? as i32,
+            ),
+            in_webview: is_webview,
+        });
     }
     if let Some(children) = node.get("children").and_then(|v| v.as_array()) {
         for child in children {
-            if let Some(b) = find_ref_bounds(child, ref_id) {
-                return Some(b);
+            if let Some(r) = find_ref_info(child, ref_id, is_webview) {
+                return Some(r);
             }
         }
     }
     None
+}
+
+fn bounds_center(bounds: &(i32, i32, i32, i32)) -> (i32, i32) {
+    ((bounds.0 + bounds.2) / 2, (bounds.1 + bounds.3) / 2)
+}
+
+/// Resolve a ref ID to its bounds and WebView context.
+async fn resolve_ref(state: &Arc<AppState>, ref_id: &str) -> Result<RefInfo, ApiError> {
+    if state.bridge.is_snapshot_available() {
+        let snap = state.bridge.snapshot_get("/snapshot?format=json").await?;
+        let tree: serde_json::Value = serde_json::from_str(&snap)
+            .map_err(|e| ApiError::Adb(format!("parse snapshot: {e}")))?;
+        find_ref_info(&tree, ref_id, false)
+            .ok_or_else(|| ApiError::NotFound(format!("ref {ref_id} not found")))
+    } else {
+        let guard = state.snapshot_cache.lock().await;
+        let cache = guard
+            .as_ref()
+            .ok_or_else(|| ApiError::BadRequest("no snapshot taken yet — call GET /api/snapshot first".into()))?;
+        if !cache.is_valid() {
+            return Err(ApiError::BadRequest(
+                "snapshot expired or invalidated — call GET /api/snapshot to refresh".into(),
+            ));
+        }
+        let b = cache
+            .ref_bounds
+            .get(ref_id)
+            .ok_or_else(|| ApiError::NotFound(format!("ref {ref_id} not in current snapshot")))?;
+        // ADB fallback doesn't know WebView context — assume not
+        Ok(RefInfo {
+            bounds: (b.x1, b.y1, b.x2, b.y2),
+            in_webview: false,
+        })
+    }
 }
 
 async fn handle_swipe(p: SwipeParams) -> Result<(), ApiError> {
@@ -270,8 +307,37 @@ async fn handle_type(p: TypeParams) -> Result<(), ApiError> {
 }
 
 async fn handle_set_text(state: Arc<AppState>, p: SetTextParams) -> Result<(), ApiError> {
-    // set_text uses the snapshot server's performAction(ACTION_SET_TEXT) —
-    // supports full Unicode (Chinese, emoji, etc.) unlike adb shell input text
+    let ref_info = resolve_ref(&state, &p.ref_id).await?;
+
+    if ref_info.in_webview {
+        // WebView: performAction(ACTION_SET_TEXT) doesn't work reliably.
+        // Tap to focus, clear existing text, then type via ADB.
+        let (x, y) = bounds_center(&ref_info.bounds);
+        adb_shell(&format!("input tap {x} {y}")).await?;
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        // Select all + delete existing text
+        adb_shell("input keyevent 29 --longpress").await.ok(); // Ctrl+A
+        adb_shell("input keyevent 67").await.ok(); // Delete
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        // Type new text
+        let escaped = p.text
+            .replace('\\', "\\\\")
+            .replace(' ', "%s")
+            .replace('&', "\\&")
+            .replace('<', "\\<")
+            .replace('>', "\\>")
+            .replace('(', "\\(")
+            .replace(')', "\\)")
+            .replace('|', "\\|")
+            .replace(';', "\\;")
+            .replace('\'', "\\'")
+            .replace('"', "\\\"")
+            .replace('`', "\\`");
+        adb_shell(&format!("input text '{escaped}'")).await?;
+        return Ok(());
+    }
+
+    // Native: use performAction(ACTION_SET_TEXT) — supports full Unicode
     if state.bridge.is_snapshot_available() {
         let body = serde_json::json!({
             "action": "set_text",
@@ -283,23 +349,8 @@ async fn handle_set_text(state: Arc<AppState>, p: SetTextParams) -> Result<(), A
         return Ok(());
     }
 
-    // Fallback: tap the element to focus, then type via ADB
-    // This won't work for non-ASCII — warn the user
-    let guard = state.snapshot_cache.lock().await;
-    let cache = guard
-        .as_ref()
-        .ok_or_else(|| ApiError::BadRequest("no snapshot — call GET /api/snapshot first".into()))?;
-    if !cache.is_valid() {
-        return Err(ApiError::BadRequest("snapshot expired — refresh first".into()));
-    }
-    let bounds = cache
-        .ref_bounds
-        .get(&p.ref_id)
-        .ok_or_else(|| ApiError::NotFound(format!("ref {} not found", p.ref_id)))?;
-    let (x, y) = ((bounds.x1 + bounds.x2) / 2, (bounds.y1 + bounds.y2) / 2);
-    drop(guard);
-
-    // Tap to focus, then type
+    // ADB fallback: tap + type (ASCII only)
+    let (x, y) = bounds_center(&ref_info.bounds);
     adb_shell(&format!("input tap {x} {y}")).await?;
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     let escaped = p.text
