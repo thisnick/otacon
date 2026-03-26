@@ -43,21 +43,19 @@ pub async fn info_handler(state: Arc<AppState>) -> Result<Json<DeviceInfo>, ApiE
 
 async fn get_phone_number() -> Result<String, ApiError> {
     let out = adb_shell("service call iphonesubinfo 16 s16 com.android.shell").await?;
-    // Parse digits from parcel output like: '1.5.1.0.2.9.0.1.1.7.8...'
+    // Parcel output has quoted sections like '1.5.1.0.2.9.0.1.1.7.8...'
+    // Extract digits only from text between single quotes
     let number: String = out
-        .chars()
+        .split('\'')
+        .enumerate()
+        .filter(|(i, _)| i % 2 == 1) // odd indices are inside quotes
+        .flat_map(|(_, s)| s.chars())
         .filter(|c| c.is_ascii_digit() || *c == '+')
         .collect();
     if number.is_empty() {
         return Err(ApiError::Adb("no phone number found".into()));
     }
-    // Add + prefix if not present
-    let formatted = if number.starts_with('+') || number.starts_with('1') {
-        format!("+{}", number.trim_start_matches('+'))
-    } else {
-        format!("+{number}")
-    };
-    Ok(formatted)
+    Ok(format!("+{}", number.trim_start_matches('+')))
 }
 
 async fn get_current_activity() -> Result<String, ApiError> {
