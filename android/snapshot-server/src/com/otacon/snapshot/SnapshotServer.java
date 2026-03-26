@@ -280,7 +280,7 @@ public class SnapshotServer {
             || node.isLongClickable()
             || node.isCheckable()
             || node.isScrollable()
-            || (node.isFocusable() && className(node).endsWith("EditText"));
+            || node.isFocusable();
     }
 
     private static String fingerprint(AccessibilityNodeInfo node, String path) {

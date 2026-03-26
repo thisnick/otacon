@@ -100,14 +100,13 @@ fn default_format() -> String {
 }
 
 /// Should this node get a ref ID?
-/// Only interactive elements get refs — things you can tap, type into, or scroll.
+/// Interactive elements get refs — things you can tap, type into, scroll, or focus.
 fn is_refable(node: &A11yNode) -> bool {
     node.clickable
         || node.long_clickable
         || node.checkable
         || node.scrollable
-        // EditText fields are focusable type targets (for typing into)
-        || (node.focusable && node.class.ends_with("EditText"))
+        || node.focusable
 }
 
 /// Build a fingerprint for node matching across snapshots.

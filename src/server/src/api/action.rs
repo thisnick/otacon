@@ -108,33 +108,48 @@ pub async fn handler(
 async fn handle_tap(state: Arc<AppState>, p: TapParams, long: bool) -> Result<(), ApiError> {
     let action_name = if long { "long_click" } else { "click" };
 
-    // Ref-based tap: try snapshot server first (performAction, no coordinates needed)
+    // Ref-based tap: try snapshot server first, fall back to coordinate tap
     if let Some(ref ref_id) = p.ref_id {
         if state.bridge.is_snapshot_available() {
             let body = serde_json::json!({"action": action_name, "ref": ref_id}).to_string();
-            state.bridge.snapshot_post("/action", &body).await?;
-            return Ok(());
+            let result = state.bridge.snapshot_post("/action", &body).await?;
+            // If performAction succeeded, we're done
+            if result.contains("\"ok\":true") || result.contains("\"ok\": true") {
+                return Ok(());
+            }
+            // performAction failed (e.g. WebView elements) — fall through to coordinate tap
+            eprintln!("performAction({action_name}) failed for {ref_id}, falling back to coordinate tap");
         }
 
-        // ADB fallback: look up cached bounds
-        let guard = state.snapshot_cache.lock().await;
-        let cache = guard
-            .as_ref()
-            .ok_or_else(|| ApiError::BadRequest("no snapshot taken yet — call GET /api/snapshot first".into()))?;
+        // Coordinate fallback: get bounds from snapshot server or cache
+        let bounds = if state.bridge.is_snapshot_available() {
+            // Get fresh bounds from snapshot server
+            let snap = state.bridge.snapshot_get("/snapshot?format=json").await?;
+            let tree: serde_json::Value = serde_json::from_str(&snap)
+                .map_err(|e| ApiError::Adb(format!("parse snapshot: {e}")))?;
+            find_ref_bounds(&tree, ref_id)
+                .ok_or_else(|| ApiError::NotFound(format!("ref {ref_id} not found")))?
+        } else {
+            // ADB fallback: look up cached bounds
+            let guard = state.snapshot_cache.lock().await;
+            let cache = guard
+                .as_ref()
+                .ok_or_else(|| ApiError::BadRequest("no snapshot taken yet — call GET /api/snapshot first".into()))?;
+            if !cache.is_valid() {
+                return Err(ApiError::BadRequest(
+                    "snapshot expired or invalidated — call GET /api/snapshot to refresh".into(),
+                ));
+            }
+            let b = cache
+                .ref_bounds
+                .get(ref_id)
+                .ok_or_else(|| ApiError::NotFound(format!("ref {ref_id} not in current snapshot")))?;
+            let bounds = (b.x1, b.y1, b.x2, b.y2);
+            drop(guard);
+            bounds
+        };
 
-        if !cache.is_valid() {
-            return Err(ApiError::BadRequest(
-                "snapshot expired or invalidated — call GET /api/snapshot to refresh".into(),
-            ));
-        }
-
-        let bounds = cache
-            .ref_bounds
-            .get(ref_id)
-            .ok_or_else(|| ApiError::NotFound(format!("ref {ref_id} not in current snapshot")))?;
-        let (x, y) = ((bounds.x1 + bounds.x2) / 2, (bounds.y1 + bounds.y2) / 2);
-        drop(guard);
-
+        let (x, y) = ((bounds.0 + bounds.2) / 2, (bounds.1 + bounds.3) / 2);
         if long {
             adb_shell(&format!("input swipe {x} {y} {x} {y} 1000")).await?;
         } else {
@@ -156,6 +171,35 @@ async fn handle_tap(state: Arc<AppState>, p: TapParams, long: bool) -> Result<()
     Err(ApiError::BadRequest(
         "tap requires either {x, y} or {ref}".into(),
     ))
+}
+
+/// Find bounds (x1, y1, x2, y2) for a ref_id in the snapshot JSON tree.
+fn find_ref_bounds(node: &serde_json::Value, ref_id: &str) -> Option<(i32, i32, i32, i32)> {
+    if let Some(arr) = node.as_array() {
+        for child in arr {
+            if let Some(b) = find_ref_bounds(child, ref_id) {
+                return Some(b);
+            }
+        }
+        return None;
+    }
+    if node.get("ref_id").and_then(|v| v.as_str()) == Some(ref_id) {
+        let bounds = node.get("bounds")?;
+        return Some((
+            bounds["x1"].as_i64()? as i32,
+            bounds["y1"].as_i64()? as i32,
+            bounds["x2"].as_i64()? as i32,
+            bounds["y2"].as_i64()? as i32,
+        ));
+    }
+    if let Some(children) = node.get("children").and_then(|v| v.as_array()) {
+        for child in children {
+            if let Some(b) = find_ref_bounds(child, ref_id) {
+                return Some(b);
+            }
+        }
+    }
+    None
 }
 
 async fn handle_swipe(p: SwipeParams) -> Result<(), ApiError> {
