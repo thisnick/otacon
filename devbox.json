@@ -3,7 +3,8 @@
   "packages": [
     "ansible@latest",
     "direnv@latest",
-    "rustup@latest"
+    "rustup@latest",
+    "colima@latest"
   ],
   "shell": {
     "init_hook": [

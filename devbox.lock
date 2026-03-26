@@ -65,6 +65,54 @@
         }
       }
     },
+    "colima@latest": {
+      "last_modified": "2026-03-23T05:26:49Z",
+      "resolved": "github:NixOS/nixpkgs/4724d5647207377bede08da3212f809cbd94a648#colima",
+      "source": "devbox-search",
+      "version": "0.10.1",
+      "systems": {
+        "aarch64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/jqjgkby1k6xm1n24c854cqva6cdq4fwq-colima-0.10.1",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/jqjgkby1k6xm1n24c854cqva6cdq4fwq-colima-0.10.1"
+        },
+        "aarch64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/6fjjnywvz259ck1b0mp08dbjrrgdrxqh-colima-0.10.1",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/6fjjnywvz259ck1b0mp08dbjrrgdrxqh-colima-0.10.1"
+        },
+        "x86_64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/zfg75dsinwhkn7i14d1ldh7592i298w3-colima-0.10.1",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/zfg75dsinwhkn7i14d1ldh7592i298w3-colima-0.10.1"
+        },
+        "x86_64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/5wpn3vk72v0igl1qvgawm7hppp6b1q4i-colima-0.10.1",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/5wpn3vk72v0igl1qvgawm7hppp6b1q4i-colima-0.10.1"
+        }
+      }
+    },
     "direnv@latest": {
       "last_modified": "2026-02-23T15:40:43Z",
       "resolved": "github:NixOS/nixpkgs/80d901ec0377e19ac3f7bb8c035201e2e098cc97#direnv",
