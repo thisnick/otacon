@@ -182,6 +182,9 @@ public class SnapshotServer {
         refMap.clear();
         List<AccessibilityNodeInfo> roots = new ArrayList<>();
 
+        // Wait for UI to settle so WebView bounds are up-to-date
+        try { uiAutomation.waitForIdle(500, 2000); } catch (Exception ignored) {}
+
         try {
             List<AccessibilityWindowInfo> windows = uiAutomation.getWindows();
             System.out.println("getWindows() returned " + windows.size() + " windows");
@@ -344,6 +347,7 @@ public class SnapshotServer {
         if (node.isScrollable()) attrs.add("scrollable");
         if (node.isSelected()) attrs.add("selected");
         if (!node.isEnabled()) attrs.add("disabled");
+        if (!node.isVisibleToUser()) attrs.add("offscreen");
 
         if (!attrs.isEmpty()) {
             sb.append(" [");
@@ -396,6 +400,7 @@ public class SnapshotServer {
         obj.put("scrollable", node.isScrollable());
         obj.put("enabled", node.isEnabled());
         obj.put("selected", node.isSelected());
+        obj.put("visible_to_user", node.isVisibleToUser());
 
         JSONArray children = new JSONArray();
         for (int i = 0; i < node.getChildCount(); i++) {

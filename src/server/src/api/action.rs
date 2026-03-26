@@ -111,26 +111,23 @@ async fn handle_tap(state: Arc<AppState>, p: TapParams, long: bool) -> Result<()
         let (x, y) = bounds_center(&ref_info.bounds);
 
         if ref_info.in_webview {
-            // For WebView elements, scroll into view if off-screen, then coordinate tap
-            let screen = get_screen_size().await;
             let mut x = x;
             let mut y = y;
-            if let Some((sw, sh)) = screen {
-                if x < 0 || y < 0 || x > sw || y > sh {
-                    // Try ACTION_FOCUS to scroll element into view
-                    if state.bridge.is_snapshot_available() {
-                        let body = serde_json::json!({"action": "focus", "ref": ref_id}).to_string();
-                        state.bridge.snapshot_post("/action", &body).await.ok();
-                        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-                        // Re-resolve bounds after scroll
-                        if let Ok(new_info) = resolve_ref(&state, ref_id).await {
-                            let (nx, ny) = bounds_center(&new_info.bounds);
-                            x = nx;
-                            y = ny;
-                        }
+
+            if !ref_info.visible_to_user {
+                // Element not visible — focus to scroll into view, re-resolve
+                if state.bridge.is_snapshot_available() {
+                    let body = serde_json::json!({"action": "focus", "ref": ref_id}).to_string();
+                    state.bridge.snapshot_post("/action", &body).await.ok();
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    if let Ok(new_info) = resolve_ref(&state, ref_id).await {
+                        let (nx, ny) = bounds_center(&new_info.bounds);
+                        x = nx;
+                        y = ny;
                     }
                 }
             }
+
             if long {
                 adb_shell(&format!("input swipe {x} {y} {x} {y} 1000")).await?;
             } else {
@@ -171,6 +168,7 @@ async fn handle_tap(state: Arc<AppState>, p: TapParams, long: bool) -> Result<()
 struct RefInfo {
     bounds: (i32, i32, i32, i32),
     in_webview: bool,
+    visible_to_user: bool,
 }
 
 /// Find bounds and WebView context for a ref_id in the snapshot JSON tree.
@@ -195,6 +193,7 @@ fn find_ref_info(node: &serde_json::Value, ref_id: &str, in_webview: bool) -> Op
                 bounds["y2"].as_i64()? as i32,
             ),
             in_webview: is_webview,
+            visible_to_user: node.get("visible_to_user").and_then(|v| v.as_bool()).unwrap_or(true),
         });
     }
     if let Some(children) = node.get("children").and_then(|v| v.as_array()) {
@@ -205,16 +204,6 @@ fn find_ref_info(node: &serde_json::Value, ref_id: &str, in_webview: bool) -> Op
         }
     }
     None
-}
-
-async fn get_screen_size() -> Option<(i32, i32)> {
-    let out = adb_shell("wm size").await.ok()?;
-    // "Physical size: 1080x2316"
-    let size = out.split(':').last()?.trim();
-    let mut parts = size.split('x');
-    let w = parts.next()?.trim().parse().ok()?;
-    let h = parts.next()?.trim().parse().ok()?;
-    Some((w, h))
 }
 
 fn bounds_center(bounds: &(i32, i32, i32, i32)) -> (i32, i32) {
@@ -247,6 +236,7 @@ async fn resolve_ref(state: &Arc<AppState>, ref_id: &str) -> Result<RefInfo, Api
         Ok(RefInfo {
             bounds: (b.x1, b.y1, b.x2, b.y2),
             in_webview: false,
+            visible_to_user: true,
         })
     }
 }
