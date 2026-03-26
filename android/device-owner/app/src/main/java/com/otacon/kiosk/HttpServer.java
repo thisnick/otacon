@@ -80,7 +80,7 @@ public class HttpServer extends NanoHTTPD {
             if ("/clipboard".equals(uri) && method == Method.GET) {
                 return handleGetClipboard();
             }
-            if ("/clipboard".equals(uri) && method == Method.PUT) {
+            if ("/clipboard".equals(uri) && (method == Method.PUT || method == Method.POST)) {
                 return handleSetClipboard(session);
             }
 
