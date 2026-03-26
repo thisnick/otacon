@@ -153,6 +153,24 @@ otacon apps launch com.android.chrome
 otacon apps stop com.android.chrome
 ```
 
+### Screen Recording
+
+```bash
+# Interactive: holds TTY, shows progress, Ctrl+C to stop
+otacon record                    # 30s max, saves to recording.mp4
+otacon record -d 60              # 60s max
+otacon record -d 60 -o video.mp4 # custom output
+
+# Headless (for agents):
+otacon record start              # start recording, 30s max
+otacon record start -d 60        # start recording, 60s max
+otacon record status             # check if recording + elapsed time
+otacon record stop               # stop and save to recording.mp4
+otacon record stop -o video.mp4  # stop and save to custom path
+```
+
+Records video + audio (mp4). Max duration 180s, default 30s. One recording at a time. Auto-stops at max duration — call `record stop` to retrieve the file.
+
 ### Open URI
 
 ```bash
