@@ -309,35 +309,8 @@ async fn handle_type(p: TypeParams) -> Result<(), ApiError> {
 async fn handle_set_text(state: Arc<AppState>, p: SetTextParams) -> Result<(), ApiError> {
     let ref_info = resolve_ref(&state, &p.ref_id).await?;
 
-    if ref_info.in_webview {
-        // WebView: performAction(ACTION_SET_TEXT) doesn't work reliably.
-        // Tap to focus, clear existing text, then type via ADB.
-        let (x, y) = bounds_center(&ref_info.bounds);
-        adb_shell(&format!("input tap {x} {y}")).await?;
-        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        // Select all + delete existing text
-        adb_shell("input keyevent 29 --longpress").await.ok(); // Ctrl+A
-        adb_shell("input keyevent 67").await.ok(); // Delete
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        // Type new text
-        let escaped = p.text
-            .replace('\\', "\\\\")
-            .replace(' ', "%s")
-            .replace('&', "\\&")
-            .replace('<', "\\<")
-            .replace('>', "\\>")
-            .replace('(', "\\(")
-            .replace(')', "\\)")
-            .replace('|', "\\|")
-            .replace(';', "\\;")
-            .replace('\'', "\\'")
-            .replace('"', "\\\"")
-            .replace('`', "\\`");
-        adb_shell(&format!("input text '{escaped}'")).await?;
-        return Ok(());
-    }
-
-    // Native: use performAction(ACTION_SET_TEXT) — supports full Unicode
+    // Try performAction(ACTION_SET_TEXT) first — works on native and most WebView EditTexts.
+    // Supports full Unicode.
     if state.bridge.is_snapshot_available() {
         let body = serde_json::json!({
             "action": "set_text",
@@ -345,11 +318,29 @@ async fn handle_set_text(state: Arc<AppState>, p: SetTextParams) -> Result<(), A
             "text": p.text,
         })
         .to_string();
-        state.bridge.snapshot_post("/action", &body).await?;
+        let result = state.bridge.snapshot_post("/action", &body).await?;
+        if result.contains("\"ok\":true") || result.contains("\"ok\": true") {
+            return Ok(());
+        }
+        // ACTION_SET_TEXT failed — fall back to clipboard paste
+        eprintln!("ACTION_SET_TEXT failed for {}, falling back to clipboard paste", p.ref_id);
+    }
+
+    // Fallback: clipboard set → tap to focus → select all → paste.
+    // Supports full Unicode via clipboard.
+    if state.bridge.is_device_owner_available() {
+        let clip_body = serde_json::json!({"text": p.text}).to_string();
+        state.bridge.device_post("/clipboard", &clip_body).await?;
+        let (x, y) = bounds_center(&ref_info.bounds);
+        adb_shell(&format!("input tap {x} {y}")).await?;
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        adb_shell("input keyevent 29 --longpress").await.ok(); // Ctrl+A
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        adb_shell("input keyevent 50 --longpress").await.ok(); // Ctrl+V
         return Ok(());
     }
 
-    // ADB fallback: tap + type (ASCII only)
+    // Last resort: tap + input text (ASCII only)
     let (x, y) = bounds_center(&ref_info.bounds);
     adb_shell(&format!("input tap {x} {y}")).await?;
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
