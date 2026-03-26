@@ -907,7 +907,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description MP4 video */
+            /** @description MP4 video with audio */
             200: {
                 headers: {
                     [name: string]: unknown;

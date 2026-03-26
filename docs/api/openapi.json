@@ -465,7 +465,7 @@
                 "operationId": "stopRecording",
                 "responses": {
                     "200": {
-                        "description": "MP4 video",
+                        "description": "MP4 video with audio",
                         "content": {
                             "video/mp4": {}
                         }
