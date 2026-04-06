@@ -1,3 +1,16 @@
+FROM debian:trixie-slim AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential cmake git ca-certificates \
+    libcurl4-openssl-dev libpcsclite-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone https://github.com/estkme-group/lpac.git /lpac \
+    && cd /lpac \
+    && mkdir build && cd build \
+    && cmake .. -DLPAC_WITH_APDU_AT=ON \
+    && make -j$(nproc)
+
 FROM debian:trixie-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -10,6 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     picocom \
     # General utilities
     curl \
+    libcurl4 \
     usbutils \
     iproute2 \
     net-tools \
@@ -17,6 +31,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-serial \
     && rm -rf /var/lib/apt/lists/*
+
+# Install lpac — preserve build directory structure (RUNPATH is hardcoded)
+COPY --from=builder /lpac/build/ /lpac/build/
+RUN ln -s /lpac/build/src/lpac /usr/local/bin/lpac
+ENV LD_LIBRARY_PATH=/lpac/build:/lpac/build/driver:/lpac/build/utils:/lpac/build/euicc
 
 # Simple entrypoint that keeps container running
 CMD ["bash", "-c", "echo 'otacon-voice ready. Use docker exec to interact.' && sleep infinity"]

@@ -34,9 +34,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.voice
+    image: ghcr.io/thisnick/${OTACON_REPO:-otacon}/voice:latest
     container_name: otacon-voice
     restart: unless-stopped
     privileged: true
+    network_mode: host
     devices:
       - /dev/ttyUSB0:/dev/ttyUSB0
       - /dev/ttyUSB1:/dev/ttyUSB1
