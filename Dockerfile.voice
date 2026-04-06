@@ -1,0 +1,22 @@
+FROM debian:trixie-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Modem management
+    modemmanager \
+    libqmi-utils \
+    libmbim-utils \
+    # AT command tools
+    minicom \
+    picocom \
+    # General utilities
+    curl \
+    usbutils \
+    iproute2 \
+    net-tools \
+    jq \
+    python3 \
+    python3-serial \
+    && rm -rf /var/lib/apt/lists/*
+
+# Simple entrypoint that keeps container running
+CMD ["bash", "-c", "echo 'otacon-voice ready. Use docker exec to interact.' && sleep infinity"]

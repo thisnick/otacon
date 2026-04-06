@@ -29,6 +29,24 @@ services:
       - ALSA_PLAYBACK_DEVICE=${ALSA_PLAYBACK_DEVICE:-plughw:Device,0}
       - AUDIO_BACKEND=${AUDIO_BACKEND:-alsa}
 
+  voice:
+    platform: linux/arm64
+    build:
+      context: .
+      dockerfile: Dockerfile.voice
+    container_name: otacon-voice
+    restart: unless-stopped
+    privileged: true
+    devices:
+      - /dev/ttyUSB0:/dev/ttyUSB0
+      - /dev/ttyUSB1:/dev/ttyUSB1
+      - /dev/ttyUSB2:/dev/ttyUSB2
+      - /dev/ttyUSB3:/dev/ttyUSB3
+      - /dev/cdc-wdm0:/dev/cdc-wdm0
+    volumes:
+      - /dev/bus/usb:/dev/bus/usb
+      - /run/dbus:/run/dbus
+
   watchtower:
     image: containrrr/watchtower:latest
     restart: unless-stopped
