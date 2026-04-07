@@ -317,14 +317,61 @@ s.write(b'AT+QCFG="ims",1\r\n')
 s.write('AT+QCFG="ims",1\r\n'.encode())
 ```
 
+### Voice calls fail with NO CARRIER (CEER: 6,258 or 0,21)
+
+IMS is registered, SMS works, but voice calls get rejected. Investigated causes:
+
+- **Not IMEI whitelisting** — tested with Samsung IMEI, same result
+- **Not UAC related** — tested with UAC enabled and disabled, same result
+- **Not LTE-only mode** — tested `nwscanmode=3`, same result
+- **Not codec** — AMR codec config is `15` (all AMR-NB codecs), T-Mobile MBN profile active
+- **IMS bearer is up** — CID 2 (ims APN) has IP address and P-CSCF addresses
+- **Network explicitly rejects** — `CEER: 0,21` (call rejected) or `CEER: 6,258` (IMS service not available)
+
+Possible causes still to investigate:
+1. **Tello-specific** — Tello may not provision VoLTE voice for eSIM profiles, only SMS
+2. **SIM needs voice "priming"** — try inserting the 9eSIM in a Samsung phone, make a voice call, then move back to dongle
+3. **Different carrier** — PinePhone users confirm VoLTE calls work on Mint Mobile, MetroPCS, Simple Mobile (all T-Mobile MVNOs)
+4. **SIP/VoIP** — bypass carrier voice entirely using Twilio/Asterisk over the LTE data connection
+
+Reference: [PinePhone carrier support](https://wiki.pine64.org/wiki/PinePhone_Carrier_Support) confirms T-Mobile VoLTE works with EG25-G on other MVNOs.
+
+## USB Audio for Voice Calls
+
+Enable USB Audio Class (UAC) for call audio routing:
+
+```
+AT+QCFG="usbcfg",0x2C7C,0x0125,1,1,1,1,1,0,1
+```
+
+Last parameter `1` = UAC enabled. Reboot required. The modem will expose an ALSA audio device (check `cat /proc/asound/cards`).
+
+**Note**: Enabling UAC changes USB enumeration — ttyUSB port numbers may shift. Also, one forum report says UAC can break calls on older firmware. If calls fail after enabling UAC, disable it and retest.
+
+## GPS
+
+The EG25-G includes a GPS receiver. NMEA output is on ttyUSB0 (typically). Enable with:
+
+```
+AT+QGPS=1
+```
+
+Read NMEA sentences from ttyUSB0 or via AT:
+```
+AT+QGPSGNMEA="GGA"
+```
+
 ## Current Status
 
 - **Firmware**: EG25GGBR07A08M2G_30.203.30.203
-- **IMS/VoLTE**: Enabled and registered
+- **IMS/VoLTE**: Enabled and registered (`+QCFG: "ims",1,1`)
+- **T-Mobile MBN**: Commercial-TMO_VoLTE profile active
 - **SMS**: Send and receive working
-- **Voice calls**: Untested (IMS is registered, should work)
-- **Data**: LTE connected, APNs auto-configured
+- **Voice calls**: NOT WORKING — network rejects (CEER 6,258). See troubleshooting above.
+- **Data**: LTE connected, APNs auto-configured (fast.t-mobile.com, ims, sos, tmus)
+- **USB Audio**: Confirmed supported (UAC), both dongles expose ALSA devices
 - **eSIM**: Tello (T-Mobile MVNO) profile provisioned via lpac
+- **Phone number**: +15102901178
 
 ## References
 
