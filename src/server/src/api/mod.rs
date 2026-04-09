@@ -2,6 +2,7 @@ pub mod adb;
 pub mod action;
 pub mod apps;
 pub mod bridge;
+pub mod calls;
 pub mod clipboard;
 pub mod contacts;
 pub mod device;
@@ -10,6 +11,7 @@ pub mod record;
 pub mod screenshot;
 pub mod sms;
 pub mod snapshot;
+pub mod test_sim;
 
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -83,6 +85,10 @@ impl IntoResponse for ApiError {
         record::start_handler,
         record::stop_handler,
         record::status_handler,
+        calls::dial_handler,
+        calls::answer_handler,
+        calls::hangup_handler,
+        calls::status_handler,
     ),
     components(schemas(
         action::Action, action::TapParams, action::SwipeParams, action::PinchParams,
@@ -95,6 +101,7 @@ impl IntoResponse for ApiError {
         contacts::Contact,
         open::OpenBody,
         record::StartRecordBody, record::RecordStatus,
+        calls::DialBody, calls::CallStatus,
         OkResponse, ErrorResponse,
     ))
 )]
@@ -154,6 +161,23 @@ pub fn router(state: Arc<AppState>) -> Router {
             let state = state.clone();
             move |body| sms::send_handler(state, body)
         }))
+        // Calls
+        .route("/calls/dial", post({
+            let state = state.clone();
+            move |body| calls::dial_handler(state, body)
+        }))
+        .route("/calls/answer", post({
+            let state = state.clone();
+            move || calls::answer_handler(state)
+        }))
+        .route("/calls/hangup", post({
+            let state = state.clone();
+            move || calls::hangup_handler(state)
+        }))
+        .route("/calls/status", get({
+            let state = state.clone();
+            move || calls::status_handler(state)
+        }))
         // Contacts
         .route("/contacts", get(contacts::handler))
         // Apps
@@ -179,6 +203,23 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/record/status", get({
             let state = state.clone();
             move || record::status_handler(state)
+        }))
+        // Test simulation (bypass device owner bridge)
+        .route("/test/call/incoming", post({
+            let state = state.clone();
+            move |body| test_sim::sim_incoming(state, body)
+        }))
+        .route("/test/call/connect", post({
+            let state = state.clone();
+            move || test_sim::sim_connect(state)
+        }))
+        .route("/test/call/end", post({
+            let state = state.clone();
+            move |body| test_sim::sim_end(state, body)
+        }))
+        .route("/test/sms/receive", post({
+            let state = state.clone();
+            move |body| test_sim::sim_sms_receive(state, body)
         }))
         // OpenAPI spec
         .route("/docs/openapi.json", get(|| async {

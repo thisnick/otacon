@@ -174,6 +174,35 @@ export class OtaconClient {
     await throwOnError(res);
   }
 
+  async callDial(number: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/calls/dial`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ number }),
+    });
+    await throwOnError(res);
+  }
+
+  async callAnswer(): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/calls/answer`, {
+      method: "POST",
+    });
+    await throwOnError(res);
+  }
+
+  async callHangup(): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/api/calls/hangup`, {
+      method: "POST",
+    });
+    await throwOnError(res);
+  }
+
+  async callStatus(): Promise<{ state: string; number?: string; duration?: number }> {
+    const res = await fetch(`${this.baseUrl}/api/calls/status`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  }
+
   async recordStart(maxDuration: number = 30): Promise<void> {
     const res = await fetch(`${this.baseUrl}/api/record/start`, {
       method: "POST",

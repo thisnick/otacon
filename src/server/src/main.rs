@@ -4,7 +4,7 @@ mod dbus_monitor;
 use axum::{
     Router,
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
-    response::{Html, Response},
+    response::{Html, IntoResponse, Response},
     routing::get,
 };
 use futures::{SinkExt, StreamExt};
@@ -131,6 +131,10 @@ pub struct AppState {
     active_sinks: Arc<Mutex<HashMap<String, serde_json::Value>>>,
     /// Screen recording state
     recording: api::record::RecordingState,
+    /// Simulated call state for testing without hardware
+    pub sim_call: Mutex<api::test_sim::SimCallState>,
+    /// Whether /ws/audio/call has an active client (single-consumer enforcement)
+    call_audio_occupied: std::sync::atomic::AtomicBool,
 }
 
 #[tokio::main]
@@ -181,12 +185,17 @@ async fn main() {
         events_tx,
         active_sinks,
         recording: Arc::new(Mutex::new(None)),
+        sim_call: Mutex::new(api::test_sim::SimCallState::default()),
+        call_audio_occupied: std::sync::atomic::AtomicBool::new(false),
     });
 
     // Start D-Bus monitor for BlueALSA sink state (Bluetooth backend only)
     if matches!(state.audio_config.backend, AudioBackend::Bluetooth) {
         dbus_monitor::spawn_monitor(state.events_tx.clone(), state.active_sinks.clone());
     }
+
+    // Start call state monitor (polls device owner app, emits events on /ws/events)
+    api::calls::spawn_call_state_monitor(state.clone());
 
     tokio::spawn(capture_audio(capture_cmd, capture_tx));
 
@@ -283,8 +292,15 @@ async fn index_handler() -> Html<&'static str> {
     Html(include_str!("../static/index.html"))
 }
 
-/// WebSocket handler: bidirectional PCM audio
+/// WebSocket handler: bidirectional PCM audio (single-consumer: 409 if occupied)
 async fn ws_handler(ws: WebSocketUpgrade, state: Arc<AppState>) -> Response {
+    use std::sync::atomic::Ordering;
+    if state.call_audio_occupied.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err() {
+        return (
+            axum::http::StatusCode::CONFLICT,
+            axum::Json(serde_json::json!({"error": "call audio WebSocket already in use"})),
+        ).into_response();
+    }
     ws.on_upgrade(move |socket| handle_ws(socket, state))
 }
 
@@ -409,6 +425,8 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
         _ = recv_task => {},
     }
 
+    // Release single-consumer lock
+    state.call_audio_occupied.store(false, std::sync::atomic::Ordering::Release);
     eprintln!("WebSocket client {client_id} disconnected");
 }
 

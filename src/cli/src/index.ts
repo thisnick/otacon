@@ -199,6 +199,44 @@ sms
     await client.smsSend(to, body);
   });
 
+// --- Calls ---
+
+const call = program.command("call").description("Call control commands");
+
+call
+  .command("dial")
+  .description("Dial a phone number")
+  .argument("<number>", "phone number to dial")
+  .action(async (number: string) => {
+    const client = getClient(program.opts());
+    await client.callDial(number);
+  });
+
+call
+  .command("answer")
+  .description("Answer an incoming call")
+  .action(async () => {
+    const client = getClient(program.opts());
+    await client.callAnswer();
+  });
+
+call
+  .command("hangup")
+  .description("End the current call")
+  .action(async () => {
+    const client = getClient(program.opts());
+    await client.callHangup();
+  });
+
+call
+  .command("status")
+  .description("Get current call status")
+  .action(async () => {
+    const client = getClient(program.opts());
+    const status = await client.callStatus();
+    console.log(JSON.stringify(status, null, 2));
+  });
+
 // --- Notifications ---
 
 const notifications = program

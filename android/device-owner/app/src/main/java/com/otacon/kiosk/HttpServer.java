@@ -12,7 +12,7 @@ import fi.iki.elonen.NanoHTTPD;
 /**
  * Lightweight HTTP server running on the phone (port 9090).
  * Exposes device management features: notifications, clipboard,
- * WiFi connect, Bluetooth pairing.
+ * WiFi connect, Bluetooth pairing, SMS, and call control.
  *
  * UI tree snapshots and actions are handled by the separate
  * snapshot-server (app_process on port 9091).
@@ -24,14 +24,31 @@ public class HttpServer extends NanoHTTPD {
     private final android.content.Context context;
     private final long startTime = System.currentTimeMillis();
 
+    // Call state tracking
+    private volatile String callState = "idle"; // idle, ringing, active
+    private volatile String callNumber = null;
+    private volatile long callStartTime = 0;
+
     public HttpServer(android.content.Context context) {
         super(PORT);
         this.context = context;
+        registerCallStateListener();
     }
 
     public void startServer() throws IOException {
         start(NanoHTTPD.SOCKET_READ_TIMEOUT, false);
         Log.i(TAG, "HTTP server started on port " + PORT);
+    }
+
+    private void registerCallStateListener() {
+        android.telephony.TelephonyManager tm = (android.telephony.TelephonyManager)
+            context.getSystemService(android.content.Context.TELEPHONY_SERVICE);
+        if (tm == null) {
+            Log.w(TAG, "TelephonyManager not available");
+            return;
+        }
+        tm.registerTelephonyCallback(context.getMainExecutor(), new CallStateCallback());
+        Log.i(TAG, "Call state listener registered (TelephonyCallback)");
     }
 
     @Override
@@ -74,6 +91,20 @@ public class HttpServer extends NanoHTTPD {
             // SMS
             if ("/sms/send".equals(uri) && method == Method.POST) {
                 return handleSmsSend(session);
+            }
+
+            // Calls
+            if ("/call/dial".equals(uri) && method == Method.POST) {
+                return handleCallDial(session);
+            }
+            if ("/call/answer".equals(uri) && method == Method.POST) {
+                return handleCallAnswer();
+            }
+            if ("/call/hangup".equals(uri) && method == Method.POST) {
+                return handleCallHangup();
+            }
+            if ("/call/status".equals(uri) && method == Method.GET) {
+                return handleCallStatus();
             }
 
             // Clipboard
@@ -337,6 +368,80 @@ public class HttpServer extends NanoHTTPD {
         }
     }
 
+    // --- Calls ---
+
+    private Response handleCallDial(IHTTPSession session) throws Exception {
+        Map<String, String> bodyMap = new java.util.HashMap<>();
+        session.parseBody(bodyMap);
+        String body = bodyMap.get("postData");
+        JSONObject req = new JSONObject(body);
+        String number = req.getString("number");
+
+        android.content.Intent intent = new android.content.Intent(android.content.Intent.ACTION_CALL);
+        intent.setData(android.net.Uri.parse("tel:" + number));
+        intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+        context.startActivity(intent);
+
+        // Track the outbound number since TelephonyCallback doesn't provide it for outgoing calls
+        callNumber = number;
+
+        Log.i(TAG, "Dialing " + number);
+        return newFixedLengthResponse(Response.Status.OK, MIME_JSON,
+            "{\"ok\": true, \"number\": \"" + number + "\"}");
+    }
+
+    @SuppressWarnings("deprecation")
+    private Response handleCallAnswer() {
+        if (!"ringing".equals(callState)) {
+            return newFixedLengthResponse(Response.Status.BAD_REQUEST, MIME_JSON,
+                "{\"error\": \"no incoming call to answer\"}");
+        }
+        android.telecom.TelecomManager tm = (android.telecom.TelecomManager)
+            context.getSystemService(android.content.Context.TELECOM_SERVICE);
+        if (tm != null) {
+            tm.acceptRingingCall();
+            Log.i(TAG, "Call answered");
+            return newFixedLengthResponse(Response.Status.OK, MIME_JSON, "{\"ok\": true}");
+        }
+        return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_JSON,
+            "{\"error\": \"TelecomManager not available\"}");
+    }
+
+    @SuppressWarnings("deprecation")
+    private Response handleCallHangup() {
+        if ("idle".equals(callState)) {
+            return newFixedLengthResponse(Response.Status.OK, MIME_JSON,
+                "{\"ok\": true, \"status\": \"already_idle\"}");
+        }
+        android.telecom.TelecomManager tm = (android.telecom.TelecomManager)
+            context.getSystemService(android.content.Context.TELECOM_SERVICE);
+        if (tm != null) {
+            tm.endCall();
+            Log.i(TAG, "Call ended");
+            return newFixedLengthResponse(Response.Status.OK, MIME_JSON, "{\"ok\": true}");
+        }
+        return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_JSON,
+            "{\"error\": \"TelecomManager not available\"}");
+    }
+
+    private Response handleCallStatus() {
+        try {
+            JSONObject json = new JSONObject();
+            json.put("state", callState);
+            if (callNumber != null) {
+                json.put("number", callNumber);
+            }
+            if (callStartTime > 0) {
+                long duration = (System.currentTimeMillis() - callStartTime) / 1000;
+                json.put("duration", duration);
+            }
+            return newFixedLengthResponse(Response.Status.OK, MIME_JSON, json.toString());
+        } catch (Exception e) {
+            return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, MIME_JSON,
+                "{\"error\": \"" + e.getMessage() + "\"}");
+        }
+    }
+
     // --- SMS ---
 
     private Response handleSmsSend(IHTTPSession session) throws Exception {
@@ -357,6 +462,69 @@ public class HttpServer extends NanoHTTPD {
         Log.i(TAG, "SMS sent to " + to + " (" + parts.size() + " part(s))");
         return newFixedLengthResponse(Response.Status.OK, MIME_JSON,
             "{\"ok\": true, \"parts\": " + parts.size() + "}");
+    }
+
+    // --- TelephonyCallback for call state tracking (API 31+) ---
+
+    private class CallStateCallback extends android.telephony.TelephonyCallback
+            implements android.telephony.TelephonyCallback.CallStateListener {
+        @Override
+        public void onCallStateChanged(int state) {
+            switch (state) {
+                case android.telephony.TelephonyManager.CALL_STATE_IDLE:
+                    Log.i(TAG, "Call state: IDLE");
+                    callState = "idle";
+                    callNumber = null;
+                    callStartTime = 0;
+                    break;
+                case android.telephony.TelephonyManager.CALL_STATE_RINGING:
+                    Log.i(TAG, "Call state: RINGING");
+                    callState = "ringing";
+                    // TelephonyCallback doesn't provide the number; query CallLog for it
+                    String incoming = queryLastIncomingNumber();
+                    if (incoming != null) {
+                        callNumber = incoming;
+                        Log.i(TAG, "Incoming call from " + incoming);
+                    }
+                    break;
+                case android.telephony.TelephonyManager.CALL_STATE_OFFHOOK:
+                    Log.i(TAG, "Call state: ACTIVE");
+                    callState = "active";
+                    if (callStartTime == 0) callStartTime = System.currentTimeMillis();
+                    break;
+            }
+        }
+    }
+
+    /**
+     * Query the CallLog for the most recent incoming/missed call to determine the caller number.
+     * This compensates for TelephonyCallback not providing the number on RINGING.
+     */
+    private String queryLastIncomingNumber() {
+        try {
+            android.database.Cursor cursor = context.getContentResolver().query(
+                android.provider.CallLog.Calls.CONTENT_URI,
+                new String[]{android.provider.CallLog.Calls.NUMBER, android.provider.CallLog.Calls.TYPE},
+                android.provider.CallLog.Calls.TYPE + " IN (?, ?)",
+                new String[]{
+                    String.valueOf(android.provider.CallLog.Calls.INCOMING_TYPE),
+                    String.valueOf(android.provider.CallLog.Calls.MISSED_TYPE)
+                },
+                android.provider.CallLog.Calls.DATE + " DESC"
+            );
+            if (cursor != null) {
+                try {
+                    if (cursor.moveToFirst()) {
+                        return cursor.getString(0);
+                    }
+                } finally {
+                    cursor.close();
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to query CallLog for incoming number: " + e.getMessage());
+        }
+        return null;
     }
 
 }
