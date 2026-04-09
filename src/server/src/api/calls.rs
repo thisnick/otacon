@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use utoipa::ToSchema;
 
+use super::adb::adb_shell;
 use super::{ApiError, OkResponse};
 use crate::AppState;
 
@@ -30,19 +31,18 @@ pub struct CallStatus {
     responses((status = 200, body = OkResponse))
 )]
 pub async fn dial_handler(state: Arc<AppState>, Json(body): Json<DialBody>) -> Result<Json<serde_json::Value>, ApiError> {
-    let payload = serde_json::json!({ "number": body.number });
-    let result = state.bridge.device_post("/call/dial", &payload.to_string()).await?;
-    let parsed: serde_json::Value = serde_json::from_str(&result)
-        .map_err(|e| ApiError::Adb(format!("Invalid response: {e}")))?;
+    adb_shell(&format!(
+        "am start -a android.intent.action.CALL -d tel:{}",
+        body.number.replace(' ', "")
+    )).await?;
 
-    // Emit call event on WebSocket
     let event = serde_json::json!({
         "event": "call.dialing",
         "data": { "number": body.number }
     });
     let _ = state.events_tx.send(event.to_string());
 
-    Ok(Json(parsed))
+    Ok(Json(serde_json::json!({ "ok": true, "number": body.number })))
 }
 
 #[utoipa::path(
@@ -52,11 +52,9 @@ pub async fn dial_handler(state: Arc<AppState>, Json(body): Json<DialBody>) -> R
     operation_id = "answerCall",
     responses((status = 200, body = OkResponse))
 )]
-pub async fn answer_handler(state: Arc<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
-    let result = state.bridge.device_post("/call/answer", "{}").await?;
-    let parsed: serde_json::Value = serde_json::from_str(&result)
-        .map_err(|e| ApiError::Adb(format!("Invalid response: {e}")))?;
-    Ok(Json(parsed))
+pub async fn answer_handler(_state: Arc<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
+    adb_shell("input keyevent KEYCODE_CALL").await?;
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 #[utoipa::path(
@@ -66,11 +64,9 @@ pub async fn answer_handler(state: Arc<AppState>) -> Result<Json<serde_json::Val
     operation_id = "hangupCall",
     responses((status = 200, body = OkResponse))
 )]
-pub async fn hangup_handler(state: Arc<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
-    let result = state.bridge.device_post("/call/hangup", "{}").await?;
-    let parsed: serde_json::Value = serde_json::from_str(&result)
-        .map_err(|e| ApiError::Adb(format!("Invalid response: {e}")))?;
-    Ok(Json(parsed))
+pub async fn hangup_handler(_state: Arc<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
+    adb_shell("input keyevent KEYCODE_ENDCALL").await?;
+    Ok(Json(serde_json::json!({ "ok": true })))
 }
 
 #[utoipa::path(
@@ -81,15 +77,9 @@ pub async fn hangup_handler(state: Arc<AppState>) -> Result<Json<serde_json::Val
     responses((status = 200, body = CallStatus))
 )]
 pub async fn status_handler(state: Arc<AppState>) -> Result<Json<CallStatus>, ApiError> {
-    // Try device owner bridge first; fall back to sim state
-    if let Ok(result) = state.bridge.device_get("/call/status").await {
-        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&result) {
-            return Ok(Json(CallStatus {
-                state: parsed["state"].as_str().unwrap_or("idle").to_string(),
-                number: parsed["number"].as_str().map(String::from),
-                duration: parsed["duration"].as_u64(),
-            }));
-        }
+    // Try ADB first
+    if let Ok(status) = query_call_state_adb().await {
+        return Ok(Json(status));
     }
 
     // Fall back to simulated call state
@@ -102,8 +92,41 @@ pub async fn status_handler(state: Arc<AppState>) -> Result<Json<CallStatus>, Ap
     }))
 }
 
-/// Background task that polls the device owner app's call status
-/// and emits call.incoming / call.connected / call.ended events on /ws/events.
+/// Query call state via `adb shell dumpsys telephony.registry`
+async fn query_call_state_adb() -> Result<CallStatus, ApiError> {
+    let out = adb_shell("dumpsys telephony.registry | grep -E 'mCallState|mCallIncomingNumber'").await?;
+
+    let mut call_state = 0i32;
+    let mut number: Option<String> = None;
+
+    for line in out.lines() {
+        let trimmed = line.trim();
+        if let Some(val) = trimmed.strip_prefix("mCallState=") {
+            call_state = val.trim().parse().unwrap_or(0);
+        }
+        if let Some(val) = trimmed.strip_prefix("mCallIncomingNumber=") {
+            let n = val.trim().to_string();
+            if !n.is_empty() {
+                number = Some(n);
+            }
+        }
+    }
+
+    let state = match call_state {
+        0 => "idle",
+        1 => "ringing",
+        2 => "active",
+        _ => "idle",
+    };
+
+    Ok(CallStatus {
+        state: state.to_string(),
+        number,
+        duration: None,
+    })
+}
+
+/// Background task that polls call state via ADB and emits events on /ws/events.
 pub fn spawn_call_state_monitor(state: Arc<AppState>) {
     tokio::spawn(async move {
         let mut last_state = "idle".to_string();
@@ -112,31 +135,20 @@ pub fn spawn_call_state_monitor(state: Arc<AppState>) {
         loop {
             tokio::time::sleep(Duration::from_millis(500)).await;
 
-            if !state.bridge.is_device_owner_available() {
-                continue;
-            }
-
-            let body = match state.bridge.device_get("/call/status").await {
-                Ok(b) => b,
-                Err(_) => continue,
-            };
-            let parsed: serde_json::Value = match serde_json::from_str(&body) {
-                Ok(v) => v,
+            let status = match query_call_state_adb().await {
+                Ok(s) => s,
                 Err(_) => continue,
             };
 
-            let new_state = parsed["state"].as_str().unwrap_or("idle");
-            let new_number = parsed["number"].as_str().map(String::from);
-
-            if new_state != last_state {
-                let event = match new_state {
+            if status.state != last_state {
+                let event = match status.state.as_str() {
                     "ringing" => Some(serde_json::json!({
                         "event": "call.incoming",
-                        "data": { "number": &new_number }
+                        "data": { "number": &status.number }
                     })),
                     "active" => Some(serde_json::json!({
                         "event": "call.connected",
-                        "data": { "number": new_number.as_deref().or(last_number.as_deref()) }
+                        "data": { "number": status.number.as_deref().or(last_number.as_deref()) }
                     })),
                     "idle" if last_state != "idle" => {
                         let reason = if last_state == "ringing" { "rejected" } else { "hangup" };
@@ -150,11 +162,11 @@ pub fn spawn_call_state_monitor(state: Arc<AppState>) {
 
                 if let Some(event) = event {
                     let _ = state.events_tx.send(event.to_string());
-                    eprintln!("[calls] {} -> {}", last_state, new_state);
+                    eprintln!("[calls] {} -> {}", last_state, status.state);
                 }
 
-                last_state = new_state.to_string();
-                last_number = new_number;
+                last_state = status.state.clone();
+                last_number = status.number;
             }
         }
     });
