@@ -358,11 +358,170 @@
   .ref-list::-webkit-scrollbar-track { background: transparent; }
   .ref-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
+  /* --- Call controls --- */
+  .call-strip {
+    display: flex;
+    gap: 1px;
+    background: var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 20px;
+  }
+  .call-strip .call-input-area {
+    flex: 1;
+    background: var(--surface);
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .call-strip .call-input-area input {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--text);
+    flex: 1;
+    min-width: 140px;
+  }
+  .call-strip .call-input-area input:focus { border-color: var(--accent); outline: none; }
+  .call-strip .call-status-area {
+    background: var(--surface);
+    padding: 12px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 200px;
+  }
+  .call-state-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    flex-shrink: 0;
+  }
+  .call-state-dot.ringing { background: var(--amber); animation: pulse 1s infinite; }
+  .call-state-dot.active { background: var(--green); }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+  .call-state-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  /* --- SMS panel --- */
+  .sms-panel {
+    background: var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-top: 20px;
+  }
+  .sms-header {
+    padding: 12px 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .sms-header .label {
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+  .sms-body {
+    display: flex;
+    gap: 1px;
+    max-height: 300px;
+  }
+  .sms-body.collapsed { display: none; }
+  .sms-threads {
+    width: 240px;
+    background: var(--surface);
+    overflow-y: auto;
+    flex-shrink: 0;
+  }
+  .sms-thread-item {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    transition: background 0.1s;
+  }
+  .sms-thread-item:hover { background: rgba(110, 143, 245, 0.06); }
+  .sms-thread-item.selected { background: rgba(110, 143, 245, 0.1); }
+  .sms-thread-addr {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--accent);
+    margin-bottom: 2px;
+  }
+  .sms-thread-preview {
+    font-size: 11px;
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .sms-messages {
+    flex: 1;
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+  }
+  .sms-msg-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 16px;
+  }
+  .sms-msg {
+    margin-bottom: 8px;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .sms-msg.received { color: var(--text-dim); }
+  .sms-msg.sent { color: var(--green); text-align: right; }
+  .sms-msg .sms-time {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-left: 8px;
+  }
+  .sms-compose {
+    display: flex;
+    gap: 8px;
+    padding: 10px 16px;
+    border-top: 1px solid var(--border);
+  }
+  .sms-compose input {
+    flex: 1;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--text);
+  }
+  .sms-compose input:focus { border-color: var(--accent); outline: none; }
+  .sms-empty {
+    padding: 20px;
+    font-size: 12px;
+    color: var(--text-muted);
+    font-style: italic;
+    text-align: center;
+  }
+
   @media (max-width: 800px) {
     .main-panel { flex-direction: column; }
     .screen-col { width: 100%; }
     .audio-strip { flex-direction: column; }
+    .call-strip { flex-direction: column; }
     .info-bar { flex-direction: column; }
+    .sms-body { flex-direction: column; max-height: 500px; }
+    .sms-threads { width: 100%; max-height: 150px; }
   }
 </style>
 </head>
@@ -388,6 +547,20 @@
       <span class="ch-label">Mic</span>
       <div class="ch-meter"><div class="ch-meter-fill" id="micLevel"></div></div>
       <button class="ch-btn" id="micBtn" onclick="toggleMic()">Send</button>
+    </div>
+  </div>
+
+  <div class="call-strip">
+    <div class="call-input-area">
+      <span class="ch-label">Phone</span>
+      <input type="tel" id="dialInput" placeholder="+1234567890" onkeydown="if(event.key==='Enter')dialCall()">
+      <button class="ch-btn" onclick="dialCall()">Dial</button>
+      <button class="ch-btn" onclick="answerCall()">Answer</button>
+      <button class="ch-btn" onclick="hangupCall()">Hangup</button>
+    </div>
+    <div class="call-status-area">
+      <div class="call-state-dot" id="callDot"></div>
+      <span class="call-state-label" id="callLabel">idle</span>
     </div>
   </div>
 
@@ -422,6 +595,30 @@
     <div class="info-item"><dt>Activity</dt><dd>—</dd></div>
     <div class="info-item"><dt>Resolution</dt><dd>—</dd></div>
     <div class="info-item"><dt>Window</dt><dd>—</dd></div>
+  </div>
+
+  <div class="sms-panel">
+    <div class="sms-header" onclick="toggleSmsPanel()">
+      <span class="label">SMS</span>
+      <div class="controls">
+        <button class="pill" onclick="event.stopPropagation();refreshSmsThreads()">Refresh</button>
+      </div>
+    </div>
+    <div class="sms-body" id="smsBody">
+      <div class="sms-threads" id="smsThreads">
+        <div class="sms-empty">loading...</div>
+      </div>
+      <div class="sms-messages">
+        <div class="sms-msg-list" id="smsMsgList">
+          <div class="sms-empty">select a thread</div>
+        </div>
+        <div class="sms-compose">
+          <input type="tel" id="smsTo" placeholder="+1234567890" style="width:130px;flex:none;">
+          <input type="text" id="smsBody2" placeholder="message..." onkeydown="if(event.key==='Enter')sendSms()">
+          <button class="ch-btn" onclick="sendSms()">Send</button>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -832,10 +1029,133 @@ async function refreshInfo() {
   } catch(_) {}
 }
 
+// --- Call controls ---
+let callPollInterval = null;
+
+async function dialCall() {
+  const num = document.getElementById('dialInput').value.trim();
+  if (!num) return;
+  try {
+    await fetch('/api/calls/dial', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({number: num})
+    });
+  } catch(e) {}
+  pollCallStatus();
+}
+
+async function answerCall() {
+  try { await fetch('/api/calls/answer', {method: 'POST'}); } catch(e) {}
+  pollCallStatus();
+}
+
+async function hangupCall() {
+  try { await fetch('/api/calls/hangup', {method: 'POST'}); } catch(e) {}
+  pollCallStatus();
+}
+
+async function pollCallStatus() {
+  try {
+    const res = await fetch('/api/calls/status');
+    if (!res.ok) return;
+    const data = await res.json();
+    const dot = document.getElementById('callDot');
+    const label = document.getElementById('callLabel');
+    dot.className = 'call-state-dot ' + (data.state || 'idle');
+    let text = data.state || 'idle';
+    if (data.number) text += ' ' + data.number;
+    if (data.duration) text += ' (' + data.duration + 's)';
+    label.textContent = text;
+  } catch(e) {}
+}
+
+// Poll call status every 1s
+callPollInterval = setInterval(pollCallStatus, 1000);
+
+// --- SMS ---
+let smsExpanded = true;
+let selectedThread = null;
+
+function toggleSmsPanel() {
+  smsExpanded = !smsExpanded;
+  document.getElementById('smsBody').className = 'sms-body' + (smsExpanded ? '' : ' collapsed');
+}
+
+async function refreshSmsThreads() {
+  try {
+    const res = await fetch('/api/sms/threads');
+    if (!res.ok) return;
+    const threads = await res.json();
+    const el = document.getElementById('smsThreads');
+    if (!threads.length) {
+      el.innerHTML = '<div class="sms-empty">no messages</div>';
+      return;
+    }
+    el.innerHTML = threads.map(t =>
+      `<div class="sms-thread-item${selectedThread === t.thread_id ? ' selected' : ''}" data-thread="${t.thread_id}" data-addr="${escHtml(t.address || '')}">` +
+        `<div class="sms-thread-addr">${escHtml(t.address || 'unknown')}</div>` +
+        `<div class="sms-thread-preview">${escHtml(t.body || '')}</div>` +
+      `</div>`
+    ).join('');
+  } catch(e) {}
+}
+
+document.getElementById('smsThreads').addEventListener('click', (e) => {
+  const item = e.target.closest('[data-thread]');
+  if (!item) return;
+  selectedThread = item.dataset.thread;
+  const addr = item.dataset.addr;
+  document.getElementById('smsTo').value = addr;
+  // Highlight selected
+  document.querySelectorAll('.sms-thread-item').forEach(el =>
+    el.classList.toggle('selected', el.dataset.thread === selectedThread));
+  loadMessages(selectedThread);
+});
+
+async function loadMessages(threadId) {
+  try {
+    const res = await fetch(`/api/sms/threads/${threadId}/messages`);
+    if (!res.ok) return;
+    const msgs = await res.json();
+    const el = document.getElementById('smsMsgList');
+    if (!msgs.length) {
+      el.innerHTML = '<div class="sms-empty">no messages</div>';
+      return;
+    }
+    el.innerHTML = msgs.map(m => {
+      const cls = m.msg_type === 'sent' ? 'sent' : 'received';
+      const time = m.date ? new Date(m.date).toLocaleTimeString() : '';
+      return `<div class="sms-msg ${cls}">${escHtml(m.body || '')}<span class="sms-time">${time}</span></div>`;
+    }).join('');
+    el.scrollTop = el.scrollHeight;
+  } catch(e) {}
+}
+
+async function sendSms() {
+  const to = document.getElementById('smsTo').value.trim();
+  const body = document.getElementById('smsBody2').value.trim();
+  if (!to || !body) return;
+  try {
+    const res = await fetch('/api/sms/messages', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({to, body})
+    });
+    if (res.ok) {
+      document.getElementById('smsBody2').value = '';
+      if (selectedThread) setTimeout(() => loadMessages(selectedThread), 1000);
+      setTimeout(refreshSmsThreads, 1500);
+    }
+  } catch(e) {}
+}
+
 // --- Init ---
 connectHfp();
 connectMedia();
 refreshAll();
+pollCallStatus();
+refreshSmsThreads();
 </script>
 </body>
 </html>
