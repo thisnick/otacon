@@ -41,14 +41,18 @@ public class HttpServer extends NanoHTTPD {
     }
 
     private void registerCallStateListener() {
-        android.telephony.TelephonyManager tm = (android.telephony.TelephonyManager)
-            context.getSystemService(android.content.Context.TELEPHONY_SERVICE);
-        if (tm == null) {
-            Log.w(TAG, "TelephonyManager not available");
-            return;
+        try {
+            android.telephony.TelephonyManager tm = (android.telephony.TelephonyManager)
+                context.getSystemService(android.content.Context.TELEPHONY_SERVICE);
+            if (tm == null) {
+                Log.w(TAG, "TelephonyManager not available");
+                return;
+            }
+            tm.registerTelephonyCallback(context.getMainExecutor(), new CallStateCallback());
+            Log.i(TAG, "Call state listener registered (TelephonyCallback)");
+        } catch (SecurityException e) {
+            Log.w(TAG, "Cannot register call state listener — READ_PHONE_STATE permission not granted. Call status tracking will be unavailable.", e);
         }
-        tm.registerTelephonyCallback(context.getMainExecutor(), new CallStateCallback());
-        Log.i(TAG, "Call state listener registered (TelephonyCallback)");
     }
 
     @Override

@@ -174,6 +174,10 @@ def provision_device_owner():
     adb_shell(f'cmd notification allow_listener {DEVICE_OWNER_PKG}/.OtaconNotificationListener')
     adb_shell(f'pm grant {DEVICE_OWNER_PKG} android.permission.BLUETOOTH_CONNECT')
     adb_shell(f'pm grant {DEVICE_OWNER_PKG} android.permission.BLUETOOTH_SCAN')
+    adb_shell(f'pm grant {DEVICE_OWNER_PKG} android.permission.READ_PHONE_STATE')
+    adb_shell(f'pm grant {DEVICE_OWNER_PKG} android.permission.CALL_PHONE')
+    adb_shell(f'pm grant {DEVICE_OWNER_PKG} android.permission.ANSWER_PHONE_CALLS')
+    adb_shell(f'pm grant {DEVICE_OWNER_PKG} android.permission.READ_CALL_LOG')
     log.info('Device owner provisioned')
 
 
