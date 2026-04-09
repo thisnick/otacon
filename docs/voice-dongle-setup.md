@@ -1,6 +1,6 @@
 # USB LTE Dongle Setup Guide
 
-Set up a Quectel EG25-G USB LTE dongle on a Raspberry Pi with eSIM provisioning, SMS, and VoLTE support.
+Set up a Quectel EG25-G USB LTE dongle on a Raspberry Pi for voice calls, SMS, and audio recording. Covers firmware, IMS/VoLTE, IMEI spoofing, eSIM provisioning (and why it doesn't work with 9eSIM adapters), and USB audio.
 
 ## Hardware
 
@@ -268,6 +268,18 @@ AT+CMGF=1
 AT+CMGL="ALL"
 ```
 
+### Message storage
+
+Messages are stored in modem memory (ME), not on the SIM card. This means:
+- Messages persist across SIM swaps — swapping SIMs won't clear old messages
+- Modem memory is finite — periodically delete read messages to avoid filling it
+
+```
+AT+CPMS?                    # Check storage usage (e.g., ME: 5/50)
+AT+CMGD=1,4                # Delete ALL messages (index 1, flag 4 = all)
+AT+CMGD=<index>            # Delete a specific message by index
+```
+
 ### Get phone number
 
 ```
@@ -317,36 +329,137 @@ s.write(b'AT+QCFG="ims",1\r\n')
 s.write('AT+QCFG="ims",1\r\n'.encode())
 ```
 
-### Voice calls fail with NO CARRIER (CEER: 6,258 or 0,21)
+### Voice calls fail with NO CARRIER (CEER: 5,36 or 6,258 or 0,21)
 
-IMS is registered, SMS works, but voice calls get rejected. Investigated causes:
+IMS is registered, SMS works, but voice calls get rejected. CEER codes observed:
+- `CEER: 0,21` — call rejected
+- `CEER: 6,258` — EMM detached / IMS service not available
+- `CEER: 5,36` — IMS service unavailable (but call may actually connect — see below)
 
-- **Not IMEI whitelisting** — tested with Samsung IMEI, same result
-- **Not UAC related** — tested with UAC enabled and disabled, same result
-- **Not LTE-only mode** — tested `nwscanmode=3`, same result
+**What we ruled out (when using 9eSIM):**
+- **Not UAC related** — tested with UAC enabled and disabled
+- **Not LTE-only mode** — tested `nwscanmode=3`
 - **Not codec** — AMR codec config is `15` (all AMR-NB codecs), T-Mobile MBN profile active
 - **IMS bearer is up** — CID 2 (ims APN) has IP address and P-CSCF addresses
-- **Network explicitly rejects** — `CEER: 0,21` (call rejected) or `CEER: 6,258` (IMS service not available)
+- **Not just IMEI** — spoofing Samsung IMEI with 9eSIM still blocked, so IMEI alone isn't the issue
 
-Possible causes still to investigate:
-1. **Tello-specific** — Tello may not provision VoLTE voice for eSIM profiles, only SMS
-2. **SIM needs voice "priming"** — try inserting the 9eSIM in a Samsung phone, make a voice call, then move back to dongle
-3. **Different carrier** — PinePhone users confirm VoLTE calls work on Mint Mobile, MetroPCS, Simple Mobile (all T-Mobile MVNOs)
-4. **SIP/VoIP** — bypass carrier voice entirely using Twilio/Asterisk over the LTE data connection
+**Root cause: 9eSIM EID-based carrier detection**
+
+The 9eSIM adapter card has an EID (eUICC identifier) with a manufacturer prefix (`89044045`, sysmocom) that identifies it as an eSIM-to-SIM converter, not a phone's built-in eSIM. When provisioning through Tello/T-Mobile:
+
+1. The SM-DP+ server sees the 9eSIM's EID during profile download
+2. The carrier sees the modem's IMEI (Quectel TAC = modem, not phone) at network registration
+3. T-Mobile classifies the line as data-only based on device type, blocking voice and SMS
+4. Even with IMEI spoofing, if the line was first activated with a modem IMEI, it stays classified as data-only
+5. New lines on the same 9eSIM card get immediately blocked — the EID itself is flagged
+
+**What works: Physical SIM with IMEI spoofing**
+
+Using a regular physical SIM (activated on a real phone) in the dongle with IMEI spoofed to match the phone:
+- SMS: working
+- Voice calls: working (confirmed — phone rings, audio captured via UAC)
+- The modem reports `CEER: 5,36` and `NO CARRIER` after ~5s, but the call actually connects on the remote end (see note below)
+- Audio recording via USB Audio Class works
+
+**CEER 5,36 is misleading**: The modem reports the call failed, but it actually connects. The remote phone rings, audio is captured via arecord. This appears to be a modem-side reporting issue, not an actual failure. Do not abort call handling based on this error code.
+
+**Key insight**: The problem was never the modem's VoLTE capability — it was the SIM provisioning pathway. A physical SIM activated on a real phone, then moved to the dongle with a matching spoofed IMEI, bypasses all carrier detection and works for both voice and SMS.
 
 Reference: [PinePhone carrier support](https://wiki.pine64.org/wiki/PinePhone_Carrier_Support) confirms T-Mobile VoLTE works with EG25-G on other MVNOs.
 
 ## USB Audio for Voice Calls
 
-Enable USB Audio Class (UAC) for call audio routing:
+USB audio requires **all three** of the following. Missing any one results in silent recordings:
+
+### 1. Enable UAC (USB Audio Class)
 
 ```
 AT+QCFG="usbcfg",0x2C7C,0x0125,1,1,1,1,1,0,1
+AT+CFUN=1,1    # Reboot required
 ```
 
-Last parameter `1` = UAC enabled. Reboot required. The modem will expose an ALSA audio device (check `cat /proc/asound/cards`).
+Last parameter `1` = UAC enabled. After reboot, the modem exposes an ALSA audio device (check `cat /proc/asound/cards`).
 
-**Note**: Enabling UAC changes USB enumeration — ttyUSB port numbers may shift. Also, one forum report says UAC can break calls on older firmware. If calls fail after enabling UAC, disable it and retest.
+**Note**: Enabling UAC changes USB enumeration — ttyUSB port numbers may shift (but didn't in our testing with firmware 30.203).
+
+### 2. Route audio to USB
+
+```
+AT+QAUDMOD=2    # Audio mode: 2 = USB audio (default 0 = built-in codec)
+```
+
+### 3. Enable PCM voice over USB
+
+```
+AT+QPCMV=1,2    # 1 = enable, 2 = USB
+```
+
+Without steps 2 and 3, UAC is on but call audio stays on the (unconnected) built-in codec — recordings will be silent.
+
+### Record a call
+
+```bash
+# Install alsa-utils if needed
+apt-get install -y alsa-utils
+
+# Record from EG25-G audio device (card 3 in our setup)
+arecord -D hw:3,0 -f S16_LE -r 8000 -c 1 -d 30 /tmp/call.wav
+```
+
+Recording starts immediately — it will capture ringing/silence before the remote party answers. The modem provides 8kHz mono audio (telephony quality).
+
+## IMEI Spoofing
+
+### Why spoof?
+
+T-Mobile and MVNOs check the IMEI's TAC (Type Allocation Code — first 8 digits) to identify the device type. The EG25-G's native TAC identifies it as a modem module, which can cause the carrier to:
+- Block VoLTE/voice calls
+- Block SMS ("Message Blocking is active")
+- Classify the line as data-only
+
+Spoofing the IMEI to match a VoLTE-capable phone makes the carrier treat the dongle as a phone.
+
+### How to spoof
+
+```
+AT+EGMR=1,7,"NEW_IMEI_HERE"    # Write IMEI (slot 1)
+AT+GSN                           # Verify new IMEI
+AT+CFUN=1,1                     # Reboot to re-register with new IMEI
+```
+
+- **Persistent across reboots** — stored in NVRAM
+- **Survives firmware updates** — EFS partition usually untouched
+- **Does NOT survive full EFS wipe**
+
+### IMEI structure
+
+```
+TAC (8 digits) + Serial (6 digits) + Check digit (1 digit, Luhn)
+```
+
+- **TAC** (Type Allocation Code) identifies the device model. It's what carriers use for classification.
+- US carrier variants share TACs — a T-Mobile Galaxy S22 has the same TAC as a Verizon Galaxy S22. The TAC identifies the phone model, not the carrier.
+- The check digit is computed via the Luhn algorithm. Use a valid check digit or some modems/networks may reject it.
+
+### Best practices
+
+1. **Use the IMEI from a phone you own** that is not currently active on any network. Two devices with the same IMEI on the same network can trigger fraud detection.
+2. **Dual-SIM phones have two IMEIs** — one per slot. If using a physical SIM in the dongle, use the physical SIM slot's IMEI. If using an eSIM adapter, use the eSIM slot's IMEI.
+3. **Spoof BEFORE activating/inserting a new SIM** — the carrier classifies the line based on the IMEI seen at first registration. If the line is already classified as data-only, spoofing after the fact may not help.
+4. **Reboot the modem** after changing IMEI so the network sees the new one.
+
+### Samsung Galaxy IMEI slots
+
+On Samsung Galaxy S/Z series dual-SIM phones:
+- **IMEI1** = physical SIM slot
+- **IMEI2** = eSIM slot
+- They have different TACs but from the same manufacturer allocation block
+- Dial `*#06#` on the phone to see both IMEIs and the EID
+- When spoofing, use the IMEI matching the SIM type: IMEI1 for a physical SIM in the dongle, IMEI2 if you were using an eSIM adapter
+
+### Legal note
+
+IMEI modification is illegal in the US (18 U.S.C. § 1029(a)(10), up to 5 years), UK, India, Australia, and most of the EU. Enforcement against individuals is rare but the legal exposure exists.
 
 ## GPS
 
@@ -361,17 +474,67 @@ Read NMEA sentences from ttyUSB0 or via AT:
 AT+QGPSGNMEA="GGA"
 ```
 
+## 9eSIM Adapter Issues
+
+### Carrier blocking
+
+The 9eSIM (eSIM-to-SIM adapter from 9esim.com) has a unique EID prefix (`89044045`, sysmocom manufacturer) that identifies it as an adapter card, not a phone's built-in eSIM. Carriers can detect this.
+
+**What we observed on Tello (T-Mobile MVNO):**
+- Lines provisioned via 9eSIM + dongle IMEI → immediately blocked for voice and SMS
+- Lines provisioned via 9eSIM + spoofed Samsung IMEI → also blocked
+- New Tello accounts with 9eSIM → also blocked
+- "Message Blocking is active" on all attempts
+- Multiple eSIM profiles tried — all blocked
+
+**Theories:**
+1. T-Mobile flags the 9eSIM EID prefix and classifies lines as data-only
+2. The first registration with a modem IMEI permanently tags the line
+3. Tello account gets flagged after repeated failed attempts
+
+**What works:** A regular physical SIM (activated on a real phone, not the dongle) with IMEI spoofing. This bypasses all the eSIM/EID detection.
+
+### Carrier-specific EID blocking
+
+Some carriers actively block eSIM adapters by EID prefix:
+- **NTT DoCoMo (Japan)**: Maintains a whitelist of approved EID prefixes. 9eSIM's prefix is not on it.
+- **T-Mobile (US)**: No confirmed automated blocking, but circumstantial evidence suggests filtering
+
+### Managing 9eSIM profiles
+
+Use the **nLPA** app (download from `dl.9esim.com/nLPA.apk`) on an Android phone to manage 9eSIM profiles — download, enable, disable, and delete eSIM profiles directly from the phone.
+
+### If you must use 9eSIM
+
+1. Provision the eSIM profile while the 9eSIM is **in a real phone** (not the dongle) — use nLPA
+2. Confirm voice and SMS work on the phone first
+3. Then move the 9eSIM to the dongle with IMEI spoofed to match the phone
+4. **Untested** — given that T-Mobile appears to flag the EID itself, this may not help. Physical SIM is the proven path.
+
+## Raspberry Pi WiFi Stability
+
+The `brcmfmac` kernel module (Broadcom WiFi driver on Pi) can silently unload, killing the `wlan0` interface and any WiFi AP. This is unrelated to the modem but commonly triggered during USB device enumeration changes (e.g., enabling UAC and rebooting the modem).
+
+A `wifi-monitor.sh` script was added to supervisord to detect when `wlan0` disappears and automatically reload the kernel module:
+
+```bash
+# Checks if wlan0 exists, if not: modprobe brcmfmac and restart hostapd
+```
+
+Without this, the Pi can lose its WiFi AP with no visible error, requiring a manual reboot.
+
 ## Current Status
 
 - **Firmware**: EG25GGBR07A08M2G_30.203.30.203
 - **IMS/VoLTE**: Enabled and registered (`+QCFG: "ims",1,1`)
 - **T-Mobile MBN**: Commercial-TMO_VoLTE profile active
-- **SMS**: Send and receive working
-- **Voice calls**: NOT WORKING — network rejects (CEER 6,258). See troubleshooting above.
+- **SMS**: Working (with physical SIM + IMEI spoof)
+- **Voice calls**: Working (with physical SIM + IMEI spoof) — modem reports CEER 5,36 but call connects
+- **USB Audio**: UAC enabled, audio recording confirmed working (`AT+QAUDMOD=2`, `AT+QPCMV=1,2`)
 - **Data**: LTE connected, APNs auto-configured (fast.t-mobile.com, ims, sos, tmus)
-- **USB Audio**: Confirmed supported (UAC), both dongles expose ALSA devices
-- **eSIM**: Tello (T-Mobile MVNO) profile provisioned via lpac
-- **Phone number**: +15102901178
+- **SIM**: Physical Tello SIM (activated on Samsung phone), phone number +15102824086
+- **IMEI**: Spoofed to Samsung Galaxy IMEI1 (357111201380908, physical SIM slot)
+- **9eSIM**: Not in use — carrier blocks lines provisioned via 9eSIM adapter
 
 ## References
 

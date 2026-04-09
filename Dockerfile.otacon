@@ -142,7 +142,8 @@ COPY scripts/bluetooth-repair.sh /opt/bluetooth-repair.sh
 COPY scripts/bluetooth-status.sh /opt/bluetooth-status.sh
 COPY scripts/otacon-entrypoint.sh /entrypoint.sh
 COPY scripts/device-monitor.py /opt/device-monitor.py
-RUN chmod +x /entrypoint.sh /opt/device-monitor.py /opt/bluetooth-pair.sh /opt/bluetooth-agent.py \
+COPY scripts/wifi-monitor.sh /opt/wifi-monitor.sh
+RUN chmod +x /entrypoint.sh /opt/device-monitor.py /opt/wifi-monitor.sh /opt/bluetooth-pair.sh /opt/bluetooth-agent.py \
     /opt/bt-reconnect.py /opt/bluetooth-status.sh /opt/bluetooth-connect.sh /opt/bluetooth-repair.sh
 
 RUN mkdir -p /run/dbus /etc/hostapd
