@@ -1129,7 +1129,7 @@ async function loadMessages(threadId) {
     }
     el.innerHTML = msgs.map(m => {
       const cls = m.msg_type === 'sent' ? 'sent' : 'received';
-      const time = m.date ? new Date(m.date).toLocaleTimeString() : '';
+      const time = m.date ? new Date(parseInt(m.date)).toLocaleTimeString() : '';
       return `<div class="sms-msg ${cls}">${escHtml(m.body || '')}<span class="sms-time">${time}</span></div>`;
     }).join('');
     el.scrollTop = el.scrollHeight;
@@ -1154,9 +1154,35 @@ async function sendSms() {
   } catch(e) {}
 }
 
+// --- Events WebSocket ---
+let eventsWs = null;
+
+function connectEvents() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  eventsWs = new WebSocket(`${proto}//${location.host}/ws/events`);
+  eventsWs.onclose = () => setTimeout(connectEvents, 2000);
+  eventsWs.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      const evt = msg.event || msg.type;
+      if (evt === 'call.incoming') {
+        pollCallStatus();
+        const num = msg.data && msg.data.number;
+        if (num) document.getElementById('dialInput').value = num;
+      } else if (evt === 'call.connected' || evt === 'call.ended' || evt === 'call.dialing') {
+        pollCallStatus();
+      } else if (evt === 'sms.received') {
+        refreshSmsThreads();
+        if (selectedThread) loadMessages(selectedThread);
+      }
+    } catch(_) {}
+  };
+}
+
 // --- Init ---
 connectHfp();
 connectMedia();
+connectEvents();
 refreshAll();
 pollCallStatus();
 refreshSmsThreads();
