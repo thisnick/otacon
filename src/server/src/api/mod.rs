@@ -223,7 +223,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             move |body| test_sim::sim_sms_receive(state, body)
         }))
         // Internal events (from device owner app via adb reverse)
-        .route("/api/internal/event", post({
+        .route("/internal/event", post({
             let state = state.clone();
             move |body| internal::event_handler(state, body)
         }))

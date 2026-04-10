@@ -20,7 +20,7 @@ import fi.iki.elonen.NanoHTTPD;
 public class HttpServer extends NanoHTTPD {
     private static final String TAG = "OtaconHttp";
     private static final int PORT = 9090;
-    private static final String SERVER_EVENT_URL = "http://127.0.0.1:8081/api/internal/event";
+    private static final String SERVER_EVENT_URL = "http://127.0.0.1:8081/api/internal/event"; // nested under /api in router
 
     private final android.content.Context context;
     private final long startTime = System.currentTimeMillis();
