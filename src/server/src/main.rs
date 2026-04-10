@@ -194,8 +194,8 @@ async fn main() {
         dbus_monitor::spawn_monitor(state.events_tx.clone(), state.active_sinks.clone());
     }
 
-    // Start call state monitor (polls device owner app, emits events on /ws/events)
-    api::calls::spawn_call_state_monitor(state.clone());
+    // Call/SMS events are now pushed from the device owner app via /api/internal/event
+    // (no more polling — see internal.rs)
 
     tokio::spawn(capture_audio(capture_cmd, capture_tx));
 

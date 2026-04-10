@@ -139,6 +139,25 @@ def is_device_owner_set() -> bool:
     return DEVICE_OWNER_PKG in output
 
 
+RUNTIME_PERMISSIONS = [
+    'android.permission.BLUETOOTH_CONNECT',
+    'android.permission.BLUETOOTH_SCAN',
+    'android.permission.SEND_SMS',
+    'android.permission.READ_SMS',
+    'android.permission.RECEIVE_SMS',
+    'android.permission.READ_PHONE_STATE',
+    'android.permission.CALL_PHONE',
+    'android.permission.ANSWER_PHONE_CALLS',
+    'android.permission.READ_CALL_LOG',
+]
+
+
+def grant_permissions():
+    """Grant all runtime permissions the device owner app needs."""
+    for perm in RUNTIME_PERMISSIONS:
+        adb_shell(f'pm grant {DEVICE_OWNER_PKG} {perm}')
+
+
 def provision_device_owner():
     if is_device_owner_set():
         log.info('Device owner already set')
@@ -147,8 +166,7 @@ def provision_device_owner():
             result = adb('install', '-r', APK_PATH, timeout=30)
             if 'Success' in result:
                 log.info('APK updated')
-        # Grant runtime permissions that device owner needs
-        adb_shell(f'pm grant {DEVICE_OWNER_PKG} android.permission.SEND_SMS')
+        grant_permissions()
         # Kick-start HTTP server (BootReceiver starts it on any broadcast)
         adb_shell(
             f'am broadcast -a {DEVICE_OWNER_PKG}.CLEAR_RESTRICTIONS '
@@ -172,12 +190,7 @@ def provision_device_owner():
     adb('install', '-r', APK_PATH, timeout=30)
     adb_shell(f'dpm set-device-owner {DEVICE_OWNER_RECEIVER}')
     adb_shell(f'cmd notification allow_listener {DEVICE_OWNER_PKG}/.OtaconNotificationListener')
-    adb_shell(f'pm grant {DEVICE_OWNER_PKG} android.permission.BLUETOOTH_CONNECT')
-    adb_shell(f'pm grant {DEVICE_OWNER_PKG} android.permission.BLUETOOTH_SCAN')
-    adb_shell(f'pm grant {DEVICE_OWNER_PKG} android.permission.READ_PHONE_STATE')
-    adb_shell(f'pm grant {DEVICE_OWNER_PKG} android.permission.CALL_PHONE')
-    adb_shell(f'pm grant {DEVICE_OWNER_PKG} android.permission.ANSWER_PHONE_CALLS')
-    adb_shell(f'pm grant {DEVICE_OWNER_PKG} android.permission.READ_CALL_LOG')
+    grant_permissions()
     log.info('Device owner provisioned')
 
 
@@ -199,6 +212,7 @@ def start_snapshot_server():
 def setup_port_forwards():
     adb('forward', 'tcp:9090', 'tcp:9090')
     adb('forward', 'tcp:9091', 'tcp:9091')
+    adb('reverse', 'tcp:8080', 'tcp:8080')  # phone can reach server
     log.info('Port forwards established')
 
 
@@ -341,6 +355,7 @@ def main():
                 # Re-establish port forwards
                 adb('forward', 'tcp:9090', 'tcp:9090')
                 adb('forward', 'tcp:9091', 'tcp:9091')
+                adb('reverse', 'tcp:8080', 'tcp:8080')
                 time.sleep(10)
                 continue
             else:
@@ -368,6 +383,7 @@ def main():
         while is_device_connected(serial):
             adb('forward', 'tcp:9090', 'tcp:9090')
             adb('forward', 'tcp:9091', 'tcp:9091')
+            adb('reverse', 'tcp:8080', 'tcp:8080')
 
             # Restart snapshot server if process died
             proc_check = adb_shell('pgrep -f snapshot-server.jar')

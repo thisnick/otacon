@@ -20,19 +20,26 @@ import fi.iki.elonen.NanoHTTPD;
 public class HttpServer extends NanoHTTPD {
     private static final String TAG = "OtaconHttp";
     private static final int PORT = 9090;
+    private static final String SERVER_EVENT_URL = "http://127.0.0.1:8080/api/internal/event";
 
     private final android.content.Context context;
     private final long startTime = System.currentTimeMillis();
 
     // Call state tracking
     private volatile String callState = "idle"; // idle, ringing, active
+    private volatile String prevCallState = "idle";
     private volatile String callNumber = null;
     private volatile long callStartTime = 0;
+
+    // SMS tracking
+    private long lastSeenSmsId = 0;
 
     public HttpServer(android.content.Context context) {
         super(PORT);
         this.context = context;
+        initLastSeenSmsId();
         registerCallStateListener();
+        registerSmsObserver();
     }
 
     public void startServer() throws IOException {
@@ -53,6 +60,97 @@ public class HttpServer extends NanoHTTPD {
         } catch (SecurityException e) {
             Log.w(TAG, "Cannot register call state listener — READ_PHONE_STATE permission not granted. Call status tracking will be unavailable.", e);
         }
+    }
+
+    private void initLastSeenSmsId() {
+        try {
+            android.database.Cursor c = context.getContentResolver().query(
+                android.net.Uri.parse("content://sms/inbox"),
+                new String[]{"_id"},
+                null, null, "_id DESC"
+            );
+            if (c != null) {
+                try {
+                    if (c.moveToFirst()) lastSeenSmsId = c.getLong(0);
+                } finally { c.close(); }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to init SMS baseline: " + e.getMessage());
+        }
+    }
+
+    private void registerSmsObserver() {
+        try {
+            context.getContentResolver().registerContentObserver(
+                android.net.Uri.parse("content://sms"),
+                true,
+                new android.database.ContentObserver(new android.os.Handler(android.os.Looper.getMainLooper())) {
+                    @Override
+                    public void onChange(boolean selfChange, android.net.Uri uri) {
+                        checkNewSms();
+                    }
+                }
+            );
+            Log.i(TAG, "SMS observer registered");
+        } catch (Exception e) {
+            Log.w(TAG, "Cannot register SMS observer: " + e.getMessage());
+        }
+    }
+
+    private void checkNewSms() {
+        try {
+            android.database.Cursor c = context.getContentResolver().query(
+                android.net.Uri.parse("content://sms/inbox"),
+                new String[]{"_id", "address", "body"},
+                "_id > ?",
+                new String[]{String.valueOf(lastSeenSmsId)},
+                "_id ASC"
+            );
+            if (c != null) {
+                try {
+                    while (c.moveToNext()) {
+                        long id = c.getLong(0);
+                        String from = c.getString(1);
+                        String body = c.getString(2);
+                        lastSeenSmsId = id;
+                        Log.i(TAG, "New SMS from " + from + ": " + body.substring(0, Math.min(30, body.length())));
+                        try {
+                            JSONObject data = new JSONObject();
+                            data.put("from", from);
+                            data.put("body", body);
+                            pushEvent("sms.received", data);
+                        } catch (Exception ignored) {}
+                    }
+                } finally { c.close(); }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to check new SMS: " + e.getMessage());
+        }
+    }
+
+    private void pushEvent(String eventType, JSONObject data) {
+        new Thread(() -> {
+            try {
+                JSONObject payload = new JSONObject();
+                payload.put("event", eventType);
+                payload.put("data", data);
+                java.net.HttpURLConnection conn = (java.net.HttpURLConnection)
+                    new java.net.URL(SERVER_EVENT_URL).openConnection();
+                conn.setRequestMethod("POST");
+                conn.setRequestProperty("Content-Type", "application/json");
+                conn.setDoOutput(true);
+                conn.setConnectTimeout(2000);
+                conn.setReadTimeout(2000);
+                conn.getOutputStream().write(payload.toString().getBytes());
+                int code = conn.getResponseCode();
+                if (code != 200) {
+                    Log.w(TAG, "pushEvent " + eventType + " got " + code);
+                }
+                conn.disconnect();
+            } catch (Exception e) {
+                Log.d(TAG, "pushEvent " + eventType + " failed: " + e.getMessage());
+            }
+        }).start();
     }
 
     @Override
@@ -474,29 +572,47 @@ public class HttpServer extends NanoHTTPD {
             implements android.telephony.TelephonyCallback.CallStateListener {
         @Override
         public void onCallStateChanged(int state) {
+            String prev = prevCallState;
             switch (state) {
                 case android.telephony.TelephonyManager.CALL_STATE_IDLE:
                     Log.i(TAG, "Call state: IDLE");
                     callState = "idle";
-                    callNumber = null;
                     callStartTime = 0;
+                    if (!"idle".equals(prev)) {
+                        try {
+                            JSONObject data = new JSONObject();
+                            data.put("reason", "ringing".equals(prev) ? "rejected" : "hangup");
+                            pushEvent("call.ended", data);
+                        } catch (Exception ignored) {}
+                    }
+                    callNumber = null;
                     break;
                 case android.telephony.TelephonyManager.CALL_STATE_RINGING:
                     Log.i(TAG, "Call state: RINGING");
                     callState = "ringing";
-                    // TelephonyCallback doesn't provide the number; query CallLog for it
                     String incoming = queryLastIncomingNumber();
                     if (incoming != null) {
                         callNumber = incoming;
                         Log.i(TAG, "Incoming call from " + incoming);
                     }
+                    try {
+                        JSONObject data = new JSONObject();
+                        data.put("number", callNumber);
+                        pushEvent("call.incoming", data);
+                    } catch (Exception ignored) {}
                     break;
                 case android.telephony.TelephonyManager.CALL_STATE_OFFHOOK:
                     Log.i(TAG, "Call state: ACTIVE");
                     callState = "active";
                     if (callStartTime == 0) callStartTime = System.currentTimeMillis();
+                    try {
+                        JSONObject data = new JSONObject();
+                        data.put("number", callNumber);
+                        pushEvent("call.connected", data);
+                    } catch (Exception ignored) {}
                     break;
             }
+            prevCallState = callState;
         }
     }
 

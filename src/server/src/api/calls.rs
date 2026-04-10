@@ -1,7 +1,6 @@
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::time::Duration;
 use utoipa::ToSchema;
 
 use super::adb::adb_shell;
@@ -31,10 +30,14 @@ pub struct CallStatus {
     responses((status = 200, body = OkResponse))
 )]
 pub async fn dial_handler(state: Arc<AppState>, Json(body): Json<DialBody>) -> Result<Json<serde_json::Value>, ApiError> {
-    adb_shell(&format!(
-        "am start -a android.intent.action.CALL -d tel:{}",
-        body.number.replace(' ', "")
-    )).await?;
+    // Prefer bridge (device owner app) → fallback to ADB
+    let payload = serde_json::json!({"number": body.number});
+    if state.bridge.device_post("/call/dial", &payload.to_string()).await.is_err() {
+        adb_shell(&format!(
+            "am start -a android.intent.action.CALL -d tel:{}",
+            body.number.replace(' ', "")
+        )).await?;
+    }
 
     let event = serde_json::json!({
         "event": "call.dialing",
@@ -52,8 +55,10 @@ pub async fn dial_handler(state: Arc<AppState>, Json(body): Json<DialBody>) -> R
     operation_id = "answerCall",
     responses((status = 200, body = OkResponse))
 )]
-pub async fn answer_handler(_state: Arc<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
-    adb_shell("input keyevent KEYCODE_CALL").await?;
+pub async fn answer_handler(state: Arc<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
+    if state.bridge.device_post("/call/answer", "{}").await.is_err() {
+        adb_shell("input keyevent KEYCODE_CALL").await?;
+    }
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -64,8 +69,10 @@ pub async fn answer_handler(_state: Arc<AppState>) -> Result<Json<serde_json::Va
     operation_id = "hangupCall",
     responses((status = 200, body = OkResponse))
 )]
-pub async fn hangup_handler(_state: Arc<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
-    adb_shell("input keyevent KEYCODE_ENDCALL").await?;
+pub async fn hangup_handler(state: Arc<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
+    if state.bridge.device_post("/call/hangup", "{}").await.is_err() {
+        adb_shell("input keyevent KEYCODE_ENDCALL").await?;
+    }
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -77,18 +84,28 @@ pub async fn hangup_handler(_state: Arc<AppState>) -> Result<Json<serde_json::Va
     responses((status = 200, body = CallStatus))
 )]
 pub async fn status_handler(state: Arc<AppState>) -> Result<Json<CallStatus>, ApiError> {
-    // Try ADB first
+    // Check push-event state first (updated by internal.rs and test_sim.rs)
+    {
+        let sim = state.sim_call.lock().await;
+        if !sim.state.is_empty() && sim.state != "idle" {
+            let duration = sim.connected_at.map(|t| t.elapsed().as_secs());
+            return Ok(Json(CallStatus {
+                state: sim.state.clone(),
+                number: sim.number.clone(),
+                duration,
+            }));
+        }
+    }
+
+    // Fall back to ADB query (works even without push events)
     if let Ok(status) = query_call_state_adb().await {
         return Ok(Json(status));
     }
 
-    // Fall back to simulated call state
-    let sim = state.sim_call.lock().await;
-    let duration = sim.connected_at.map(|t| t.elapsed().as_secs());
     Ok(Json(CallStatus {
-        state: if sim.state.is_empty() { "idle".to_string() } else { sim.state.clone() },
-        number: sim.number.clone(),
-        duration,
+        state: "idle".to_string(),
+        number: None,
+        duration: None,
     }))
 }
 
@@ -126,48 +143,3 @@ async fn query_call_state_adb() -> Result<CallStatus, ApiError> {
     })
 }
 
-/// Background task that polls call state via ADB and emits events on /ws/events.
-pub fn spawn_call_state_monitor(state: Arc<AppState>) {
-    tokio::spawn(async move {
-        let mut last_state = "idle".to_string();
-        let mut last_number: Option<String> = None;
-
-        loop {
-            tokio::time::sleep(Duration::from_millis(500)).await;
-
-            let status = match query_call_state_adb().await {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
-
-            if status.state != last_state {
-                let event = match status.state.as_str() {
-                    "ringing" => Some(serde_json::json!({
-                        "event": "call.incoming",
-                        "data": { "number": &status.number }
-                    })),
-                    "active" => Some(serde_json::json!({
-                        "event": "call.connected",
-                        "data": { "number": status.number.as_deref().or(last_number.as_deref()) }
-                    })),
-                    "idle" if last_state != "idle" => {
-                        let reason = if last_state == "ringing" { "rejected" } else { "hangup" };
-                        Some(serde_json::json!({
-                            "event": "call.ended",
-                            "data": { "reason": reason }
-                        }))
-                    }
-                    _ => None,
-                };
-
-                if let Some(event) = event {
-                    let _ = state.events_tx.send(event.to_string());
-                    eprintln!("[calls] {} -> {}", last_state, status.state);
-                }
-
-                last_state = status.state.clone();
-                last_number = status.number;
-            }
-        }
-    });
-}

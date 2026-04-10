@@ -11,6 +11,7 @@ pub mod record;
 pub mod screenshot;
 pub mod sms;
 pub mod snapshot;
+pub mod internal;
 pub mod test_sim;
 
 use axum::http::StatusCode;
@@ -220,6 +221,11 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/test/sms/receive", post({
             let state = state.clone();
             move |body| test_sim::sim_sms_receive(state, body)
+        }))
+        // Internal events (from device owner app via adb reverse)
+        .route("/api/internal/event", post({
+            let state = state.clone();
+            move |body| internal::event_handler(state, body)
         }))
         // OpenAPI spec
         .route("/docs/openapi.json", get(|| async {
