@@ -81,15 +81,7 @@ impl AudioConfig {
                     a2dp_channels,
                     capture_cmd: alsa_cmd("arecord", &device, sample_rate, channels),
                     a2dp_capture_cmd: Some(alsa_cmd("arecord", &a2dp_device, a2dp_sample_rate, a2dp_channels)),
-                    playback_cmd: {
-                        // Capture playback to /tmp for debugging
-                        let aplay_args = format!("-D {device} -f S16_LE -r {sample_rate} -c {channels} -t raw");
-                        vec![
-                            "sh".into(),
-                            "-c".into(),
-                            format!("tee /tmp/playback_$(date +%s%N).raw | aplay {aplay_args}"),
-                        ]
-                    },
+                    playback_cmd: alsa_cmd("aplay", &device, sample_rate, channels),
                     mp3_cmd: format!(
                         "arecord -D {device} -f S16_LE -r {sample_rate} -c {channels} -t raw | lame -r -s 16 -m m --bitrate 32 - -"
                     ),
@@ -350,119 +342,124 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
         }
     });
 
-    // Task: receive mic audio from this client → playback
+    // Task: receive audio from WebSocket client → playback via aplay.
+    // Uses a mixing loop: a 100ms ticker always writes to aplay (silence or
+    // real audio). This prevents BlueALSA/aplay from going idle during gaps,
+    // which causes stutter when audio resumes.
     let playback_cmd = state.audio_config.playback_cmd.clone();
-    let sample_rate = state.audio_config.sample_rate;
-    let channels = state.audio_config.channels;
     let state_clone = state.clone();
     let recv_task = tokio::spawn(async move {
         let mut player: Option<tokio::process::Child> = None;
         let mut is_owner = false;
-        let mut last_write: Option<std::time::Instant> = None;
-        let mut write_count: u64 = 0;
 
-        // Helper to spawn aplay
-        // Silence buffer for prefilling aplay to prevent underruns.
-        // 500ms at 16kHz mono S16_LE = 16000 bytes.
-        let prefill_bytes = (sample_rate as usize) * (channels as usize) * 2 / 2;
-        let silence: Vec<u8> = vec![0u8; prefill_bytes];
+        // Audio buffer: WebSocket pushes chunks here, ticker drains them
+        let audio_buf: Arc<tokio::sync::Mutex<Vec<u8>>> =
+            Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let flush_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
 
-        let spawn_aplay = |cmd: &[String], prefill: &[u8]| -> Option<tokio::process::Child> {
+        // 100ms of silence at 16kHz mono S16_LE = 3200 bytes
+        let chunk_bytes: usize = 3200;
+
+        // Spawn aplay immediately so it's ready
+        fn start_aplay(cmd: &[String]) -> Option<tokio::process::Child> {
             match Command::new(&cmd[0])
                 .args(&cmd[1..])
                 .stdin(Stdio::piped())
-                .stderr(Stdio::inherit())
+                .stderr(Stdio::null())
                 .spawn()
             {
-                Ok(child) => {
-                    // Prefill with silence to fill the ALSA buffer.
-                    if let Some(ref stdin) = child.stdin {
-                        use std::os::unix::io::AsRawFd;
-                        let fd = stdin.as_raw_fd();
-                        unsafe {
-                            libc::write(fd, prefill.as_ptr() as *const libc::c_void, prefill.len());
-                        }
-                    }
-                    Some(child)
-                }
+                Ok(child) => Some(child),
                 Err(e) => {
-                    eprintln!("Failed to start playback: {e}");
+                    eprintln!("Failed to start aplay: {e}");
                     None
                 }
             }
-        };
+        }
+
+        // Process WebSocket messages — push audio to buffer, handle flush
+        let buf_for_ws = audio_buf.clone();
+        let flush_for_ws = flush_flag.clone();
 
         while let Some(Ok(msg)) = ws_rx.next().await {
-            // Text message = control command
+            // Text: control commands
             if let Message::Text(text) = &msg {
                 if text.contains("flush") {
-                    // Kill aplay and immediately respawn so it's ready
-                    // for the next audio chunk without spawn latency.
-                    if let Some(mut child) = player.take() {
-                        let _ = child.kill().await;
-                    }
-                    player = spawn_aplay(&playback_cmd, &silence);
-                    write_count = 0;
-                    last_write = None;
-                    eprintln!("Client {client_id} flushed (respawned aplay)");
+                    // Clear the buffer — next tick writes silence
+                    buf_for_ws.lock().await.clear();
+                    flush_for_ws.store(true, std::sync::atomic::Ordering::Relaxed);
+                    eprintln!("Client {client_id} flushed audio buffer");
                     continue;
                 }
             }
 
             if let Message::Binary(data) = msg {
-                // Try to claim playback ownership
+                // Claim playback ownership on first audio
                 if !is_owner {
                     let mut owner = state_clone.playback_owner.lock().await;
                     if owner.is_none() {
                         *owner = Some(client_id);
                         is_owner = true;
                         eprintln!("Client {client_id} claimed playback");
+
+                        // Spawn aplay and start the mixing ticker
+                        player = start_aplay(&playback_cmd);
+                        if player.is_some() {
+                            eprintln!("Client {client_id} spawned aplay");
+                        }
+
+                        // Start the mixing ticker in a separate task
+                        let buf_for_tick = audio_buf.clone();
+                        let flush_for_tick = flush_flag.clone();
+                        let mut tick_stdin = player.as_mut()
+                            .and_then(|c| c.stdin.take());
+
+                        if let Some(mut stdin) = tick_stdin {
+                            tokio::spawn(async move {
+                                let silence = vec![0u8; chunk_bytes];
+                                let mut interval = tokio::time::interval(
+                                    std::time::Duration::from_millis(100)
+                                );
+                                loop {
+                                    interval.tick().await;
+
+                                    // Check flush — kill and respawn
+                                    if flush_for_tick.swap(false, std::sync::atomic::Ordering::Relaxed) {
+                                        // Just clear — silence will play until new audio arrives
+                                    }
+
+                                    // Drain up to one chunk from buffer, or write silence
+                                    let mut buf = buf_for_tick.lock().await;
+                                    if buf.len() >= chunk_bytes {
+                                        let chunk: Vec<u8> = buf.drain(..chunk_bytes).collect();
+                                        drop(buf);
+                                        if stdin.write_all(&chunk).await.is_err() {
+                                            break;
+                                        }
+                                    } else if !buf.is_empty() {
+                                        // Partial chunk — pad with silence
+                                        let mut chunk: Vec<u8> = buf.drain(..).collect();
+                                        chunk.resize(chunk_bytes, 0);
+                                        drop(buf);
+                                        if stdin.write_all(&chunk).await.is_err() {
+                                            break;
+                                        }
+                                    } else {
+                                        drop(buf);
+                                        if stdin.write_all(&silence).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                }
+                                eprintln!("Mixing ticker stopped");
+                            });
+                        }
                     } else {
                         continue;
                     }
                 }
 
-                // Check if existing player died (SCO dropped)
-                if let Some(ref mut child) = player {
-                    if let Ok(Some(status)) = child.try_wait() {
-                        eprintln!("Client {client_id} aplay exited: {status}");
-                        player = None;
-                    }
-                }
-
-                // Start playback if not running
-                if player.is_none() {
-                    player = spawn_aplay(&playback_cmd, &silence);
-                    if player.is_some() {
-                        eprintln!("Client {client_id} spawned aplay");
-                    }
-                }
-
-                if let Some(ref mut child) = player {
-                    if let Some(ref mut stdin) = child.stdin {
-                        let now = std::time::Instant::now();
-                        let gap_ms = last_write.map(|t| now.duration_since(t).as_millis()).unwrap_or(0);
-
-                        // If there was a long gap (>500ms), aplay's buffer is empty.
-                        // Prefill with silence so the burst has buffer headroom.
-                        if gap_ms > 500 {
-                            eprintln!("Client {client_id} gap={gap_ms}ms, prefilling silence");
-                            let _ = stdin.write_all(&silence).await;
-                        }
-
-                        if let Err(_) = stdin.write_all(&data).await {
-                            let _ = child.kill().await;
-                            player = None;
-                        } else {
-                            let write_ms = now.elapsed().as_millis();
-                            let audio_ms = data.len() as u64 * 1000 / (16000 * 2);
-                            write_count += 1;
-                            // Log every write with gap from previous
-                            eprintln!("W{write_count}: {audio_ms}ms audio, gap={gap_ms}ms, write={write_ms}ms");
-                            last_write = Some(now);
-                        }
-                    }
-                }
+                // Push audio data to the buffer
+                buf_for_ws.lock().await.extend_from_slice(&data);
             }
         }
 
