@@ -230,6 +230,20 @@ async fn main() {
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
 
+    // Internal HTTP listener on port 8081 for device owner app push events
+    // (plain HTTP — device app connects via adb reverse, can't do TLS)
+    let internal_port: u16 = env::var("INTERNAL_PORT")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(8081);
+    let internal_addr = SocketAddr::from(([0, 0, 0, 0], internal_port));
+    let internal_app = app.clone();
+    tokio::spawn(async move {
+        let listener = tokio::net::TcpListener::bind(internal_addr).await.unwrap();
+        eprintln!("Internal HTTP listener on http://{internal_addr} (plain, for device push events)");
+        axum::serve(listener, internal_app).await.unwrap();
+    });
+
     // Try TLS with Tailscale certs, fall back to plain HTTP
     let cert_dir = env::var("TLS_CERT_DIR").unwrap_or_else(|_| "/certs".into());
     let cert_path = format!("{cert_dir}/otacon-pi.crt");

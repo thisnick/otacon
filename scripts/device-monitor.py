@@ -212,7 +212,7 @@ def start_snapshot_server():
 def setup_port_forwards():
     adb('forward', 'tcp:9090', 'tcp:9090')
     adb('forward', 'tcp:9091', 'tcp:9091')
-    adb('reverse', 'tcp:8080', 'tcp:8080')  # phone can reach server
+    adb('reverse', 'tcp:8081', 'tcp:8081')  # phone can reach server
     log.info('Port forwards established')
 
 
@@ -355,7 +355,7 @@ def main():
                 # Re-establish port forwards
                 adb('forward', 'tcp:9090', 'tcp:9090')
                 adb('forward', 'tcp:9091', 'tcp:9091')
-                adb('reverse', 'tcp:8080', 'tcp:8080')
+                adb('reverse', 'tcp:8081', 'tcp:8081')
                 time.sleep(10)
                 continue
             else:
@@ -383,7 +383,7 @@ def main():
         while is_device_connected(serial):
             adb('forward', 'tcp:9090', 'tcp:9090')
             adb('forward', 'tcp:9091', 'tcp:9091')
-            adb('reverse', 'tcp:8080', 'tcp:8080')
+            adb('reverse', 'tcp:8081', 'tcp:8081')
 
             # Restart snapshot server if process died
             proc_check = adb_shell('pgrep -f snapshot-server.jar')
