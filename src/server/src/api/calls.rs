@@ -30,14 +30,11 @@ pub struct CallStatus {
     responses((status = 200, body = OkResponse))
 )]
 pub async fn dial_handler(state: Arc<AppState>, Json(body): Json<DialBody>) -> Result<Json<serde_json::Value>, ApiError> {
-    // Prefer bridge (device owner app) → fallback to ADB
-    let payload = serde_json::json!({"number": body.number});
-    if state.bridge.device_post("/call/dial", &payload.to_string()).await.is_err() {
-        adb_shell(&format!(
-            "am start -a android.intent.action.CALL -d tel:{}",
-            body.number.replace(' ', "")
-        )).await?;
-    }
+    // ADB for actions — device owner app handles event detection
+    adb_shell(&format!(
+        "am start -a android.intent.action.CALL -d tel:{}",
+        body.number.replace(' ', "")
+    )).await?;
 
     let event = serde_json::json!({
         "event": "call.dialing",
@@ -55,10 +52,8 @@ pub async fn dial_handler(state: Arc<AppState>, Json(body): Json<DialBody>) -> R
     operation_id = "answerCall",
     responses((status = 200, body = OkResponse))
 )]
-pub async fn answer_handler(state: Arc<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
-    if state.bridge.device_post("/call/answer", "{}").await.is_err() {
-        adb_shell("input keyevent KEYCODE_CALL").await?;
-    }
+pub async fn answer_handler(_state: Arc<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
+    adb_shell("input keyevent KEYCODE_CALL").await?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -70,9 +65,17 @@ pub async fn answer_handler(state: Arc<AppState>) -> Result<Json<serde_json::Val
     responses((status = 200, body = OkResponse))
 )]
 pub async fn hangup_handler(state: Arc<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
-    if state.bridge.device_post("/call/hangup", "{}").await.is_err() {
-        adb_shell("input keyevent KEYCODE_ENDCALL").await?;
+    adb_shell("input keyevent KEYCODE_ENDCALL").await?;
+    // Reset state locally — device owner app will also push call.ended
+    // but we don't wait for it
+    {
+        let mut sim = state.sim_call.lock().await;
+        sim.state = "idle".to_string();
+        sim.number = None;
+        sim.connected_at = None;
     }
+    let event = serde_json::json!({"event": "call.ended", "data": {"reason": "hangup"}});
+    let _ = state.events_tx.send(event.to_string());
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
