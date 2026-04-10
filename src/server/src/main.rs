@@ -364,7 +364,7 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
             match Command::new(&cmd[0])
                 .args(&cmd[1..])
                 .stdin(Stdio::piped())
-                .stderr(Stdio::null())
+                .stderr(Stdio::inherit()) // capture aplay errors (XRUNs)
                 .spawn()
             {
                 Ok(child) => Some(child),
