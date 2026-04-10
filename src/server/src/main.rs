@@ -356,6 +356,8 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
     let recv_task = tokio::spawn(async move {
         let mut player: Option<tokio::process::Child> = None;
         let mut is_owner = false;
+        let mut last_write: Option<std::time::Instant> = None;
+        let mut write_count: u64 = 0;
 
         // Helper to spawn aplay
         let spawn_aplay = |cmd: &[String]| -> Option<tokio::process::Child> {
@@ -383,6 +385,8 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
                         let _ = child.kill().await;
                     }
                     player = spawn_aplay(&playback_cmd);
+                    write_count = 0;
+                    last_write = None;
                     eprintln!("Client {client_id} flushed (respawned aplay)");
                     continue;
                 }
@@ -419,10 +423,18 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
 
                 if let Some(ref mut child) = player {
                     if let Some(ref mut stdin) = child.stdin {
+                        let now = std::time::Instant::now();
+                        let gap_ms = last_write.map(|t| now.duration_since(t).as_millis()).unwrap_or(0);
                         if let Err(_) = stdin.write_all(&data).await {
-                            // write error — aplay died
                             let _ = child.kill().await;
                             player = None;
+                        } else {
+                            let write_ms = now.elapsed().as_millis();
+                            let audio_ms = data.len() as u64 * 1000 / (16000 * 2);
+                            write_count += 1;
+                            // Log every write with gap from previous
+                            eprintln!("W{write_count}: {audio_ms}ms audio, gap={gap_ms}ms, write={write_ms}ms");
+                            last_write = Some(now);
                         }
                     }
                 }
