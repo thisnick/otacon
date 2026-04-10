@@ -96,13 +96,8 @@ public class BootReceiver extends BroadcastReceiver {
         dpm.setCameraDisabled(admin, true);
         Log.i(TAG, "Camera disabled");
 
-        // Disable lock screen
-        try {
-            dpm.setKeyguardDisabled(admin, true);
-            Log.i(TAG, "Keyguard disabled");
-        } catch (Exception e) {
-            Log.w(TAG, "Could not disable keyguard: " + e.getMessage());
-        }
+        // Allow lock screen — don't disable keyguard
+        // (User can set their own PIN/pattern via device settings)
 
         Log.i(TAG, "All restrictions applied");
     }

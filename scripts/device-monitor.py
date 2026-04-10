@@ -113,25 +113,16 @@ def wait_for_server(url: str, name: str, retries: int = 10):
 
 def configure_screen():
     log.info('Configuring screen...')
-    adb_shell('settings put global stay_on_while_plugged_in 2')
-    adb_shell('settings put system screen_off_timeout 2147483647')
-    adb_shell('settings put system screen_brightness_mode 0')
-    adb_shell('settings put system screen_brightness 0')
-    # Set PIN to 0000 via ADB (not device owner — that triggers Samsung sec.automation)
-    result = adb_shell('locksettings set-pin 0000')
-    if 'error' not in result.lower():
-        log.info('PIN set to 0000')
-    else:
-        log.info(f'PIN already set or failed: {result}')
+    adb_shell('settings put global stay_on_while_plugged_in 0')  # allow sleep while plugged in
+    adb_shell('settings put system screen_off_timeout 30000')   # 30s screen timeout
+    adb_shell('settings put system screen_brightness_mode 1')   # auto brightness
+    # PIN management removed — user sets their own PIN via device settings
+    # Clear any device-owner password policy so PIN can be freely changed
+    adb_shell('locksettings set-password-quality 0')
     adb_shell('svc data disable')
     # Disable RCS (Google Messages) — forces SMS-only, works with content://sms
     adb_shell('pm disable-user --user 0 com.google.android.apps.messaging')
-    # Only wake if screen is off (keyevent 26 is a toggle)
-    display_state = adb_shell('dumpsys display | grep "mScreenState"')
-    if 'OFF' in display_state or 'mScreenState=0' in display_state:
-        adb_shell('input keyevent 224')  # WAKEUP (not a toggle)
-        time.sleep(0.5)
-        adb_shell('input swipe 540 1800 540 800')  # dismiss lock
+    # Don't force wake — let phone sleep and lock naturally
 
 
 def is_device_owner_set() -> bool:
