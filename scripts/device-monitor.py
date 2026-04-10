@@ -156,6 +156,10 @@ def grant_permissions():
     """Grant all runtime permissions the device owner app needs."""
     for perm in RUNTIME_PERMISSIONS:
         adb_shell(f'pm grant {DEVICE_OWNER_PKG} {perm}')
+    # Exempt from battery optimization and Samsung's app freezer
+    adb_shell(f'cmd deviceidle whitelist +{DEVICE_OWNER_PKG}')
+    adb_shell(f'cmd appops set {DEVICE_OWNER_PKG} RUN_IN_BACKGROUND allow')
+    adb_shell(f'cmd appops set {DEVICE_OWNER_PKG} RUN_ANY_IN_BACKGROUND allow')
 
 
 def provision_device_owner():
