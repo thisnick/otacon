@@ -81,7 +81,15 @@ impl AudioConfig {
                     a2dp_channels,
                     capture_cmd: alsa_cmd("arecord", &device, sample_rate, channels),
                     a2dp_capture_cmd: Some(alsa_cmd("arecord", &a2dp_device, a2dp_sample_rate, a2dp_channels)),
-                    playback_cmd: alsa_cmd("aplay", &device, sample_rate, channels),
+                    playback_cmd: {
+                        // Capture playback to /tmp for debugging
+                        let aplay_args = format!("-D {device} -f S16_LE -r {sample_rate} -c {channels} -t raw");
+                        vec![
+                            "sh".into(),
+                            "-c".into(),
+                            format!("tee /tmp/playback_$(date +%s%N).raw | aplay {aplay_args}"),
+                        ]
+                    },
                     mp3_cmd: format!(
                         "arecord -D {device} -f S16_LE -r {sample_rate} -c {channels} -t raw | lame -r -s 16 -m m --bitrate 32 - -"
                     ),
@@ -349,16 +357,33 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
         let mut player: Option<tokio::process::Child> = None;
         let mut is_owner = false;
 
+        // Helper to spawn aplay
+        let spawn_aplay = |cmd: &[String]| -> Option<tokio::process::Child> {
+            match Command::new(&cmd[0])
+                .args(&cmd[1..])
+                .stdin(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+            {
+                Ok(child) => Some(child),
+                Err(e) => {
+                    eprintln!("Failed to start playback: {e}");
+                    None
+                }
+            }
+        };
+
         while let Some(Ok(msg)) = ws_rx.next().await {
             // Text message = control command
             if let Message::Text(text) = &msg {
                 if text.contains("flush") {
-                    // Kill aplay to clear the OS pipe buffer instantly.
-                    // A new aplay will be spawned on the next audio chunk.
+                    // Kill aplay and immediately respawn so it's ready
+                    // for the next audio chunk without spawn latency.
                     if let Some(mut child) = player.take() {
                         let _ = child.kill().await;
-                        eprintln!("Client {client_id} flushed playback");
                     }
+                    player = spawn_aplay(&playback_cmd);
+                    eprintln!("Client {client_id} flushed (respawned aplay)");
                     continue;
                 }
             }
@@ -386,20 +411,9 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
 
                 // Start playback if not running
                 if player.is_none() {
-                    match Command::new(&playback_cmd[0])
-                        .args(&playback_cmd[1..])
-                        .stdin(Stdio::piped())
-                        .stderr(Stdio::null())
-                        .spawn()
-                    {
-                        Ok(child) => {
-                            eprintln!("Client {client_id} spawned aplay");
-                            player = Some(child);
-                        }
-                        Err(e) => {
-                            eprintln!("Failed to start playback: {e}");
-                            continue;
-                        }
+                    player = spawn_aplay(&playback_cmd);
+                    if player.is_some() {
+                        eprintln!("Client {client_id} spawned aplay");
                     }
                 }
 
