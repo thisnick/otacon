@@ -352,6 +352,8 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
 
     // Task: receive mic audio from this client → playback
     let playback_cmd = state.audio_config.playback_cmd.clone();
+    let sample_rate = state.audio_config.sample_rate;
+    let channels = state.audio_config.channels;
     let state_clone = state.clone();
     let recv_task = tokio::spawn(async move {
         let mut player: Option<tokio::process::Child> = None;
@@ -360,14 +362,29 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
         let mut write_count: u64 = 0;
 
         // Helper to spawn aplay
-        let spawn_aplay = |cmd: &[String]| -> Option<tokio::process::Child> {
+        // Silence buffer for prefilling aplay to prevent underruns.
+        // 500ms at 16kHz mono S16_LE = 16000 bytes.
+        let prefill_bytes = (sample_rate as usize) * (channels as usize) * 2 / 2;
+        let silence: Vec<u8> = vec![0u8; prefill_bytes];
+
+        let spawn_aplay = |cmd: &[String], prefill: &[u8]| -> Option<tokio::process::Child> {
             match Command::new(&cmd[0])
                 .args(&cmd[1..])
                 .stdin(Stdio::piped())
-                .stderr(Stdio::inherit()) // capture aplay errors (XRUNs)
+                .stderr(Stdio::inherit())
                 .spawn()
             {
-                Ok(child) => Some(child),
+                Ok(child) => {
+                    // Prefill with silence to fill the ALSA buffer.
+                    if let Some(ref stdin) = child.stdin {
+                        use std::os::unix::io::AsRawFd;
+                        let fd = stdin.as_raw_fd();
+                        unsafe {
+                            libc::write(fd, prefill.as_ptr() as *const libc::c_void, prefill.len());
+                        }
+                    }
+                    Some(child)
+                }
                 Err(e) => {
                     eprintln!("Failed to start playback: {e}");
                     None
@@ -384,7 +401,7 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
                     if let Some(mut child) = player.take() {
                         let _ = child.kill().await;
                     }
-                    player = spawn_aplay(&playback_cmd);
+                    player = spawn_aplay(&playback_cmd, &silence);
                     write_count = 0;
                     last_write = None;
                     eprintln!("Client {client_id} flushed (respawned aplay)");
@@ -415,7 +432,7 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
 
                 // Start playback if not running
                 if player.is_none() {
-                    player = spawn_aplay(&playback_cmd);
+                    player = spawn_aplay(&playback_cmd, &silence);
                     if player.is_some() {
                         eprintln!("Client {client_id} spawned aplay");
                     }
@@ -425,6 +442,14 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
                     if let Some(ref mut stdin) = child.stdin {
                         let now = std::time::Instant::now();
                         let gap_ms = last_write.map(|t| now.duration_since(t).as_millis()).unwrap_or(0);
+
+                        // If there was a long gap (>500ms), aplay's buffer is empty.
+                        // Prefill with silence so the burst has buffer headroom.
+                        if gap_ms > 500 {
+                            eprintln!("Client {client_id} gap={gap_ms}ms, prefilling silence");
+                            let _ = stdin.write_all(&silence).await;
+                        }
+
                         if let Err(_) = stdin.write_all(&data).await {
                             let _ = child.kill().await;
                             player = None;
