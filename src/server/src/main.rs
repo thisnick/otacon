@@ -353,7 +353,8 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
             // Text message = control command
             if let Message::Text(text) = &msg {
                 if text.contains("flush") {
-                    // Kill aplay to clear OS pipe buffer (interrupt/barge-in)
+                    // Kill aplay to clear the OS pipe buffer instantly.
+                    // A new aplay will be spawned on the next audio chunk.
                     if let Some(mut child) = player.take() {
                         let _ = child.kill().await;
                         eprintln!("Client {client_id} flushed playback");
@@ -377,7 +378,8 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
 
                 // Check if existing player died (SCO dropped)
                 if let Some(ref mut child) = player {
-                    if let Ok(Some(_)) = child.try_wait() {
+                    if let Ok(Some(status)) = child.try_wait() {
+                        eprintln!("Client {client_id} aplay exited: {status}");
                         player = None;
                     }
                 }
@@ -391,10 +393,7 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
                         .spawn()
                     {
                         Ok(child) => {
-                            // Let OS pipe buffer handle backpressure naturally.
-                            // aplay consumes at the sample rate; the default 64KB pipe
-                            // buffer (~2s of 16kHz mono) smooths TTS bursts without
-                            // adding latency for real-time mic input.
+                            eprintln!("Client {client_id} spawned aplay");
                             player = Some(child);
                         }
                         Err(e) => {
