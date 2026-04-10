@@ -90,7 +90,12 @@ public class SnapshotServer {
             System.out.println("Step 8: waiting for connection");
             Thread.sleep(500);
 
-            System.out.println("Step 7: starting server on port " + PORT);
+            // Start telephony monitor (call state push events)
+            System.out.println("Step 9: starting telephony monitor");
+            TelephonyMonitor telephonyMonitor = new TelephonyMonitor();
+            telephonyMonitor.start(handlerThread.getLooper());
+
+            System.out.println("Step 10: starting server on port " + PORT);
             ServerSocket server = new ServerSocket(PORT);
             System.out.println("Snapshot server ready");
             System.out.flush();

@@ -20,137 +20,23 @@ import fi.iki.elonen.NanoHTTPD;
 public class HttpServer extends NanoHTTPD {
     private static final String TAG = "OtaconHttp";
     private static final int PORT = 9090;
-    private static final String SERVER_EVENT_URL = "http://127.0.0.1:8081/api/internal/event"; // nested under /api in router
 
     private final android.content.Context context;
     private final long startTime = System.currentTimeMillis();
 
-    // Call state tracking
+    // Call state tracking (local only — push events handled by app_process TelephonyMonitor)
     private volatile String callState = "idle"; // idle, ringing, active
-    private volatile String prevCallState = "idle";
     private volatile String callNumber = null;
     private volatile long callStartTime = 0;
-
-    // SMS tracking
-    private long lastSeenSmsId = 0;
 
     public HttpServer(android.content.Context context) {
         super(PORT);
         this.context = context;
-        initLastSeenSmsId();
-        registerCallStateListener();
-        registerSmsObserver();
     }
 
     public void startServer() throws IOException {
         start(NanoHTTPD.SOCKET_READ_TIMEOUT, false);
         Log.i(TAG, "HTTP server started on port " + PORT);
-    }
-
-    private void registerCallStateListener() {
-        try {
-            android.telephony.TelephonyManager tm = (android.telephony.TelephonyManager)
-                context.getSystemService(android.content.Context.TELEPHONY_SERVICE);
-            if (tm == null) {
-                Log.w(TAG, "TelephonyManager not available");
-                return;
-            }
-            tm.registerTelephonyCallback(context.getMainExecutor(), new CallStateCallback());
-            Log.i(TAG, "Call state listener registered (TelephonyCallback)");
-        } catch (SecurityException e) {
-            Log.w(TAG, "Cannot register call state listener — READ_PHONE_STATE permission not granted. Call status tracking will be unavailable.", e);
-        }
-    }
-
-    private void initLastSeenSmsId() {
-        try {
-            android.database.Cursor c = context.getContentResolver().query(
-                android.net.Uri.parse("content://sms/inbox"),
-                new String[]{"_id"},
-                null, null, "_id DESC"
-            );
-            if (c != null) {
-                try {
-                    if (c.moveToFirst()) lastSeenSmsId = c.getLong(0);
-                } finally { c.close(); }
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "Failed to init SMS baseline: " + e.getMessage());
-        }
-    }
-
-    private void registerSmsObserver() {
-        try {
-            context.getContentResolver().registerContentObserver(
-                android.net.Uri.parse("content://sms"),
-                true,
-                new android.database.ContentObserver(new android.os.Handler(android.os.Looper.getMainLooper())) {
-                    @Override
-                    public void onChange(boolean selfChange, android.net.Uri uri) {
-                        checkNewSms();
-                    }
-                }
-            );
-            Log.i(TAG, "SMS observer registered");
-        } catch (Exception e) {
-            Log.w(TAG, "Cannot register SMS observer: " + e.getMessage());
-        }
-    }
-
-    private void checkNewSms() {
-        try {
-            android.database.Cursor c = context.getContentResolver().query(
-                android.net.Uri.parse("content://sms/inbox"),
-                new String[]{"_id", "address", "body"},
-                "_id > ?",
-                new String[]{String.valueOf(lastSeenSmsId)},
-                "_id ASC"
-            );
-            if (c != null) {
-                try {
-                    while (c.moveToNext()) {
-                        long id = c.getLong(0);
-                        String from = c.getString(1);
-                        String body = c.getString(2);
-                        lastSeenSmsId = id;
-                        Log.i(TAG, "New SMS from " + from + ": " + body.substring(0, Math.min(30, body.length())));
-                        try {
-                            JSONObject data = new JSONObject();
-                            data.put("from", from);
-                            data.put("body", body);
-                            pushEvent("sms.received", data);
-                        } catch (Exception ignored) {}
-                    }
-                } finally { c.close(); }
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "Failed to check new SMS: " + e.getMessage());
-        }
-    }
-
-    private void pushEvent(String eventType, JSONObject data) {
-        new Thread(() -> {
-            try {
-                JSONObject payload = new JSONObject();
-                payload.put("event", eventType);
-                payload.put("data", data);
-                java.net.HttpURLConnection conn = (java.net.HttpURLConnection)
-                    new java.net.URL(SERVER_EVENT_URL).openConnection();
-                conn.setRequestMethod("POST");
-                conn.setRequestProperty("Content-Type", "application/json");
-                conn.setDoOutput(true);
-                conn.setConnectTimeout(2000);
-                conn.setReadTimeout(2000);
-                conn.getOutputStream().write(payload.toString().getBytes());
-                int code = conn.getResponseCode();
-                if (code != 200) {
-                    Log.w(TAG, "pushEvent " + eventType + " got " + code);
-                }
-                conn.disconnect();
-            } catch (Exception e) {
-                Log.d(TAG, "pushEvent " + eventType + " failed: " + e.getMessage());
-            }
-        }).start();
     }
 
     @Override
@@ -564,87 +450,6 @@ public class HttpServer extends NanoHTTPD {
         Log.i(TAG, "SMS sent to " + to + " (" + parts.size() + " part(s))");
         return newFixedLengthResponse(Response.Status.OK, MIME_JSON,
             "{\"ok\": true, \"parts\": " + parts.size() + "}");
-    }
-
-    // --- TelephonyCallback for call state tracking (API 31+) ---
-
-    private class CallStateCallback extends android.telephony.TelephonyCallback
-            implements android.telephony.TelephonyCallback.CallStateListener {
-        @Override
-        public void onCallStateChanged(int state) {
-            String prev = prevCallState;
-            switch (state) {
-                case android.telephony.TelephonyManager.CALL_STATE_IDLE:
-                    Log.i(TAG, "Call state: IDLE");
-                    callState = "idle";
-                    callStartTime = 0;
-                    if (!"idle".equals(prev)) {
-                        try {
-                            JSONObject data = new JSONObject();
-                            data.put("reason", "ringing".equals(prev) ? "rejected" : "hangup");
-                            pushEvent("call.ended", data);
-                        } catch (Exception ignored) {}
-                    }
-                    callNumber = null;
-                    break;
-                case android.telephony.TelephonyManager.CALL_STATE_RINGING:
-                    Log.i(TAG, "Call state: RINGING");
-                    callState = "ringing";
-                    String incoming = queryLastIncomingNumber();
-                    if (incoming != null) {
-                        callNumber = incoming;
-                        Log.i(TAG, "Incoming call from " + incoming);
-                    }
-                    try {
-                        JSONObject data = new JSONObject();
-                        data.put("number", callNumber);
-                        pushEvent("call.incoming", data);
-                    } catch (Exception ignored) {}
-                    break;
-                case android.telephony.TelephonyManager.CALL_STATE_OFFHOOK:
-                    Log.i(TAG, "Call state: ACTIVE");
-                    callState = "active";
-                    if (callStartTime == 0) callStartTime = System.currentTimeMillis();
-                    try {
-                        JSONObject data = new JSONObject();
-                        data.put("number", callNumber);
-                        pushEvent("call.connected", data);
-                    } catch (Exception ignored) {}
-                    break;
-            }
-            prevCallState = callState;
-        }
-    }
-
-    /**
-     * Query the CallLog for the most recent incoming/missed call to determine the caller number.
-     * This compensates for TelephonyCallback not providing the number on RINGING.
-     */
-    private String queryLastIncomingNumber() {
-        try {
-            android.database.Cursor cursor = context.getContentResolver().query(
-                android.provider.CallLog.Calls.CONTENT_URI,
-                new String[]{android.provider.CallLog.Calls.NUMBER, android.provider.CallLog.Calls.TYPE},
-                android.provider.CallLog.Calls.TYPE + " IN (?, ?)",
-                new String[]{
-                    String.valueOf(android.provider.CallLog.Calls.INCOMING_TYPE),
-                    String.valueOf(android.provider.CallLog.Calls.MISSED_TYPE)
-                },
-                android.provider.CallLog.Calls.DATE + " DESC"
-            );
-            if (cursor != null) {
-                try {
-                    if (cursor.moveToFirst()) {
-                        return cursor.getString(0);
-                    }
-                } finally {
-                    cursor.close();
-                }
-            }
-        } catch (Exception e) {
-            Log.w(TAG, "Failed to query CallLog for incoming number: " + e.getMessage());
-        }
-        return null;
     }
 
 }

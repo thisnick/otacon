@@ -53,13 +53,14 @@ WORKDIR /src/android
 COPY android/device-owner/ .
 RUN chmod +x gradlew && ./gradlew assembleRelease --no-daemon
 
-# Build snapshot server JAR (app_process server for UI tree access)
+# Build snapshot server JAR (app_process server for UI tree + telephony monitor)
 COPY android/snapshot-server/src/ /src/snapshot-server/src/
 RUN mkdir -p /src/snapshot-server/build/classes \
     && javac -source 17 -target 17 \
         -cp ${ANDROID_HOME}/platforms/android-34/android.jar \
         -d /src/snapshot-server/build/classes \
         /src/snapshot-server/src/com/otacon/snapshot/SnapshotServer.java \
+        /src/snapshot-server/src/com/otacon/snapshot/TelephonyMonitor.java \
     && find /src/snapshot-server/build/classes -name '*.class' | xargs \
         ${ANDROID_HOME}/build-tools/34.0.0/d8 \
         --output /src/snapshot-server/build \
