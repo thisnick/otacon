@@ -350,6 +350,18 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
         let mut is_owner = false;
 
         while let Some(Ok(msg)) = ws_rx.next().await {
+            // Text message = control command
+            if let Message::Text(text) = &msg {
+                if text.contains("flush") {
+                    // Kill aplay to clear OS pipe buffer (interrupt/barge-in)
+                    if let Some(mut child) = player.take() {
+                        let _ = child.kill().await;
+                        eprintln!("Client {client_id} flushed playback");
+                    }
+                    continue;
+                }
+            }
+
             if let Message::Binary(data) = msg {
                 // Try to claim playback ownership
                 if !is_owner {
