@@ -396,8 +396,8 @@ async fn handle_set_text(state: Arc<AppState>, p: SetTextParams) -> Result<(), A
     // Fallback: clipboard set → tap to focus → select all → paste.
     // Supports full Unicode via clipboard.
     if state.bridge.is_device_owner_available() {
-        let clip_body = serde_json::json!({"text": p.text}).to_string();
-        state.bridge.device_post("/clipboard", &clip_body).await?;
+        let encoded = urlencoding::encode(&p.text);
+        state.bridge.device_query(&format!("clipboard/set?text={encoded}")).await?;
         let (x, y) = bounds_center(&ref_info.bounds);
         adb_shell(&format!("input tap {x} {y}")).await?;
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;

@@ -6,6 +6,7 @@ pub mod calls;
 pub mod clipboard;
 pub mod contacts;
 pub mod device;
+pub mod esim;
 pub mod open;
 pub mod record;
 pub mod screenshot;
@@ -190,6 +191,24 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/apps/running/{package}", delete(apps::stop_handler))
         .route("/apps/install", post(apps::install_handler)
             .layer(axum::extract::DefaultBodyLimit::max(512 * 1024 * 1024)))
+        // eSIM
+        .route("/esim/profiles", get({
+            let state = state.clone();
+            move || esim::profiles_handler(state)
+        }))
+        .route("/esim/install", post(esim::install_handler))
+        .route("/esim/delete", post({
+            move |body| esim::delete_handler(body)
+        }))
+        .route("/esim/switch", post({
+            let state = state.clone();
+            move |body| esim::switch_handler(state, body)
+        }))
+        .route("/esim/enable", post({
+            let state = state.clone();
+            move |body| esim::enable_handler(state, body)
+        }))
+        .route("/esim/defaults", get(esim::defaults_get_handler).put(esim::defaults_set_handler))
         // Open URI
         .route("/open", post(open::handler))
         // Recording

@@ -112,13 +112,11 @@ pub async fn messages_handler(Path(thread_id): Path<String>) -> Result<Json<Vec<
     responses((status = 200, body = OkResponse))
 )]
 pub async fn send_handler(state: Arc<AppState>, Json(body): Json<SendSmsBody>) -> Result<Json<serde_json::Value>, ApiError> {
-    let payload = serde_json::json!({
-        "to": body.to,
-        "body": body.body,
-    });
-    let result = state.bridge.device_post("/sms/send", &payload.to_string()).await?;
-    let parsed: serde_json::Value = serde_json::from_str(&result)
-        .map_err(|e| ApiError::Adb(format!("Invalid response: {e}")))?;
-    Ok(Json(parsed))
+    let to_encoded = urlencoding::encode(&body.to);
+    let body_encoded = urlencoding::encode(&body.body);
+    state.bridge.device_query(
+        &format!("sms/send?to={to_encoded}&body={body_encoded}")
+    ).await?;
+    Ok(Json(serde_json::json!({"ok": true})))
 }
 

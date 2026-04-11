@@ -133,10 +133,16 @@ async fn get_focused_window() -> Result<String, ApiError> {
 pub async fn notifications_handler(
     state: Arc<AppState>,
 ) -> Result<Json<Vec<Notification>>, ApiError> {
-    // Fast path: device owner app
+    // Fast path: device owner ContentProvider (returns JSON blob)
     if state.bridge.is_device_owner_available() {
-        let body = state.bridge.device_get("/notifications").await?;
-        let notifications: Vec<Notification> = serde_json::from_str(&body)
+        let output = state.bridge.device_query("notifications").await?;
+        // ContentProvider returns "Row: 0 json=[...]"
+        let json_str = output
+            .split("json=")
+            .nth(1)
+            .unwrap_or("[]")
+            .trim();
+        let notifications: Vec<Notification> = serde_json::from_str(json_str)
             .unwrap_or_default();
         return Ok(Json(notifications));
     }
@@ -164,10 +170,8 @@ pub async fn dismiss_notification_handler(
             "notification dismiss requires device owner app (not available)".into(),
         ));
     }
-    state
-        .bridge
-        .device_delete(&format!("/notifications/{key}"))
-        .await?;
+    let key_encoded = urlencoding::encode(&key);
+    state.bridge.device_query(&format!("notifications/dismiss?key={key_encoded}")).await?;
     Ok(Json(serde_json::json!({"ok": true})))
 }
 
@@ -191,13 +195,10 @@ pub async fn notification_action_handler(
             "notification actions require device owner app (not available)".into(),
         ));
     }
-    state
-        .bridge
-        .device_post(
-            &format!("/notifications/{}/action/{}", key, index),
-            "",
-        )
-        .await?;
+    let key_encoded = urlencoding::encode(&key);
+    state.bridge.device_query(
+        &format!("notifications/action?key={key_encoded}&index={index}")
+    ).await?;
     Ok(Json(serde_json::json!({"ok": true})))
 }
 

@@ -17,6 +17,7 @@
     <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
     <uses-permission android:name="android.permission.READ_SMS" />
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
+    <uses-permission android:name="android.permission.WRITE_EMBEDDED_SUBSCRIPTIONS" />
 
     <application
         android:label="Otacon Kiosk"
@@ -54,6 +55,24 @@
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
         </service>
+
+        <provider
+            android:name=".KioskProvider"
+            android:authorities="com.otacon.kiosk"
+            android:exported="true" />
+
+        <activity
+            android:name=".EsimResolutionActivity"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:exported="false" />
+
+        <receiver
+            android:name=".EsimResultReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.otacon.kiosk.ESIM_RESULT" />
+            </intent-filter>
+        </receiver>
 
     </application>
 

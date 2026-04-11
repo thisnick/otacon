@@ -39,7 +39,7 @@ RUN cargo build --release
 
 # Stage 3: Build device owner APK
 # Force linux/amd64 — Android build tools (AAPT2) are x86_64 only
-FROM --platform=linux/amd64 eclipse-temurin:17-jdk AS apk-builder
+FROM --platform=linux/amd64 eclipse-temurin:23-jdk AS apk-builder
 ENV ANDROID_HOME=/opt/android-sdk
 RUN apt-get update && apt-get install -y --no-install-recommends wget unzip \
     && mkdir -p ${ANDROID_HOME}/cmdline-tools \
@@ -47,7 +47,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends wget unzip \
     && unzip -q /tmp/tools.zip -d ${ANDROID_HOME}/cmdline-tools \
     && mv ${ANDROID_HOME}/cmdline-tools/cmdline-tools ${ANDROID_HOME}/cmdline-tools/latest \
     && yes | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null 2>&1 \
-    && ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager "platforms;android-34" "build-tools;34.0.0" \
+    && ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager "platforms;android-34" "build-tools;35.0.0" \
     && rm -rf /tmp/tools.zip /var/lib/apt/lists/*
 WORKDIR /src/android
 COPY android/device-owner/ .
@@ -62,7 +62,7 @@ RUN mkdir -p /src/snapshot-server/build/classes \
         /src/snapshot-server/src/com/otacon/snapshot/SnapshotServer.java \
         /src/snapshot-server/src/com/otacon/snapshot/TelephonyMonitor.java \
     && find /src/snapshot-server/build/classes -name '*.class' | xargs \
-        ${ANDROID_HOME}/build-tools/34.0.0/d8 \
+        ${ANDROID_HOME}/build-tools/35.0.0/d8 \
         --output /src/snapshot-server/build \
     && cd /src/snapshot-server/build && jar cf snapshot-server.jar classes.dex
 

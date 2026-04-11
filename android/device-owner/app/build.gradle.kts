@@ -19,8 +19,8 @@ android {
         applicationId = "com.otacon.kiosk"
         minSdk = 33
         targetSdk = 34
-        versionCode = 13
-        versionName = "1.12.0"
+        versionCode = 22
+        versionName = "3.2.0"
     }
 
     buildTypes {
@@ -40,5 +40,4 @@ android {
 }
 
 dependencies {
-    implementation("org.nanohttpd:nanohttpd:2.3.1")
 }

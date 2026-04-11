@@ -31,7 +31,6 @@ log = logging.getLogger('device-monitor')
 
 DEVICE_OWNER_PKG = 'com.otacon.kiosk'
 DEVICE_OWNER_RECEIVER = f'{DEVICE_OWNER_PKG}/.DeviceOwnerReceiver'
-DEVICE_OWNER_URL = 'http://127.0.0.1:9090'
 SNAPSHOT_URL = 'http://127.0.0.1:9091'
 APK_PATH = '/opt/otacon-kiosk.apk'
 JAR_PATH = '/opt/snapshot-server.jar'
@@ -201,7 +200,6 @@ def start_snapshot_server():
 
 
 def setup_port_forwards():
-    adb('forward', 'tcp:9090', 'tcp:9090')
     adb('forward', 'tcp:9091', 'tcp:9091')
     adb('reverse', 'tcp:8081', 'tcp:8081')  # phone can reach server
     log.info('Port forwards established')
@@ -214,10 +212,12 @@ def connect_wifi():
         return
 
     log.info(f"Connecting WiFi '{ssid}'...")
-    result = http_post(f'{DEVICE_OWNER_URL}/wifi/connect',
-                       {'ssid': ssid, 'password': password}, timeout=10)
-    if result and result.get('ok'):
-        log.info(f"WiFi connected via bridge (method={result.get('method')})")
+    # Use Device Owner ContentProvider (has privileged WifiManager access for hidden networks)
+    result = adb_shell(
+        f"content query --uri 'content://com.otacon.kiosk/wifi/connect?ssid={ssid}&password={password}'"
+    )
+    if result and 'ok=true' in result:
+        log.info(f'WiFi connected via ContentProvider')
     else:
         # ADB fallback
         adb_shell(f'cmd wifi connect-network "{ssid}" wpa2 "{password}"')
@@ -283,8 +283,10 @@ def pair_bluetooth():
     pair_done = threading.Event()
 
     def do_pair():
-        result = http_post(f'{DEVICE_OWNER_URL}/bluetooth/pair',
-                           {'mac': pi_mac}, timeout=45)
+        result = adb_shell(
+            f"content query --uri 'content://com.otacon.kiosk/bluetooth/pair?mac={pi_mac}'",
+            timeout=45
+        )
         pair_result['data'] = result
         pair_done.set()
 
@@ -304,8 +306,13 @@ def pair_bluetooth():
             break
 
     pair_thread.join(timeout=10 if tapped else 30)
-    result = pair_result.get('data') or {}
-    status = result.get('status', result.get('error', 'unknown')) if isinstance(result, dict) else str(result)
+    result = pair_result.get('data', '')
+    if 'ok=true' in result:
+        status = 'paired' if 'paired' in result else 'ok'
+    elif 'error=' in result:
+        status = result.split('error=')[-1].strip()
+    else:
+        status = result or 'unknown'
     log.info(f'Bluetooth pairing: {status}')
 
 
@@ -344,7 +351,6 @@ def main():
         if serial == last_serial:
             if is_device_connected(serial):
                 # Re-establish port forwards
-                adb('forward', 'tcp:9090', 'tcp:9090')
                 adb('forward', 'tcp:9091', 'tcp:9091')
                 adb('reverse', 'tcp:8081', 'tcp:8081')
                 time.sleep(10)
@@ -362,7 +368,6 @@ def main():
         provision_device_owner()
         start_snapshot_server()
         setup_port_forwards()
-        wait_for_server(DEVICE_OWNER_URL, 'Device owner bridge', retries=60)
         wait_for_server(SNAPSHOT_URL, 'Snapshot server')
         connect_wifi()
         pair_bluetooth()
@@ -372,7 +377,6 @@ def main():
 
         # Monitor connection + keep services alive
         while is_device_connected(serial):
-            adb('forward', 'tcp:9090', 'tcp:9090')
             adb('forward', 'tcp:9091', 'tcp:9091')
             adb('reverse', 'tcp:8081', 'tcp:8081')
 

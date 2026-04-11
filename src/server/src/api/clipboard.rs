@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::ToSchema;
 
+use super::adb::parse_content_row;
 use super::{ApiError, OkResponse};
 use crate::AppState;
 
@@ -31,9 +32,11 @@ pub async fn get_handler(state: Arc<AppState>) -> Result<Json<ClipboardContent>,
             "clipboard requires device owner app (not available)".into(),
         ));
     }
-    let body = state.bridge.device_get("/clipboard").await?;
-    let content: ClipboardContent = serde_json::from_str(&body).unwrap_or(ClipboardContent { text: None });
-    Ok(Json(content))
+    let output = state.bridge.device_query("clipboard").await?;
+    let text = parse_content_row(&output)
+        .and_then(|row| row.get("text").cloned())
+        .filter(|t| t != "NULL");
+    Ok(Json(ClipboardContent { text }))
 }
 
 #[utoipa::path(
@@ -53,7 +56,7 @@ pub async fn set_handler(
             "clipboard requires device owner app (not available)".into(),
         ));
     }
-    let payload = serde_json::json!({"text": body.text}).to_string();
-    state.bridge.device_post("/clipboard", &payload).await?;
+    let encoded = urlencoding::encode(&body.text);
+    state.bridge.device_query(&format!("clipboard/set?text={encoded}")).await?;
     Ok(Json(serde_json::json!({"ok": true})))
 }

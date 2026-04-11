@@ -148,14 +148,30 @@ public class SnapshotServer {
             String response;
             String contentType = "application/json";
 
-            if (path.equals("/health")) {
+            // Split path and query string
+            String rawPath = path;
+            String queryString = "";
+            if (rawPath.contains("?")) {
+                queryString = rawPath.substring(rawPath.indexOf("?") + 1);
+                rawPath = rawPath.substring(0, rawPath.indexOf("?"));
+            }
+
+            if (rawPath.equals("/health")) {
                 response = "{\"ok\":true}";
-            } else if (path.startsWith("/snapshot")) {
+            } else if (rawPath.startsWith("/snapshot")) {
                 boolean json = path.contains("format=json");
                 contentType = json ? "application/json" : "text/plain; charset=utf-8";
                 response = snapshot(json);
-            } else if (path.equals("/action") && method.equals("POST") && body != null) {
+            } else if (rawPath.equals("/action") && method.equals("POST") && body != null) {
                 response = action(body);
+            } else if (rawPath.equals("/esim/profiles")) {
+                response = esimProfiles();
+            } else if (rawPath.equals("/esim/enable")) {
+                response = esimEnable(queryString);
+            } else if (rawPath.equals("/esim/switch")) {
+                response = esimSwitch(queryString);
+            } else if (rawPath.equals("/esim/defaults")) {
+                response = esimDefaults(queryString);
             } else {
                 sendResponse(out, 404, "application/json", "{\"error\":\"not found\"}");
                 client.close();
@@ -428,5 +444,274 @@ public class SnapshotServer {
         if (children.length() > 0) obj.put("children", children);
 
         return obj;
+    }
+
+    // --- Query string parser ---
+
+    private static Map<String, String> parseQuery(String query) {
+        Map<String, String> params = new HashMap<>();
+        if (query == null || query.isEmpty()) return params;
+        for (String param : query.split("&")) {
+            String[] kv = param.split("=", 2);
+            if (kv.length == 2) {
+                try {
+                    params.put(kv[0], java.net.URLDecoder.decode(kv[1], "UTF-8"));
+                } catch (Exception e) {
+                    params.put(kv[0], kv[1]);
+                }
+            }
+        }
+        return params;
+    }
+
+    // --- Shell command helper ---
+
+    private static String shellExec(String command) throws Exception {
+        Process proc = Runtime.getRuntime().exec(new String[]{"sh", "-c", command});
+        BufferedReader reader = new BufferedReader(new InputStreamReader(proc.getInputStream()));
+        StringBuilder sb = new StringBuilder();
+        String line;
+        while ((line = reader.readLine()) != null) {
+            if (sb.length() > 0) sb.append("\n");
+            sb.append(line);
+        }
+        proc.waitFor();
+        return sb.toString();
+    }
+
+    // --- eSIM: list profiles ---
+
+    private static String esimProfiles() {
+        try {
+            // Get ISub binder for subscription list
+            Object binder = Class.forName("android.os.ServiceManager")
+                .getMethod("getService", String.class)
+                .invoke(null, "isub");
+            Object isub = Class.forName("com.android.internal.telephony.ISub$Stub")
+                .getMethod("asInterface", android.os.IBinder.class)
+                .invoke(null, binder);
+
+            // Get default SMS subId
+            String defaultSms = shellExec("settings get global multi_sim_sms").trim();
+            int defaultSmsSubId = -1;
+            try { defaultSmsSubId = Integer.parseInt(defaultSms); } catch (Exception ignored) {}
+
+            JSONArray profiles = new JSONArray();
+
+            // Try getActiveSubscriptionInfoList first
+            java.lang.reflect.Method getActive = isub.getClass()
+                .getMethod("getActiveSubscriptionInfoList", String.class, String.class, boolean.class);
+            Object result = getActive.invoke(isub, "com.android.shell", "com.android.shell", false);
+
+            // Get isSubscriptionEnabled method for accurate enabled status
+            java.lang.reflect.Method isEnabled = isub.getClass()
+                .getMethod("isSubscriptionEnabled", int.class);
+
+            if (result instanceof java.util.List) {
+                for (Object info : (java.util.List<?>) result) {
+                    android.telephony.SubscriptionInfo sub = (android.telephony.SubscriptionInfo) info;
+                    boolean subEnabled = true;
+                    try {
+                        subEnabled = (boolean) isEnabled.invoke(isub, sub.getSubscriptionId());
+                    } catch (Exception ignored) {}
+
+                    JSONObject profile = new JSONObject();
+                    profile.put("subId", sub.getSubscriptionId());
+                    profile.put("iccid", sub.getIccId());
+                    profile.put("carrier", String.valueOf(sub.getCarrierName()));
+                    profile.put("slot", sub.getSimSlotIndex());
+                    profile.put("embedded", sub.isEmbedded());
+                    profile.put("enabled", subEnabled);
+                    profile.put("isDefault", sub.getSubscriptionId() == defaultSmsSubId);
+                    profiles.put(profile);
+                }
+            }
+
+            // NOTE: Disabled embedded profiles are NOT returned by ISub APIs from shell UID.
+            // The Rust server should call "adb shell dumpsys isub" and parse
+            // SubscriptionInfoInternal entries with isEmbedded=1 for the full list.
+
+            return profiles.toString();
+        } catch (Exception e) {
+            Throwable cause = e;
+            while (cause.getCause() != null && cause.getCause() != cause) cause = cause.getCause();
+            return "{\"error\":\"" + escapeJson(cause.getMessage()) + "\"}";
+        }
+    }
+
+    // --- eSIM: enable/disable ---
+
+    private static String esimEnable(String query) {
+        try {
+            Map<String, String> params = parseQuery(query);
+            String subIdStr = params.get("subId");
+            String enabledStr = params.get("enabled");
+            if (subIdStr == null) return "{\"error\":\"missing subId parameter\"}";
+
+            int subId = Integer.parseInt(subIdStr);
+            boolean enabled = enabledStr == null || !"false".equals(enabledStr);
+
+            // Get ISub service via ServiceManager
+            Object binder = Class.forName("android.os.ServiceManager")
+                .getMethod("getService", String.class)
+                .invoke(null, "isub");
+            Object isub = Class.forName("com.android.internal.telephony.ISub$Stub")
+                .getMethod("asInterface", android.os.IBinder.class)
+                .invoke(null, binder);
+
+            java.lang.reflect.Method method = isub.getClass()
+                .getMethod("setUiccApplicationsEnabled", boolean.class, int.class);
+            Object result = method.invoke(isub, enabled, subId);
+
+            System.out.println("[esim] setUiccApplicationsEnabled(" + enabled + ", " + subId + ") = " + result);
+            return "{\"ok\":true,\"subId\":" + subId + ",\"enabled\":" + enabled + "}";
+        } catch (Exception e) {
+            Throwable cause = e;
+            while (cause.getCause() != null && cause.getCause() != cause) cause = cause.getCause();
+            String msg = cause.getClass().getSimpleName() + ": " + cause.getMessage();
+            System.err.println("[esim] enable error: " + msg);
+            return "{\"error\":\"" + escapeJson(msg) + "\"}";
+        }
+    }
+
+    // --- eSIM: switch active profile via IEuiccController ---
+
+    private static String esimSwitch(String query) {
+        try {
+            java.util.Map<String, String> params = parseQuery(query);
+            String subIdStr = params.get("subId");
+            if (subIdStr == null) return "{\"error\":\"missing subId parameter\"}";
+            int subId = Integer.parseInt(subIdStr);
+
+            // Get IEuiccController binder
+            Object binder = Class.forName("android.os.ServiceManager")
+                .getMethod("getService", String.class)
+                .invoke(null, "econtroller");
+            Object ec = Class.forName("com.android.internal.telephony.euicc.IEuiccController$Stub")
+                .getMethod("asInterface", android.os.IBinder.class)
+                .invoke(null, binder);
+
+            // switchToSubscription(int cardId, int subId, String callingPackage, PendingIntent callback)
+            // Try with null PendingIntent — shell UID might allow it
+            java.lang.reflect.Method switchMethod = ec.getClass()
+                .getMethod("switchToSubscription", int.class, int.class, String.class,
+                    android.app.PendingIntent.class);
+            switchMethod.invoke(ec, 0, subId, "com.android.shell", null);
+
+            System.out.println("[esim] switchToSubscription(0, " + subId + ") called");
+            // No callback — give it a moment then report
+            Thread.sleep(3000);
+            return "{\"ok\":true,\"subId\":" + subId + "}";
+        } catch (Exception e) {
+            Throwable cause = e;
+            while (cause.getCause() != null && cause.getCause() != cause) cause = cause.getCause();
+            String msg = cause.getClass().getSimpleName() + ": " + cause.getMessage();
+            System.err.println("[esim] switch error: " + msg);
+            return "{\"error\":\"" + escapeJson(msg) + "\"}";
+        }
+    }
+
+    // --- eSIM: defaults ---
+
+    private static String esimDefaults(String query) {
+        try {
+            Map<String, String> params = parseQuery(query);
+
+            // Set defaults if parameters provided
+            if (params.containsKey("sms")) {
+                shellExec("settings put global multi_sim_sms " + Integer.parseInt(params.get("sms")));
+            }
+            if (params.containsKey("voice")) {
+                shellExec("settings put global multi_sim_voice " + Integer.parseInt(params.get("voice")));
+            }
+            if (params.containsKey("data")) {
+                shellExec("settings put global multi_sim_data_call " + Integer.parseInt(params.get("data")));
+            }
+
+            // Read current defaults
+            String smsSubId = shellExec("settings get global multi_sim_sms").trim();
+            String voiceSubId = shellExec("settings get global multi_sim_voice").trim();
+            String dataSubId = shellExec("settings get global multi_sim_data_call").trim();
+
+            // Map subIds to ICCIDs via siminfo query
+            String smsIccid = findIccidBySubId(smsSubId);
+            String voiceIccid = findIccidBySubId(voiceSubId);
+            String dataIccid = findIccidBySubId(dataSubId);
+
+            JSONObject result = new JSONObject();
+            result.put("smsSubId", parseOrNull(smsSubId));
+            result.put("smsIccid", smsIccid);
+            result.put("voiceSubId", parseOrNull(voiceSubId));
+            result.put("voiceIccid", voiceIccid);
+            result.put("dataSubId", parseOrNull(dataSubId));
+            result.put("dataIccid", dataIccid);
+            return result.toString();
+        } catch (Exception e) {
+            return "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}";
+        }
+    }
+
+    private static Object parseOrNull(String val) {
+        if (val == null || val.equals("null") || val.isEmpty()) return JSONObject.NULL;
+        try { return Integer.parseInt(val); } catch (Exception e) { return val; }
+    }
+
+    private static String findIccidBySubId(String subIdStr) {
+        if (subIdStr == null || subIdStr.equals("null") || subIdStr.isEmpty()) return null;
+        try {
+            int targetSubId = Integer.parseInt(subIdStr);
+            Object binder = Class.forName("android.os.ServiceManager")
+                .getMethod("getService", String.class)
+                .invoke(null, "isub");
+            Object isub = Class.forName("com.android.internal.telephony.ISub$Stub")
+                .getMethod("asInterface", android.os.IBinder.class)
+                .invoke(null, binder);
+            java.lang.reflect.Method getActive = isub.getClass()
+                .getMethod("getActiveSubscriptionInfoList", String.class, String.class, boolean.class);
+            Object result = getActive.invoke(isub, "com.android.shell", "com.android.shell", false);
+            if (result instanceof java.util.List) {
+                for (Object info : (java.util.List<?>) result) {
+                    android.telephony.SubscriptionInfo sub = (android.telephony.SubscriptionInfo) info;
+                    if (sub.getSubscriptionId() == targetSubId) {
+                        return sub.getIccId();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("[esim] findIccidBySubId failed: " + e.getMessage());
+        }
+        return null;
+    }
+
+    // --- content query output parsers ---
+
+    private static int parseIntField(String row, String field) {
+        // Matches: field=123, or field=123\n
+        int start = row.indexOf(field + "=");
+        if (start < 0) return -1;
+        start += field.length() + 1;
+        int end = start;
+        while (end < row.length() && row.charAt(end) != ',' && row.charAt(end) != '\n') end++;
+        try {
+            return Integer.parseInt(row.substring(start, end).trim());
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
+    private static String parseStringField(String row, String field) {
+        int start = row.indexOf(field + "=");
+        if (start < 0) return null;
+        start += field.length() + 1;
+        int end = start;
+        while (end < row.length() && row.charAt(end) != ',' && row.charAt(end) != '\n') end++;
+        String val = row.substring(start, end).trim();
+        if (val.equals("NULL") || val.isEmpty()) return null;
+        return val;
+    }
+
+    private static String escapeJson(String s) {
+        if (s == null) return "null";
+        return s.replace("\\", "\\\\").replace("\"", "'").replace("\n", " ");
     }
 }

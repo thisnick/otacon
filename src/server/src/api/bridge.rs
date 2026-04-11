@@ -2,19 +2,21 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::adb::adb_shell;
 use super::ApiError;
 
-/// Device owner app — notifications, clipboard, WiFi, BT pairing
-const DEVICE_OWNER_URL: &str = "http://127.0.0.1:9090";
 /// Snapshot server (app_process) — UI tree, actions
 const SNAPSHOT_URL: &str = "http://127.0.0.1:9091";
+
+/// ContentProvider authority for device owner app
+const KIOSK_AUTHORITY: &str = "com.otacon.kiosk";
 
 const HEALTH_CHECK_INTERVAL: Duration = Duration::from_secs(10);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub struct BridgeState {
     client: reqwest::Client,
-    /// Device owner app is available (notifications, clipboard, etc.)
+    /// Device owner app is available (ContentProvider)
     device_owner_available: AtomicBool,
     /// Snapshot server is available (UI tree, actions)
     snapshot_available: AtomicBool,
@@ -33,7 +35,7 @@ impl BridgeState {
         }
     }
 
-    /// Is the device owner app available? (notifications, clipboard, WiFi, BT)
+    /// Is the device owner app available? (ContentProvider)
     pub fn is_device_owner_available(&self) -> bool {
         self.device_owner_available.load(Ordering::Relaxed)
     }
@@ -53,36 +55,22 @@ impl BridgeState {
         http_post(&self.client, SNAPSHOT_URL, path, body).await
     }
 
-    /// GET from the device owner app.
-    pub async fn device_get(&self, path: &str) -> Result<String, ApiError> {
-        http_get(&self.client, DEVICE_OWNER_URL, path).await
-    }
-
-    /// POST to the device owner app.
-    pub async fn device_post(&self, path: &str, body: &str) -> Result<String, ApiError> {
-        http_post(&self.client, DEVICE_OWNER_URL, path, body).await
-    }
-
-    /// PUT to the device owner app.
-    pub async fn device_put(&self, path: &str, body: &str) -> Result<String, ApiError> {
-        http_put(&self.client, DEVICE_OWNER_URL, path, body).await
-    }
-
-    /// DELETE to the device owner app.
-    pub async fn device_delete(&self, path: &str) -> Result<String, ApiError> {
-        let url = format!("{DEVICE_OWNER_URL}{path}");
-        let resp = self
-            .client
-            .delete(&url)
-            .send()
-            .await
-            .map_err(|e| ApiError::Adb(format!("bridge DELETE {path} failed: {e}")))?;
-        let status = resp.status();
-        let text = resp.text().await.map_err(|e| ApiError::Adb(format!("bridge read error: {e}")))?;
-        if !status.is_success() {
-            return Err(ApiError::Adb(format!("bridge DELETE {path} returned {status}: {text}")));
+    /// Query the device owner ContentProvider via ADB.
+    /// Path is relative, e.g. "clipboard" or "sms/send?to=+1234&body=hello"
+    pub async fn device_query(&self, path: &str) -> Result<String, ApiError> {
+        let uri = format!("content://{KIOSK_AUTHORITY}/{path}");
+        let output = adb_shell(&format!("content query --uri '{uri}'")).await?;
+        if output.contains("error=") {
+            // Extract error message from "Row: 0 error=..."
+            let err = output
+                .split("error=")
+                .nth(1)
+                .unwrap_or(&output)
+                .trim()
+                .to_string();
+            return Err(ApiError::Adb(format!("device owner: {err}")));
         }
-        Ok(text)
+        Ok(output)
     }
 }
 
@@ -118,35 +106,14 @@ async fn http_post(client: &reqwest::Client, base: &str, path: &str, body: &str)
     Ok(text)
 }
 
-async fn http_put(client: &reqwest::Client, base: &str, path: &str, body: &str) -> Result<String, ApiError> {
-    let url = format!("{base}{path}");
-    let resp = client
-        .put(&url)
-        .header("Content-Type", "application/json; charset=utf-8")
-        .body(body.to_string())
-        .send()
-        .await
-        .map_err(|e| ApiError::Adb(format!("bridge PUT {path} failed: {e}")))?;
-    let status = resp.status();
-    let text = resp.text().await.map_err(|e| ApiError::Adb(format!("bridge read error: {e}")))?;
-    if !status.is_success() {
-        return Err(ApiError::Adb(format!("bridge PUT {path} returned {status}: {text}")));
-    }
-    Ok(text)
-}
-
 /// Background task that periodically checks if both servers are available.
 pub fn spawn_health_checker(bridge: Arc<BridgeState>) {
     tokio::spawn(async move {
         loop {
-            // Check device owner app
-            let do_ok = bridge
-                .client
-                .get(format!("{DEVICE_OWNER_URL}/health"))
-                .timeout(Duration::from_secs(2))
-                .send()
+            // Check device owner app via ContentProvider
+            let do_ok = adb_shell("content query --uri 'content://com.otacon.kiosk/health'")
                 .await
-                .map(|r| r.status().is_success())
+                .map(|out| out.contains("ok=true"))
                 .unwrap_or(false);
             let do_was = bridge.device_owner_available.swap(do_ok, Ordering::Relaxed);
             if do_ok != do_was {
