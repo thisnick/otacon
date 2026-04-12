@@ -518,6 +518,69 @@
     text-align: center;
   }
 
+  /* --- SIM panel --- */
+  .sim-panel {
+    background: var(--surface);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-top: 20px;
+  }
+  .sim-header {
+    padding: 12px 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .sim-header .label {
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+  .sim-body { padding: 12px 18px; }
+  .sim-body.collapsed { display: none; }
+  .sim-profiles { display: flex; flex-direction: column; gap: 8px; }
+  .sim-card {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 14px;
+    background: var(--bg);
+    border-radius: 6px;
+    border: 1px solid var(--border);
+  }
+  .sim-card.active { border-color: var(--green-dim); }
+  .sim-card .sim-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    flex-shrink: 0;
+  }
+  .sim-card.active .sim-dot { background: var(--green); }
+  .sim-card .sim-info { flex: 1; min-width: 0; }
+  .sim-card .sim-carrier {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+  }
+  .sim-card .sim-detail {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+  .sim-card .sim-actions { display: flex; gap: 6px; flex-shrink: 0; }
+  .sim-empty {
+    padding: 12px 0;
+    font-size: 12px;
+    color: var(--text-muted);
+    font-style: italic;
+    text-align: center;
+  }
+
   @media (max-width: 800px) {
     .main-panel { flex-direction: column; }
     .screen-col { width: 100%; }
@@ -599,6 +662,24 @@
     <div class="info-item"><dt>Activity</dt><dd>—</dd></div>
     <div class="info-item"><dt>Resolution</dt><dd>—</dd></div>
     <div class="info-item"><dt>Window</dt><dd>—</dd></div>
+  </div>
+
+  <div class="sim-panel">
+    <div class="sim-header" onclick="toggleSimPanel()">
+      <span class="label">SIM / eSIM</span>
+      <div class="controls">
+        <button class="pill" onclick="event.stopPropagation();refreshSimProfiles()">Refresh</button>
+      </div>
+    </div>
+    <div class="sim-body" id="simBody">
+      <div class="sim-profiles" id="simProfiles">
+        <div class="sim-empty">loading...</div>
+      </div>
+      <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+        <input type="text" id="simActivationCode" placeholder="LPA:1$server$code" style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:4px;font-family:'JetBrains Mono',monospace;font-size:11px">
+        <button class="pill" onclick="simInstall()">Install</button>
+      </div>
+    </div>
   </div>
 
   <div class="sms-panel">
@@ -942,7 +1023,7 @@ function escHtml(s) {
 }
 
 async function refreshAll() {
-  await Promise.all([refreshScreenshot(), refreshSnapshot(), refreshInfo()]);
+  await Promise.all([refreshScreenshot(), refreshSnapshot(), refreshInfo(), refreshSimProfiles()]);
 }
 
 function toggleJsonMode() {
@@ -1078,6 +1159,105 @@ async function pollCallStatus() {
 callPollInterval = setInterval(pollCallStatus, 1000);
 
 // --- SMS ---
+// --- SIM panel ---
+let simExpanded = true;
+
+function toggleSimPanel() {
+  simExpanded = !simExpanded;
+  document.getElementById('simBody').className = 'sim-body' + (simExpanded ? '' : ' collapsed');
+}
+
+async function refreshSimProfiles() {
+  try {
+    const res = await fetch('/api/esim/profiles');
+    if (!res.ok) return;
+    const profiles = await res.json();
+    const el = document.getElementById('simProfiles');
+    if (!profiles.length) {
+      el.innerHTML = '<div class="sim-empty">no profiles</div>';
+      return;
+    }
+    el.innerHTML = profiles.map(p => {
+      const active = p.enabled;
+      const type = p.embedded ? 'eSIM' : 'SIM';
+      const detail = p.iccid.includes('[') ? `subId:${p.subId}` : `${p.iccid.slice(0,6)}...${p.iccid.slice(-4)}`;
+      return `<div class="sim-card${active ? ' active' : ''}">` +
+        `<div class="sim-dot"></div>` +
+        `<div class="sim-info">` +
+          `<div class="sim-carrier">${escHtml(p.carrier || 'Unknown')} <span style="color:var(--text-muted);font-size:11px">${type} #${p.subId}</span></div>` +
+          `<div class="sim-detail">${detail}${p.isDefault ? ' \u2022 default' : ''}${active ? '' : ' \u2022 disabled'}</div>` +
+        `</div>` +
+        `<div class="sim-actions">` +
+          (p.embedded && !active ? `<button class="pill" onclick="simSwitch(${p.subId})">Activate</button>` : '') +
+          (p.embedded && active ? `<button class="pill" style="opacity:0.5">Active</button>` : '') +
+          (p.embedded ? `<button class="pill" style="background:var(--red);color:#fff;opacity:0.7" onclick="simDelete(${p.subId},'${escHtml(p.carrier)}')">Delete</button>` : '') +
+        `</div>` +
+      `</div>`;
+    }).join('');
+  } catch(e) {
+    document.getElementById('simProfiles').innerHTML = '<div class="sim-empty">error loading</div>';
+  }
+}
+
+async function simSwitch(subId) {
+  if (!confirm(`Switch to eSIM profile #${subId}?`)) return;
+  try {
+    const res = await fetch('/api/esim/switch', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({subId})
+    });
+    if (res.ok) {
+      setTimeout(refreshSimProfiles, 5000);
+    }
+  } catch(e) {}
+}
+
+async function simInstall() {
+  const code = document.getElementById('simActivationCode').value.trim();
+  if (!code) return;
+  if (!confirm('Install eSIM profile?\n\n' + code)) return;
+  try {
+    document.getElementById('simActivationCode').value = 'installing...';
+    const res = await fetch('/api/esim/install', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({activationCode: code})
+    });
+    const data = await res.json();
+    if (data.success || data.ok) {
+      document.getElementById('simActivationCode').value = '';
+      setTimeout(refreshSimProfiles, 3000);
+    } else {
+      document.getElementById('simActivationCode').value = code;
+      alert('Install failed: ' + (data.error || JSON.stringify(data)));
+    }
+  } catch(e) {
+    document.getElementById('simActivationCode').value = code;
+    alert('Install error: ' + e.message);
+  }
+}
+
+async function simDelete(subId, carrier) {
+  if (!confirm(`Delete eSIM profile "${carrier}" (subId:${subId})?\n\nThis cannot be undone.`)) return;
+  try {
+    const res = await fetch('/api/esim/delete', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({subId})
+    });
+    const data = await res.json();
+    if (data.success || data.ok) {
+      setTimeout(refreshSimProfiles, 3000);
+    } else {
+      alert('Delete failed: ' + (data.error || JSON.stringify(data)));
+    }
+  } catch(e) {
+    alert('Delete error: ' + e.message);
+  }
+}
+
+// --- SMS panel ---
 let smsExpanded = true;
 let selectedThread = null;
 
