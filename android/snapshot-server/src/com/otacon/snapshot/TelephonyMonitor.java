@@ -19,6 +19,7 @@ import java.util.concurrent.Executor;
 public class TelephonyMonitor {
     private static final String TAG = "TelephonyMonitor";
     private static final String EVENT_URL = "http://127.0.0.1:8081/api/internal/event";
+    private static final String SMS_ID_FILE = "/data/local/tmp/otacon-last-sms-id";
 
     private String prevState = "idle";
     private String callNumber = null;
@@ -62,23 +63,54 @@ public class TelephonyMonitor {
     }
 
     private void initSmsBaseline() {
+        // Try to restore from persisted file first (survives restarts)
+        try {
+            java.io.BufferedReader fr = new java.io.BufferedReader(
+                new java.io.FileReader(SMS_ID_FILE));
+            String saved = fr.readLine();
+            fr.close();
+            if (saved != null && !saved.isEmpty()) {
+                lastSeenSmsId = Long.parseLong(saved.trim());
+                System.out.println("[telephony] SMS baseline restored from file: " + lastSeenSmsId);
+            }
+        } catch (Exception e) {
+            // file doesn't exist yet, fall through to content query
+        }
+
+        // Query current latest SMS ID — use the higher of persisted vs current
+        // Note: --limit is not supported on all Android versions, so we sort DESC and take first line
         try {
             Process p = Runtime.getRuntime().exec(new String[]{
                 "sh", "-c",
-                "content query --uri content://sms/inbox --projection _id --sort \"_id DESC\" --limit 1"
+                "content query --uri content://sms/inbox --projection _id --sort \"_id DESC\""
             });
             java.io.BufferedReader reader = new java.io.BufferedReader(
                 new java.io.InputStreamReader(p.getInputStream()));
             String line = reader.readLine();
-            p.waitFor();
+            p.destroy(); // only need first line, kill the rest
             if (line != null && line.contains("_id=")) {
-                lastSeenSmsId = Long.parseLong(
+                long currentMax = Long.parseLong(
                     line.replaceAll(".*_id=", "").replaceAll(",.*", "").trim());
+                if (currentMax > lastSeenSmsId) {
+                    lastSeenSmsId = currentMax;
+                }
             }
         } catch (Exception e) {
-            // ignore
+            System.out.println("[telephony] WARNING: SMS content query failed, using persisted baseline");
         }
+
+        persistSmsId();
         System.out.println("[telephony] SMS baseline: " + lastSeenSmsId);
+    }
+
+    private void persistSmsId() {
+        try {
+            java.io.FileWriter fw = new java.io.FileWriter(SMS_ID_FILE);
+            fw.write(String.valueOf(lastSeenSmsId));
+            fw.close();
+        } catch (Exception e) {
+            // best effort
+        }
     }
 
     private void startSmsMonitor(Looper looper) {
@@ -114,6 +146,7 @@ public class TelephonyMonitor {
                     String body = line.replaceAll(".*body=", "").replaceAll(",\\s*$", "").trim();
                     if (id > lastSeenSmsId) {
                         lastSeenSmsId = id;
+                        persistSmsId();
                         System.out.println("[telephony] New SMS from " + address);
                         JSONObject data = new JSONObject();
                         data.put("from", address);

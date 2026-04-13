@@ -20,13 +20,14 @@ echo "Compiling..."
 javac -source 17 -target 17 \
     -cp "$ANDROID_JAR" \
     -d "$BUILD_DIR/classes" \
-    "$SCRIPT_DIR/src/com/otacon/snapshot/SnapshotServer.java"
+    "$SCRIPT_DIR"/src/com/otacon/snapshot/*.java
 
 echo "Creating DEX jar..."
 # Use d8 to convert to DEX format (required for app_process)
+# Include all classes in the package
 "${ANDROID_HOME}/build-tools/34.0.0/d8" \
     --output "$BUILD_DIR" \
-    "$BUILD_DIR/classes/com/otacon/snapshot/SnapshotServer.class"
+    "$BUILD_DIR"/classes/com/otacon/snapshot/*.class
 
 # d8 produces classes.dex, package it into a jar
 cd "$BUILD_DIR"
