@@ -761,8 +761,15 @@
     </div>
   </div>
 
-  <div style="margin-top:20px;display:flex;justify-content:flex-end">
-    <button class="pill danger" onclick="showFactoryResetModal()">Factory Reset</button>
+  <div class="sim-panel" style="border-color:var(--red)">
+    <div class="sim-header" onclick="toggleDangerZone()">
+      <span class="label" style="color:var(--red)">Danger Zone</span>
+    </div>
+    <div class="sim-body collapsed" id="dangerBody">
+      <div style="display:flex;justify-content:flex-end">
+        <button class="pill danger" onclick="showFactoryResetModal()">Factory Reset</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -1589,6 +1596,13 @@ function connectEvents() {
       }
     } catch(_) {}
   };
+}
+
+// --- Danger Zone ---
+let dangerExpanded = false;
+function toggleDangerZone() {
+  dangerExpanded = !dangerExpanded;
+  document.getElementById('dangerBody').className = 'sim-body' + (dangerExpanded ? '' : ' collapsed');
 }
 
 // --- Factory Reset ---
