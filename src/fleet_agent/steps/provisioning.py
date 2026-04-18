@@ -81,16 +81,28 @@ def provision_device_owner(serial: str):
 def apply_restrictions(serial: str):
     if not is_device_owner_set(serial):
         return
+    # Ensure the kiosk APK is up-to-date before sending the broadcast —
+    # an old APK may have a stale USER_RESTRICTIONS list.
+    if os.path.exists(APK_PATH):
+        result = adb(serial, 'install', '-r', APK_PATH, timeout=30)
+        if 'Success' in result:
+            log.info(f'[{serial}] Kiosk APK updated before applying restrictions')
     adb_shell(
         serial,
         f'am broadcast -a {DEVICE_OWNER_PKG}.CLEAR_RESTRICTIONS '
         f'-n {DEVICE_OWNER_PKG}/.BootReceiver'
     )
-    time.sleep(1)
+    time.sleep(2)
     adb_shell(
         serial,
         f'am broadcast -a {DEVICE_OWNER_PKG}.APPLY_RESTRICTIONS '
         f'-n {DEVICE_OWNER_PKG}/.BootReceiver'
     )
+    time.sleep(1)
+    # Verify restrictions were actually applied
+    dumpsys = adb_shell(serial, 'dumpsys user', timeout=5)
+    if 'no_factory_reset' not in dumpsys:
+        log.warning(f'[{serial}] Restrictions may not have taken effect — '
+                    f'no_factory_reset missing from dumpsys user after apply')
     adb_shell(serial, f'cmd notification allow_listener {DEVICE_OWNER_PKG}/.OtaconNotificationListener')
     log.info(f'[{serial}] Restrictions applied')
