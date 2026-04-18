@@ -126,6 +126,34 @@ class TestCheckRestrictions:
         with patch('fleet_agent.phone.health.adb_shell', return_value=''):
             assert check_restrictions('SERIAL') is False
 
+    def test_returns_false_when_device_policy_section_empty(self):
+        """Pixel edge case: Device policy restrictions section exists but is empty."""
+        from fleet_agent.phone.health import check_restrictions
+        dumpsys = (
+            '  Device policy restrictions:\n'
+            '  Effective restrictions:\n'
+            '    no_factory_reset\n'
+        )
+        with patch('fleet_agent.phone.health.adb_shell', return_value=dumpsys):
+            assert check_restrictions('SERIAL') is False
+
+    def test_ignores_effective_restrictions_section(self):
+        """no_factory_reset in Effective but not Device policy must still fail."""
+        from fleet_agent.phone.health import check_restrictions
+        dumpsys = (
+            '  Effective restrictions:\n'
+            '    no_factory_reset\n'
+            '    no_config_wifi\n'
+            '    no_config_bluetooth\n'
+            '    no_config_location\n'
+            '    no_safe_boot\n'
+            '    no_usb_file_transfer\n'
+            '    no_airplane_mode\n'
+            '    no_config_tethering\n'
+        )
+        with patch('fleet_agent.phone.health.adb_shell', return_value=dumpsys):
+            assert check_restrictions('SERIAL') is False
+
 
 class TestCheckSnapshotAlive:
     def test_returns_true_when_running(self):
