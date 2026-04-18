@@ -9,12 +9,46 @@ from ..steps.provisioning import DEVICE_OWNER_PKG
 log = logging.getLogger('fleet-agent')
 
 
-def check_bt_bonded(adapter_mac: str | None, phone_bt_mac: str | None) -> bool:
-    """Bond exists in /var/lib/bluetooth."""
+def check_bt_bonded(adapter_mac: str | None, phone_bt_mac: str | None,
+                     serial: str | None = None) -> bool:
+    """Bond exists on both Pi (BlueZ) and phone sides.
+
+    Checks three signals to avoid false positives from one-sided state:
+    1. /var/lib/bluetooth dir exists (Pi filesystem)
+    2. bluetoothctl reports Paired: yes (BlueZ D-Bus)
+    3. Phone reports the adapter as bonded (Android dumpsys) — optional
+    """
     if not adapter_mac or not phone_bt_mac:
         return False
+
+    # 1. Filesystem check
     bond_dir = f'/var/lib/bluetooth/{adapter_mac.upper()}/{phone_bt_mac.upper()}'
-    return os.path.isdir(bond_dir)
+    if not os.path.isdir(bond_dir):
+        return False
+
+    # 2. BlueZ D-Bus check — the authoritative Pi-side source
+    try:
+        result = run_cmd(
+            ['bluetoothctl'],
+            input=f'select {adapter_mac}\ninfo {phone_bt_mac}\n',
+            timeout=10,
+        )
+        if 'Paired: yes' not in (result.stdout or ''):
+            log.debug(f'bt_bonded: dir exists but BlueZ says not paired')
+            return False
+    except Exception:
+        return False
+
+    # 3. Phone-side cross-check (optional — log mismatch but don't block)
+    if serial:
+        try:
+            bt_dump = adb_shell(serial, 'dumpsys bluetooth_manager', timeout=5)
+            if adapter_mac.upper() not in bt_dump.upper():
+                log.warning(f'bt_bonded: Pi paired but phone has no record of {adapter_mac}')
+        except Exception:
+            pass  # non-fatal
+
+    return True
 
 
 def check_bt_connected(adapter_mac: str | None, phone_bt_mac: str | None) -> bool:

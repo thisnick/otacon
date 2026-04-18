@@ -20,18 +20,34 @@ def heal_bt_bonded(serial: str, snapshot_url: str,
 
 
 def heal_bt_connected(adapter_mac: str | None, phone_bt_mac: str | None) -> bool:
-    """Reconnect an existing bond via bluetoothctl."""
+    """Reconnect an existing bond via bluetoothctl.
+
+    Returns True only if the D-Bus Connected property is true after the
+    connect attempt — not just based on bluetoothctl output text.
+    """
     if not adapter_mac or not phone_bt_mac:
         return False
     log.info(f'Healing: bt_connected (reconnecting {phone_bt_mac})')
     try:
-        result = run_cmd(
+        run_cmd(
             ['bluetoothctl'],
             input=f'select {adapter_mac}\nconnect {phone_bt_mac}\n',
             timeout=15,
         )
-        stdout = result.stdout or ''
-        return 'successful' in stdout.lower() or 'already connected' in stdout.lower()
+    except Exception:
+        pass
+
+    # Verify connection actually came up via D-Bus property
+    try:
+        result = run_cmd(
+            ['bluetoothctl'],
+            input=f'select {adapter_mac}\ninfo {phone_bt_mac}\n',
+            timeout=10,
+        )
+        connected = 'Connected: yes' in (result.stdout or '')
+        if not connected:
+            log.warning(f'bt_connected heal: connect command ran but device not connected')
+        return connected
     except Exception:
         return False
 

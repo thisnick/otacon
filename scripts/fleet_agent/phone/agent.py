@@ -167,7 +167,7 @@ class PhoneAgent:
         """Return {name: check_fn} for all maintenance checks."""
         checks = {}
         checks['bt_bonded'] = lambda: health.check_bt_bonded(
-            self.adapter_mac, self.phone_bt_mac)
+            self.adapter_mac, self.phone_bt_mac, serial=self.serial)
         checks['bt_connected'] = lambda: health.check_bt_connected(
             self.adapter_mac, self.phone_bt_mac)
         checks['wifi'] = lambda: health.check_wifi_connected(self.serial)
@@ -186,18 +186,20 @@ class PhoneAgent:
         hs.count_today += 1
 
         try:
+            heal_ok = True
             if name == 'bt_bonded':
                 result = heal.heal_bt_bonded(
                     self.serial, self.snapshot_url, report_error=self._report_error)
-                if result:
+                if result and any(result):
                     self.adapter_mac, self.adapter_hci, self.phone_bt_mac = result
                     # Re-register with server so it gets updated MACs
-                    identity = gather_identity(self.serial)
                     register_with_server(
                         self.serial, self.snapshot_port, self.internal_port,
                         adapter_mac=self.adapter_mac, phone_bt_mac=self.phone_bt_mac)
+                else:
+                    heal_ok = False
             elif name == 'bt_connected':
-                heal.heal_bt_connected(self.adapter_mac, self.phone_bt_mac)
+                heal_ok = heal.heal_bt_connected(self.adapter_mac, self.phone_bt_mac)
             elif name == 'wifi':
                 heal.heal_wifi(self.serial)
             elif name == 'device_owner':
@@ -208,8 +210,8 @@ class PhoneAgent:
                 heal.heal_snapshot_alive(self.serial, self.snapshot_port, self.internal_port)
             elif name == 'port_forwards':
                 heal.heal_port_forwards(self.serial, self.snapshot_port, self.internal_port)
-            hs.last_result = 'ok'
-            hs.last_error = None
+            hs.last_result = 'ok' if heal_ok else 'failed'
+            hs.last_error = None if heal_ok else 'heal ran but check still fails'
         except Exception as e:
             hs.last_result = 'failed'
             hs.last_error = str(e)
