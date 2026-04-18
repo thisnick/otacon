@@ -29,6 +29,8 @@ services:
       - ALSA_CAPTURE_DEVICE=${ALSA_CAPTURE_DEVICE:-plughw:Device,0}
       - ALSA_PLAYBACK_DEVICE=${ALSA_PLAYBACK_DEVICE:-plughw:Device,0}
       - AUDIO_BACKEND=${AUDIO_BACKEND:-alsa}
+      - REGISTRY_URL=${REGISTRY_URL:-}
+      - HOST_ID=${TS_HOSTNAME:-otacon-pi}
 
   voice:
     platform: linux/arm64
