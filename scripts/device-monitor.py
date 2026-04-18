@@ -541,7 +541,7 @@ class PhoneMonitor:
         # Mute the user-facing alert streams (keep music/voice for our audio routing)
         for stream in ('5', '2', '1', '8'):  # NOTIFICATION, RING, SYSTEM, ACCESSIBILITY
             self.adb_shell(f'media volume --stream {stream} --set 0 2>/dev/null || true')
-        self.adb_shell('cmd notification set_dnd none')  # not strict — best effort
+        self.adb_shell('cmd notification set_dnd alarms')  # zen=3: silence ring/notif, keep media+alarms
         # Disable vibration
         self.adb_shell('settings put system vibrate_when_ringing 0')
         self.adb_shell('settings put system haptic_feedback_enabled 0')
