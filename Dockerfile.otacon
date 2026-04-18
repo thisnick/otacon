@@ -135,8 +135,8 @@ ENV AUDIO_BACKEND=alsa
 COPY config/supervisord-base.conf /etc/supervisor/conf.d/supervisord-base.conf
 COPY config/supervisord-bluetooth.conf /etc/supervisor/conf.d/supervisord-bluetooth.conf
 COPY config/bluetooth-main.conf /etc/bluetooth/main.conf
-COPY scripts/fleet_agent/ /opt/fleet_agent/
-COPY scripts/fleet-cli /opt/fleet-cli
+COPY src/fleet_agent/ /opt/fleet_agent/
+COPY src/fleet-cli /opt/fleet-cli
 COPY scripts/otacon-entrypoint.sh /entrypoint.sh
 COPY scripts/wifi-monitor.sh /opt/wifi-monitor.sh
 RUN chmod +x /entrypoint.sh /opt/wifi-monitor.sh /opt/fleet-cli
