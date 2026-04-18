@@ -181,6 +181,18 @@ class PhoneAgent:
     def _run_heal(self, name: str):
         """Run heal for a given check name."""
         hs = self.status.heals.setdefault(name, HealStatus())
+
+        # Rate-limit expensive heals (bt_bonded takes 30-150s per attempt)
+        if name == 'bt_bonded' and hs.last_at:
+            from datetime import datetime, timezone
+            try:
+                elapsed = (datetime.now(timezone.utc) -
+                           datetime.fromisoformat(hs.last_at)).total_seconds()
+                if elapsed < 300:  # 5-minute cooldown
+                    return
+            except (ValueError, TypeError):
+                pass
+
         hs.last_at = now_iso()
         hs.last_result = 'in_progress'
         hs.count_today += 1
@@ -196,6 +208,9 @@ class PhoneAgent:
                     register_with_server(
                         self.serial, self.snapshot_port, self.internal_port,
                         adapter_mac=self.adapter_mac, phone_bt_mac=self.phone_bt_mac)
+                    # Verify the bond actually formed
+                    heal_ok = health.check_bt_bonded(
+                        self.adapter_mac, self.phone_bt_mac, serial=self.serial)
                 else:
                     heal_ok = False
             elif name == 'bt_connected':
