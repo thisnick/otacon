@@ -22,6 +22,7 @@ import socket
 import subprocess
 import threading
 import time
+import urllib.parse
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
@@ -523,11 +524,30 @@ class PhoneMonitor:
     def configure_screen(self):
         self.log.info('Configuring screen...')
         self.adb_shell('settings put global stay_on_while_plugged_in 0')
-        self.adb_shell('settings put system screen_off_timeout 30000')
+        self.adb_shell('settings put system screen_off_timeout 300000')  # 5 min
         self.adb_shell('settings put system screen_brightness_mode 1')
         self.adb_shell('locksettings set-password-quality 0')
         self.adb_shell('svc data disable')
         self.adb_shell('pm disable-user --user 0 com.google.android.apps.messaging')
+
+    def configure_silent(self):
+        """Mute all alerts + vibrations. Kiosk phones should be silent.
+
+        Sets stream volumes to 0 directly (not via DISALLOW_ADJUST_VOLUME which
+        breaks BlueALSA BT audio on Samsung). Disables vibration on ring/touch.
+        Per-stream mute leaves voice_call/music alone so HFP/A2DP audio still works.
+        """
+        self.log.info('Setting silent mode...')
+        # Mute the user-facing alert streams (keep music/voice for our audio routing)
+        for stream in ('5', '2', '1', '8'):  # NOTIFICATION, RING, SYSTEM, ACCESSIBILITY
+            self.adb_shell(f'media volume --stream {stream} --set 0 2>/dev/null || true')
+        self.adb_shell('cmd notification set_dnd none')  # not strict — best effort
+        # Disable vibration
+        self.adb_shell('settings put system vibrate_when_ringing 0')
+        self.adb_shell('settings put system haptic_feedback_enabled 0')
+        self.adb_shell('settings put system notification_vibration_intensity 0 2>/dev/null || true')
+        self.adb_shell('settings put system ring_vibration_intensity 0 2>/dev/null || true')
+        self.adb_shell('settings put system touch_vibration_intensity 0 2>/dev/null || true')
 
     def is_device_owner_set(self) -> bool:
         output = self.adb_shell('dpm list-owners')
@@ -782,10 +802,15 @@ class PhoneMonitor:
             # dialogs are dismissed when the screen sleeps, blocking the tap.
             if i % 5 == 0:  # check every 5s to avoid spamming
                 self.ensure_screen_on()
+            # Strategy A (Samsung): foreground AlertDialog with "Pair" button
             ref = self.find_pair_button()
             if ref:
                 self.log.info(f"Auto-tapping 'Pair' button ({ref})")
                 http_post(f'{self.snapshot_url}/action', {'action': 'click', 'ref': ref})
+                tapped = True
+                break
+            # Strategy B (Pixel): notification with "Pair & connect" action
+            if self.tap_pair_notification():
                 tapped = True
                 break
 
@@ -824,6 +849,8 @@ class PhoneMonitor:
                     if ref:
                         self.log.info(f"Auto-tapping 'Pair' button ({ref}) [retry]")
                         http_post(f'{self.snapshot_url}/action', {'action': 'click', 'ref': ref})
+                        break
+                    if self.tap_pair_notification():
                         break
                 retry_thread.join(timeout=45)
                 result = pair_result.get('data', '')
@@ -888,6 +915,52 @@ class PhoneMonitor:
             payload['data'] = data
         http_post(f'{registry_url}/api/v1/events', payload)
         self.log.error(f'[{category}] {message}')
+
+    def tap_pair_notification(self) -> bool:
+        """Find a 'Pairing request' notification and trigger its Pair action.
+
+        Pixel/AOSP shows BT pair as a heads-up notification (not a foreground
+        dialog), so the screen accessibility tree won't see it. We poll the
+        notification listener and trigger action by index.
+        """
+        try:
+            text = self.adb_shell(
+                "content query --uri 'content://com.otacon.kiosk/notifications'",
+                timeout=3,
+            )
+        except Exception:
+            return False
+        if not text:
+            return False
+        # Output format: "Row: 0 json=[...]"
+        match = re.search(r'json=(\[.*\])', text)
+        if not match:
+            return False
+        try:
+            notifs = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            return False
+        for n in notifs:
+            if n.get('package') != 'com.android.settings':
+                continue
+            title = (n.get('title') or '').lower()
+            if 'pair' not in title:
+                continue
+            for action in n.get('actions') or []:
+                atitle = (action.get('title') or '').lower()
+                if 'pair' in atitle and 'cancel' not in atitle and 'block' not in atitle:
+                    key = n.get('key')
+                    idx = action.get('index')
+                    if key is None or idx is None:
+                        continue
+                    enc_key = urllib.parse.quote(str(key), safe='')
+                    self.log.info(f"Triggering pair notification action key={key} idx={idx}")
+                    self.adb_shell(
+                        f"content query --uri 'content://com.otacon.kiosk/notifications/action?key={enc_key}&index={idx}'",
+                        timeout=5,
+                    )
+                    return True
+        return False
 
     def find_pair_button(self) -> str | None:
         data = http_get(f'{self.snapshot_url}/snapshot?format=json', timeout=3)
@@ -1018,6 +1091,7 @@ class PhoneMonitor:
         time.sleep(2)  # let device initialize
 
         self.configure_screen()
+        self.configure_silent()
         self.provision_device_owner()
         self.start_snapshot_server()
         self.setup_port_forwards()

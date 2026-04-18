@@ -89,13 +89,27 @@ def set_adapter_discoverable():
         "org.freedesktop.DBus.ObjectManager",
     )
     found = False
-    for path, interfaces in manager.GetManagedObjects().items():
+    # Sort adapter paths for stable alias indexing across reboots (hci0, hci1, hci2...)
+    items = sorted(manager.GetManagedObjects().items(), key=lambda kv: kv[0])
+    for path, interfaces in items:
         if ADAPTER_IFACE not in interfaces:
             continue
         props = dbus.Interface(
             bus.get_object(BUS_NAME, path),
             "org.freedesktop.DBus.Properties",
         )
+        # Set unique alias per adapter so phones can tell them apart in pair UI
+        # Uses MAC suffix for stability across reboots (hci index can shuffle)
+        try:
+            mac = str(props.Get(ADAPTER_IFACE, "Address"))
+            suffix = mac.replace(':', '')[-4:].upper()
+            alias_target = f"Otacon-{suffix}"
+            current_alias = str(props.Get(ADAPTER_IFACE, "Alias"))
+            if current_alias != alias_target:
+                props.Set(ADAPTER_IFACE, "Alias", alias_target)
+                print(f"Adapter {path} renamed: {current_alias} -> {alias_target}")
+        except Exception as e:
+            print(f"Adapter {path} alias set failed: {e}")
         # Each Set is best-effort — adapters in active pair/connect sessions
         # return org.bluez.Error.Busy. Don't crash the agent in that case.
         for prop, val in [
