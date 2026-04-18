@@ -176,6 +176,10 @@ impl PhoneState {
                 "--no-audio",
                 "--max-fps", &max_fps,
                 "-b", &bitrate,
+                // 1s keyframe interval — recovers from frame drops in <1s
+                // instead of scrcpy default ~10s, which leaves persistent
+                // decoder smear on flaky links / phones under memory pressure.
+                "--video-codec-options=i-frame-interval=1",
                 "--render-driver=opengl",
                 "--window-width", &display_w.to_string(),
                 "--window-height", &display_h.to_string(),
