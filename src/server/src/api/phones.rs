@@ -16,6 +16,8 @@ pub struct PhoneSummary {
     vnc_port: u16,
     snapshot_port: u16,
     internal_port: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    registry_id: Option<String>,
 }
 
 /// GET /phones — list all registered phones.
@@ -33,6 +35,7 @@ pub async fn list(
             vnc_port: ps.config.vnc_port,
             snapshot_port: ps.config.snapshot_port,
             internal_port: ps.config.internal_port,
+            registry_id: ps.config.registry_id.clone(),
         })
         .collect();
     result.sort_by(|a, b| a.id.cmp(&b.id));
@@ -55,6 +58,7 @@ pub async fn get(
         vnc_port: ps.config.vnc_port,
         snapshot_port: ps.config.snapshot_port,
         internal_port: ps.config.internal_port,
+        registry_id: ps.config.registry_id.clone(),
     }))
 }
 
@@ -131,6 +135,7 @@ pub async fn register(
             vnc_port: config.vnc_port,
             snapshot_port: config.snapshot_port,
             internal_port: config.internal_port,
+            registry_id: config.registry_id,
         }));
     }
 
@@ -154,6 +159,7 @@ pub async fn register(
         snapshot_port,
         internal_port,
         audio_backend: body.audio_backend.unwrap_or_else(|| "alsa".into()),
+        registry_id: None,
     };
 
     let audio_config = crate::AudioConfig::from_env();
@@ -181,6 +187,7 @@ pub async fn register(
         vnc_port: config.vnc_port,
         snapshot_port: config.snapshot_port,
         internal_port: config.internal_port,
+        registry_id: config.registry_id,
     }))
 }
 

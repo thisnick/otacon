@@ -37,6 +37,9 @@ pub struct PhoneConfig {
     /// Audio backend: "bluetooth" or "alsa"
     #[serde(default = "default_audio_backend")]
     pub audio_backend: String,
+    /// Registry-assigned ID (metadata only — not the AppState key)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry_id: Option<String>,
 }
 
 fn default_display_num() -> u16 { 50 }
@@ -250,11 +253,45 @@ async fn detect_resolution(serial: &str) -> (u32, u32) {
 }
 
 /// Load phone configs from a JSON file. Returns empty vec if file doesn't exist.
+///
+/// On load, drops duplicate entries whose `id` matches the registry-assigned
+/// format (`phone-\d+`) when another entry with the same `adb_serial` exists
+/// under a local-format ID. This cleans up stale duplicates from the bug where
+/// registry IDs were inserted as separate phone entries.
 pub async fn load_phones(path: &std::path::Path) -> Vec<PhoneConfig> {
-    match tokio::fs::read_to_string(path).await {
+    let mut phones: Vec<PhoneConfig> = match tokio::fs::read_to_string(path).await {
         Ok(data) => serde_json::from_str(&data).unwrap_or_default(),
-        Err(_) => Vec::new(),
+        Err(_) => return Vec::new(),
+    };
+
+    // Collect serials that have a local-format ID (not matching phone-\d+)
+    let registry_id_re = regex::Regex::new(r"^phone-\d+$").unwrap();
+    let local_serials: std::collections::HashSet<String> = phones.iter()
+        .filter(|p| !p.adb_serial.is_empty() && !registry_id_re.is_match(&p.id))
+        .map(|p| p.adb_serial.clone())
+        .collect();
+
+    let before = phones.len();
+    phones.retain(|p| {
+        // Keep if not a registry-format ID
+        if !registry_id_re.is_match(&p.id) {
+            return true;
+        }
+        // Drop if a local-format entry exists for the same serial
+        if local_serials.contains(&p.adb_serial) {
+            eprintln!("Dropping duplicate registry-ID entry '{}' (serial {} has local entry)", p.id, p.adb_serial);
+            return false;
+        }
+        true
+    });
+
+    if phones.len() < before {
+        eprintln!("Cleaned up {} duplicate phone entries from {}", before - phones.len(), path.display());
+        // Persist the cleaned-up list
+        save_phones(path, &phones).await.ok();
     }
+
+    phones
 }
 
 /// Save phone configs to a JSON file.

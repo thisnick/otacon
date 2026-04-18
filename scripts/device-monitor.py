@@ -383,6 +383,7 @@ class PhoneMonitor:
         self.vnc_port = vnc_port
         self.snapshot_url = f'http://127.0.0.1:{self.snapshot_port}'
         self.phone_id: str | None = None
+        self.registry_id: str | None = None  # registry-assigned ID (metadata only)
         self.adapter_mac: str | None = None  # assigned BT dongle MAC
         self.adapter_hci: str | None = None  # assigned BT dongle hci name (e.g. "hci1")
         self.phone_bt_mac: str | None = None  # phone's BT MAC
@@ -956,7 +957,7 @@ class PhoneMonitor:
         host_id = os.environ.get('HOST_ID', '')
         payload = {
             'host_id': host_id,
-            'phone_id': self.phone_id,
+            'phone_id': self.registry_id or self.phone_id,
             'severity': 'error',
             'category': category,
             'message': message,
@@ -1074,27 +1075,26 @@ class PhoneMonitor:
             payload['adapter_mac'] = self.adapter_mac
         result = http_post(f'{registry_url}/api/v1/phones/register', payload)
         if result:
-            self.phone_id = result.get('phone_id')
-            self.log.info(f'Registered with registry as {self.phone_id}')
+            self.registry_id = result.get('phone_id')
+            self.log.info(f'Registered with registry as {self.registry_id}')
             return result.get('config')
         return None
 
     def deregister_from_registry(self):
         registry_url = os.environ.get('REGISTRY_URL')
-        if not registry_url or not self.phone_id:
+        if not registry_url or not self.registry_id:
             return
         host_id = os.environ.get('HOST_ID', '')
         http_post(f'{registry_url}/api/v1/phones/deregister', {
             'host_id': host_id,
-            'phone_id': self.phone_id,
+            'phone_id': self.registry_id,
         })
-        self.log.info(f'Deregistered {self.phone_id} from registry')
+        self.log.info(f'Deregistered {self.registry_id} from registry')
 
     def register_with_server(self, identity: dict):
         """Register this phone with the local Rust server."""
         payload = {
             'adb_serial': self.serial,
-            'id': self.phone_id,
             'snapshot_port': self.snapshot_port,
             'internal_port': self.internal_port,
         }
@@ -1104,7 +1104,7 @@ class PhoneMonitor:
             payload['phone_bt_mac'] = self.phone_bt_mac
         result = http_post(f'{RUST_SERVER_URL}/phones', payload)
         if result:
-            server_id = result.get('id', self.phone_id)
+            server_id = result.get('id')
             if server_id:
                 self.phone_id = server_id
             self.log.info(f'Registered with Rust server as {self.phone_id}')
