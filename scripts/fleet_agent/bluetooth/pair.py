@@ -15,6 +15,7 @@ from .dongle import (
     allocate_dongle, enum_dongles, get_cached_bt_mac,
     save_dongle_assignment,
 )
+from ..steps.provisioning import apply_restrictions
 from ..steps.screen import ensure_screen_on
 
 log = logging.getLogger('fleet-agent')
@@ -370,5 +371,10 @@ def allocate_and_pair_bluetooth(serial: str, snapshot_url: str,
             log.info(f'[{serial}] Trusted {phone_bt_mac} on {adapter_mac}')
         except Exception:
             pass
+
+        # Re-apply DPM restrictions after successful pair — belt-and-suspenders
+        # against any code path that pairs without the kiosk bracket pattern.
+        log.info(f'[{serial}] Re-applying restrictions after successful pair')
+        apply_restrictions(serial)
 
     return (adapter_mac, adapter_hci, phone_bt_mac)
