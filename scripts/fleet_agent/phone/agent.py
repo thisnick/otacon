@@ -216,6 +216,17 @@ class PhoneAgent:
                     heal_ok = False
             elif name == 'bt_connected':
                 heal_ok = heal.heal_bt_connected(self.adapter_mac, self.phone_bt_mac)
+                if not heal_ok:
+                    hs.consecutive_failures += 1
+                    if hs.consecutive_failures >= 3:
+                        self.log.warning(
+                            f'bt_connected failed {hs.consecutive_failures} times consecutively '
+                            f'— escalating to full re-pair (heal_bt_bonded)')
+                        hs.consecutive_failures = 0
+                        self._run_heal('bt_bonded')
+                        return
+                else:
+                    hs.consecutive_failures = 0
             elif name == 'wifi':
                 heal.heal_wifi(self.serial)
             elif name == 'device_owner':

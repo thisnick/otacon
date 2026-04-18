@@ -34,6 +34,7 @@ class HealStatus:
     last_result: Optional[Literal["ok", "failed", "in_progress"]] = None
     count_today: int = 0
     last_error: Optional[str] = None
+    consecutive_failures: int = 0
 
 
 @dataclass
