@@ -212,6 +212,13 @@ def save_dongle_assignment(serial: str, adapter_mac: str, phone_bt_mac: str | No
         log.warning(f'Could not persist dongle assignment: {e}')
 
 
+def load_dongle_assignments() -> dict[str, str]:
+    """Return a {serial: adapter_mac} mapping from the in-memory cache (seeded from phones.json)."""
+    with _dongle_lock:
+        _seed_cache()
+        return dict(_dongle_cache)  # type: ignore[arg-type]
+
+
 def allocate_dongle(serial: str) -> tuple[str, str] | None:
     """Allocate a BT dongle for a phone. Returns (adapter_mac, hci_name) or None.
 
