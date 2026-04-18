@@ -10,7 +10,7 @@ from ..util.http import http_get, http_post
 from .status import MonitorStatus, StepStatus, HealStatus, now_iso, push_status
 from . import health, heal
 from ..steps import screen, provisioning, snapshot, passcode, wifi
-from ..bluetooth.pair import allocate_and_pair_bluetooth
+from ..bluetooth.pair import allocate_and_pair_bluetooth, run_pair_dialog_watcher
 from ..registry.identity import gather_identity
 from ..registry.client import register_with_registry, deregister_from_registry, report_error
 from ..registry.server import register_with_server, deregister_from_server
@@ -50,6 +50,7 @@ class PhoneAgent:
         self.adapter_hci: str | None = None
         self.phone_bt_mac: str | None = None
         self.stopped = threading.Event()
+        self._pair_watcher_thread: threading.Thread | None = None
         self.status = MonitorStatus()
         self.log = logging.getLogger(f'phone[{serial}]')
 
@@ -244,10 +245,26 @@ class PhoneAgent:
             hs.last_error = str(e)
             self.log.error(f'Heal {name} failed: {e}')
 
+    def _start_pair_watcher(self):
+        """Start background pair-dialog watcher thread if BT is active."""
+        if os.environ.get('AUDIO_BACKEND') != 'bluetooth':
+            return
+        if self._pair_watcher_thread and self._pair_watcher_thread.is_alive():
+            return
+        self._pair_watcher_thread = threading.Thread(
+            target=run_pair_dialog_watcher,
+            args=(self.serial, self.snapshot_url, self.stopped),
+            daemon=True,
+            name=f'pair-watcher-{self.serial}',
+        )
+        self._pair_watcher_thread.start()
+        self.log.info('Pair-dialog background watcher started')
+
     def run(self):
         """Full phone setup and monitoring loop. Blocks until disconnect."""
         self.run_setup()
         self.status.phase = 'monitoring'
+        self._start_pair_watcher()
         push_status(self.status, self.phone_id, self.internal_port)
 
         while not self.stopped.is_set() and self.is_connected():

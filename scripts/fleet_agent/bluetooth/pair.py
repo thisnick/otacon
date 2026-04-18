@@ -219,6 +219,34 @@ def _do_pair_tap_loop(serial: str, snapshot_url: str, label: str = '') -> bool:
     return False
 
 
+def run_pair_dialog_watcher(serial: str, snapshot_url: str,
+                            stop_event: threading.Event,
+                            poll_interval: float = 3.0):
+    """Background watcher that auto-taps pair dialogs whenever they appear.
+
+    Runs until stop_event is set. Designed to be started as a daemon thread
+    from PhoneAgent so pair dialogs are handled regardless of which heal
+    (or reconnect churn) triggered them.
+    """
+    while not stop_event.is_set():
+        try:
+            ref = _find_pair_button(snapshot_url)
+            if ref:
+                log.info(f"[{serial}] Pair-dialog watcher: auto-tapping '{ref}'")
+                http_post(f'{snapshot_url}/action', {'action': 'click', 'ref': ref})
+                # Brief cooldown after tap to let the dialog dismiss
+                stop_event.wait(2)
+                continue
+            if _tap_pair_notification(serial):
+                log.info(f'[{serial}] Pair-dialog watcher: tapped notification action')
+                stop_event.wait(2)
+                continue
+        except Exception as e:
+            log.debug(f'[{serial}] Pair-dialog watcher error: {e}')
+        stop_event.wait(poll_interval)
+    log.info(f'[{serial}] Pair-dialog watcher stopped')
+
+
 def allocate_and_pair_bluetooth(serial: str, snapshot_url: str,
                                  report_error=None) -> tuple[str | None, str | None, str | None]:
     """Allocate a BT dongle and pair the phone with it.
