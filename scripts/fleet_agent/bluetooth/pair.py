@@ -98,11 +98,11 @@ def _tap_pair_notification(serial: str) -> bool:
     return False
 
 
-def _btctl(adapter_mac: str, *commands: str) -> str:
+def _btctl(adapter_mac: str, *commands: str, timeout: int = 15) -> str:
     """Run bluetoothctl commands on a specific adapter."""
     cmds = f'select {adapter_mac}\n' + '\n'.join(commands) + '\n'
     try:
-        result = run_cmd(['bluetoothctl'], input=cmds, timeout=15)
+        result = run_cmd(['bluetoothctl'], input=cmds, timeout=timeout)
         return result.stdout or ''
     except Exception as e:
         log.warning(f'bluetoothctl failed: {e}')
@@ -182,13 +182,21 @@ def _run_bluez_pair(adapter_mac: str, adapter_hci: str, serial: str):
 
         # Pair, trust, connect
         log.info(f'[{serial}] BlueZ: pairing with {phone_bt_mac}')
-        _btctl(adapter_mac, f'pair {phone_bt_mac}')
+        pair_out = _btctl(adapter_mac, f'pair {phone_bt_mac}', timeout=30)
+        log.info(f'[{serial}] BlueZ pair result: {pair_out.strip()[-200:]}')
         time.sleep(1)
-        _btctl(adapter_mac, f'trust {phone_bt_mac}')
+        trust_out = _btctl(adapter_mac, f'trust {phone_bt_mac}')
+        log.info(f'[{serial}] BlueZ trust result: {trust_out.strip()[-200:]}')
         time.sleep(1)
-        _btctl(adapter_mac, f'connect {phone_bt_mac}')
+        connect_out = _btctl(adapter_mac, f'connect {phone_bt_mac}')
+        log.info(f'[{serial}] BlueZ connect result: {connect_out.strip()[-200:]}')
         _btctl(adapter_mac, 'discoverable off')
-        log.info(f'[{serial}] BlueZ pair flow complete')
+
+        # Verify bond actually formed
+        info_out = _btctl(adapter_mac, f'info {phone_bt_mac}')
+        paired = 'Paired: yes' in info_out
+        connected = 'Connected: yes' in info_out
+        log.info(f'[{serial}] BlueZ pair flow complete: paired={paired} connected={connected}')
 
     except Exception as e:
         log.warning(f'[{serial}] BlueZ pair failed: {e}')
@@ -270,6 +278,7 @@ def allocate_and_pair_bluetooth(serial: str, snapshot_url: str,
             f"content query --uri 'content://com.otacon.kiosk/bluetooth/pair?mac={adapter_mac}'",
             timeout=45
         )
+        log.info(f'[{serial}] Phone-side pair result: {r}')
         pair_result['data'] = r
         pair_done.set()
 

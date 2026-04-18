@@ -38,20 +38,31 @@ class FleetAgent:
             log.info('AUDIO_BACKEND != bluetooth, skipping BlueZ agent/reconnect')
             return
 
+        ready = threading.Event()
+
         def run_glib():
-            try:
-                loop = register_agent()
-                setup_reconnect_watcher()
-                self._glib_loop = loop
-                log.info('GLib main loop starting (BlueZ agent + reconnect watcher)')
-                loop.run()
-            except Exception as e:
-                log.error(f'BlueZ services failed: {e}')
+            # Retry agent registration — bluetoothd may not be ready at container start
+            for attempt in range(10):
+                try:
+                    loop = register_agent()
+                    setup_reconnect_watcher()
+                    self._glib_loop = loop
+                    ready.set()
+                    log.info('GLib main loop starting (BlueZ agent + reconnect watcher)')
+                    loop.run()
+                    return
+                except Exception as e:
+                    log.warning(f'BlueZ agent registration attempt {attempt+1}/10 failed: {e}')
+                    time.sleep(2)
+            log.error('BlueZ agent registration failed after 10 attempts')
+            ready.set()  # unblock main thread even on failure
 
         t = threading.Thread(target=run_glib, daemon=True, name='bluez-glib')
         t.start()
-        # Give BlueZ agent time to register before phones start pairing
-        time.sleep(2)
+        # Wait for agent registration (up to 25s) before phones start pairing
+        ready.wait(timeout=25)
+        if self._glib_loop is None:
+            log.error('BlueZ agent not running — Bluetooth pairing will fail')
 
     def report_dongles(self):
         """Report all BT dongles to the registry."""
