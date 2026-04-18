@@ -1,11 +1,15 @@
 """MonitorStatus dataclass and push helper."""
 
+import json
+import logging
 import os
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Literal, Optional
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 
-from ..util.http import http_post
+log = logging.getLogger('fleet-agent')
 
 # The Rust server's internal HTTP listener port (single listener, not per-phone).
 _SERVER_INTERNAL_PORT = int(os.environ.get('INTERNAL_PORT', '8081'))
@@ -50,10 +54,17 @@ def push_status(status: 'MonitorStatus', phone_id: str | None, internal_port: in
     """
     if not phone_id:
         return
-    http_post(f'http://127.0.0.1:{_SERVER_INTERNAL_PORT}/phones/{phone_id}/api/internal/event', {
+    url = f'http://127.0.0.1:{_SERVER_INTERNAL_PORT}/phones/{phone_id}/api/internal/event'
+    body = json.dumps({
         'event': 'monitor_status',
         'data': {
             'phone_id': phone_id,
             'status': asdict(status),
         },
-    })
+    }).encode()
+    try:
+        req = Request(url, data=body, headers={'Content-Type': 'application/json'})
+        with urlopen(req, timeout=5) as resp:
+            resp.read()
+    except (URLError, OSError, TimeoutError) as e:
+        log.warning(f'push_status failed for {phone_id}: {e} (url={url})')
