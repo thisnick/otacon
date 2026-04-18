@@ -43,8 +43,6 @@ pub async fn handler(
         .unwrap_or_default()
         .as_secs();
 
-    // Write marker file so device-monitor knows to reprovision after reboot
-    adb_shell(serial, "echo reset > /data/local/tmp/otacon-reset-pending").await?;
     eprintln!(
         "phone.factory_reset: phone_id={} serial={} — executing testharness reset",
         path_id, serial,

@@ -1112,58 +1112,6 @@ class PhoneMonitor:
                 f"svc bluetooth {'enable' if config['bluetooth_enabled'] else 'disable'}"
             )
 
-    # --- Post-reset reprovision ---
-
-    RESET_MARKER = '/data/local/tmp/otacon-reset-pending'
-
-    def has_reset_marker(self) -> bool:
-        """Check if the testharness reset marker file exists on the phone."""
-        result = self.adb_shell(f'test -f {self.RESET_MARKER} && echo YES || echo NO')
-        return result.strip() == 'YES'
-
-    def remove_reset_marker(self):
-        """Remove the reset marker file from the phone."""
-        self.adb_shell(f'rm -f {self.RESET_MARKER}')
-
-    def reprovision_after_reset(self):
-        """Reprovision a phone that was factory-reset via testharness.
-
-        After testharness reset: no accounts, no PIN, Setup Wizard skipped,
-        ADB trust preserved. We can provision device owner immediately and
-        activate the reset-password token without needing PIN confirmation.
-        """
-        start = time.monotonic()
-        self.log.info('Reset marker found — reprovisioning after testharness reset')
-
-        try:
-            # Device owner provision (installs APK + sets device owner)
-            self.provision_device_owner()
-
-            # Activate reset-password token — no PIN exists after reset,
-            # so the token auto-activates when setResetPasswordToken is called
-            # by BootReceiver. We trigger BootReceiver to ensure it runs:
-            self.adb_shell(
-                f'am broadcast -a {DEVICE_OWNER_PKG}.APPLY_RESTRICTIONS '
-                f'-n {DEVICE_OWNER_PKG}/.BootReceiver'
-            )
-            time.sleep(2)
-
-            # Verify token is active by querying lock status
-            status = self.adb_shell(
-                "content query --uri 'content://com.otacon.kiosk/lock/status'"
-            )
-            if status:
-                self.log.info(f'Lock status after reprovision: {status}')
-
-            duration = time.monotonic() - start
-            self.log.info(
-                f'phone.reprovisioned: phone_id={self.phone_id} '
-                f'serial={self.serial} duration_s={duration:.1f}'
-            )
-        finally:
-            # Always remove marker to prevent reprovision loop
-            self.remove_reset_marker()
-
     # --- Main lifecycle ---
 
     def run(self):
@@ -1171,15 +1119,9 @@ class PhoneMonitor:
         self.log.info(f'Starting setup (snapshot_port={self.snapshot_port}, internal_port={self.internal_port}, display=:{self.display_num}, vnc={self.vnc_port})')
         time.sleep(2)  # let device initialize
 
-        # Check for testharness reset marker — if present, fast-track reprovision
-        is_post_reset = self.has_reset_marker()
-        if is_post_reset:
-            self.reprovision_after_reset()
-
         self.configure_screen()
         self.configure_silent()
-        if not is_post_reset:
-            self.provision_device_owner()
+        self.provision_device_owner()
         self.start_snapshot_server()
         self.setup_port_forwards()
         self.wait_for_server(self.snapshot_url, 'Snapshot server')
