@@ -1,5 +1,7 @@
 import logging
 import os
+import re
+import subprocess
 import time
 
 from ..util.adb import adb, adb_shell
@@ -78,12 +80,43 @@ def provision_device_owner(serial: str):
     log.info(f'[{serial}] Device owner provisioned')
 
 
+def _needs_apk_update(serial: str) -> bool:
+    """Check if the installed kiosk APK version differs from the built APK."""
+    if not os.path.exists(APK_PATH):
+        return False
+    # Get installed version code from phone
+    try:
+        dump = adb_shell(serial, f'dumpsys package {DEVICE_OWNER_PKG}', timeout=5)
+        m = re.search(r'versionCode=(\d+)', dump)
+        installed_ver = int(m.group(1)) if m else -1
+    except Exception:
+        return True  # can't read — reinstall to be safe
+    # Get built APK version code via aapt2 or aapt
+    try:
+        for tool in ('aapt2', 'aapt'):
+            r = subprocess.run(
+                [tool, 'dump', 'badging', APK_PATH],
+                capture_output=True, text=True, timeout=5)
+            if r.returncode == 0:
+                m = re.search(r"versionCode='(\d+)'", r.stdout)
+                if m:
+                    built_ver = int(m.group(1))
+                    if installed_ver == built_ver:
+                        return False
+                    log.info(f'[{serial}] APK version mismatch: installed={installed_ver} built={built_ver}')
+                    return True
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    # If we can't read the built APK version, reinstall to be safe
+    return True
+
+
 def apply_restrictions(serial: str):
     if not is_device_owner_set(serial):
         return
-    # Ensure the kiosk APK is up-to-date before sending the broadcast —
-    # an old APK may have a stale USER_RESTRICTIONS list.
-    if os.path.exists(APK_PATH):
+    # Only reinstall the APK if the version on the phone is outdated —
+    # avoids thrashing during frequent heal cycles (every 30s if check fails).
+    if _needs_apk_update(serial):
         result = adb(serial, 'install', '-r', APK_PATH, timeout=30)
         if 'Success' in result:
             log.info(f'[{serial}] Kiosk APK updated before applying restrictions')
