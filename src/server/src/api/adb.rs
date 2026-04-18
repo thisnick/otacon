@@ -4,10 +4,13 @@ use tokio::process::Command;
 
 use super::ApiError;
 
-/// Run an ADB command and return stdout bytes.
-pub async fn adb(args: &[&str]) -> Result<Vec<u8>, ApiError> {
+/// Run an ADB command targeting a specific device and return stdout bytes.
+pub async fn adb(serial: &str, args: &[&str]) -> Result<Vec<u8>, ApiError> {
+    let mut full_args = vec!["-s", serial];
+    full_args.extend_from_slice(args);
+
     let output = Command::new("adb")
-        .args(args)
+        .args(&full_args)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
@@ -18,7 +21,7 @@ pub async fn adb(args: &[&str]) -> Result<Vec<u8>, ApiError> {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(ApiError::Adb(format!(
             "adb {:?} failed ({}): {}",
-            args,
+            full_args,
             output.status,
             stderr.trim()
         )));
@@ -27,9 +30,9 @@ pub async fn adb(args: &[&str]) -> Result<Vec<u8>, ApiError> {
     Ok(output.stdout)
 }
 
-/// Run `adb shell <cmd>` and return stdout as a String.
-pub async fn adb_shell(cmd: &str) -> Result<String, ApiError> {
-    let out = adb(&["shell", cmd]).await?;
+/// Run `adb -s <serial> shell <cmd>` and return stdout as a String.
+pub async fn adb_shell(serial: &str, cmd: &str) -> Result<String, ApiError> {
+    let out = adb(serial, &["shell", cmd]).await?;
     Ok(String::from_utf8_lossy(&out).trim().to_string())
 }
 

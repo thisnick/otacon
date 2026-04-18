@@ -5,9 +5,6 @@ use std::time::Duration;
 use super::adb::adb_shell;
 use super::ApiError;
 
-/// Snapshot server (app_process) — UI tree, actions
-const SNAPSHOT_URL: &str = "http://127.0.0.1:9091";
-
 /// ContentProvider authority for device owner app
 const KIOSK_AUTHORITY: &str = "com.otacon.kiosk";
 
@@ -20,10 +17,14 @@ pub struct BridgeState {
     device_owner_available: AtomicBool,
     /// Snapshot server is available (UI tree, actions)
     snapshot_available: AtomicBool,
+    /// Per-phone snapshot server URL (e.g. "http://127.0.0.1:9091")
+    snapshot_url: String,
+    /// ADB serial for this phone (used by health checker)
+    adb_serial: String,
 }
 
 impl BridgeState {
-    pub fn new() -> Self {
+    pub fn new(snapshot_port: u16, adb_serial: String) -> Self {
         let client = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
             .build()
@@ -32,6 +33,8 @@ impl BridgeState {
             client,
             device_owner_available: AtomicBool::new(false),
             snapshot_available: AtomicBool::new(false),
+            snapshot_url: format!("http://127.0.0.1:{snapshot_port}"),
+            adb_serial,
         }
     }
 
@@ -47,19 +50,19 @@ impl BridgeState {
 
     /// GET from the snapshot server.
     pub async fn snapshot_get(&self, path: &str) -> Result<String, ApiError> {
-        http_get(&self.client, SNAPSHOT_URL, path).await
+        http_get(&self.client, &self.snapshot_url, path).await
     }
 
     /// POST to the snapshot server.
     pub async fn snapshot_post(&self, path: &str, body: &str) -> Result<String, ApiError> {
-        http_post(&self.client, SNAPSHOT_URL, path, body).await
+        http_post(&self.client, &self.snapshot_url, path, body).await
     }
 
     /// Query the device owner ContentProvider via ADB.
     /// Path is relative, e.g. "clipboard" or "sms/send?to=+1234&body=hello"
-    pub async fn device_query(&self, path: &str) -> Result<String, ApiError> {
+    pub async fn device_query(&self, serial: &str, path: &str) -> Result<String, ApiError> {
         let uri = format!("content://{KIOSK_AUTHORITY}/{path}");
-        let output = adb_shell(&format!("content query --uri '{uri}'")).await?;
+        let output = adb_shell(serial, &format!("content query --uri '{uri}'")).await?;
         if output.contains("error=") {
             // Extract error message from "Row: 0 error=..."
             let err = output
@@ -108,22 +111,24 @@ async fn http_post(client: &reqwest::Client, base: &str, path: &str, body: &str)
 
 /// Background task that periodically checks if both servers are available.
 pub fn spawn_health_checker(bridge: Arc<BridgeState>) {
+    let serial = bridge.adb_serial.clone();
+    let snapshot_url = bridge.snapshot_url.clone();
     tokio::spawn(async move {
         loop {
             // Check device owner app via ContentProvider
-            let do_ok = adb_shell("content query --uri 'content://com.otacon.kiosk/health'")
+            let do_ok = adb_shell(&serial, "content query --uri 'content://com.otacon.kiosk/health'")
                 .await
                 .map(|out| out.contains("ok=true"))
                 .unwrap_or(false);
             let do_was = bridge.device_owner_available.swap(do_ok, Ordering::Relaxed);
             if do_ok != do_was {
-                eprintln!("Bridge: device owner app {}", if do_ok { "connected" } else { "disconnected" });
+                eprintln!("[{}] Bridge: device owner app {}", serial, if do_ok { "connected" } else { "disconnected" });
             }
 
             // Check snapshot server
             let ss_ok = bridge
                 .client
-                .get(format!("{SNAPSHOT_URL}/health"))
+                .get(format!("{snapshot_url}/health"))
                 .timeout(Duration::from_secs(2))
                 .send()
                 .await
@@ -131,7 +136,7 @@ pub fn spawn_health_checker(bridge: Arc<BridgeState>) {
                 .unwrap_or(false);
             let ss_was = bridge.snapshot_available.swap(ss_ok, Ordering::Relaxed);
             if ss_ok != ss_was {
-                eprintln!("Bridge: snapshot server {}", if ss_ok { "connected" } else { "disconnected, falling back to ADB" });
+                eprintln!("[{}] Bridge: snapshot server {}", serial, if ss_ok { "connected" } else { "disconnected, falling back to ADB" });
             }
 
             tokio::time::sleep(HEALTH_CHECK_INTERVAL).await;

@@ -88,20 +88,35 @@ def set_adapter_discoverable():
         bus.get_object(BUS_NAME, "/"),
         "org.freedesktop.DBus.ObjectManager",
     )
+    found = False
     for path, interfaces in manager.GetManagedObjects().items():
-        if ADAPTER_IFACE in interfaces:
-            props = dbus.Interface(
-                bus.get_object(BUS_NAME, path),
-                "org.freedesktop.DBus.Properties",
-            )
-            props.Set(ADAPTER_IFACE, "Discoverable",        True)
-            props.Set(ADAPTER_IFACE, "DiscoverableTimeout", dbus.UInt32(0))
-            props.Set(ADAPTER_IFACE, "Pairable",            True)
-            props.Set(ADAPTER_IFACE, "PairableTimeout",     dbus.UInt32(0))
+        if ADAPTER_IFACE not in interfaces:
+            continue
+        props = dbus.Interface(
+            bus.get_object(BUS_NAME, path),
+            "org.freedesktop.DBus.Properties",
+        )
+        # Each Set is best-effort — adapters in active pair/connect sessions
+        # return org.bluez.Error.Busy. Don't crash the agent in that case.
+        for prop, val in [
+            ("Discoverable",        True),
+            ("DiscoverableTimeout", dbus.UInt32(0)),
+            ("Pairable",            True),
+            ("PairableTimeout",     dbus.UInt32(0)),
+        ]:
+            try:
+                props.Set(ADAPTER_IFACE, prop, val)
+            except dbus.exceptions.DBusException as e:
+                # Busy = adapter currently mid-operation; we'll keep going
+                print(f"Adapter {path} {prop} set skipped: {e.get_dbus_name()}")
+        try:
             alias = props.Get(ADAPTER_IFACE, "Alias")
-            print(f"Adapter {path} ({alias}) set to discoverable + pairable")
-            return
-    print("No Bluetooth adapter found")
+            print(f"Adapter {path} ({alias}) configured")
+        except Exception:
+            pass
+        found = True
+    if not found:
+        print("No Bluetooth adapter found")
 
 
 def main():
@@ -113,7 +128,13 @@ def main():
         bus.get_object(BUS_NAME, "/org/bluez"),
         AGENT_MGR_IFACE,
     )
-    agent_mgr.RegisterAgent(AGENT_PATH, "NoInputNoOutput")
+    # KeyboardDisplay capability lets us handle all SSP paths:
+    # - Just Works (no UI on either side) — auto-success
+    # - Passkey display + confirm — phone shows number, we auto-confirm
+    # - Passkey entry — we return 0 (rare on modern phones)
+    # NoInputNoOutput would force "Just Works" but Samsung/Pixel sometimes
+    # negotiate to a confirm path that fails with "incorrect PIN".
+    agent_mgr.RegisterAgent(AGENT_PATH, "KeyboardDisplay")
     agent_mgr.RequestDefaultAgent(AGENT_PATH)
     print("Bluetooth auto-accept agent registered")
 

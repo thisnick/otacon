@@ -6,7 +6,7 @@ use utoipa::ToSchema;
 
 use super::adb::{adb_shell, parse_content_row};
 use super::{ApiError, OkResponse};
-use crate::AppState;
+use crate::phone::PhoneState;
 
 #[derive(Serialize, ToSchema)]
 pub struct SmsThread {
@@ -39,11 +39,11 @@ pub struct SendSmsBody {
     operation_id = "listSmsThreads",
     responses((status = 200, body = Vec<SmsThread>))
 )]
-pub async fn threads_handler() -> Result<Json<Vec<SmsThread>>, ApiError> {
+pub async fn threads_handler(serial: &str) -> Result<Json<Vec<SmsThread>>, ApiError> {
     // Query SMS threads via content provider
     // Note: Android doesn't have a clean "threads" content URI with snippets,
     // so we query sms grouped by thread_id, taking the latest message per thread.
-    let out = adb_shell(
+    let out = adb_shell(serial,
         "content query --uri content://sms --projection thread_id:address:body:date --sort 'date DESC'"
     ).await?;
 
@@ -76,8 +76,8 @@ pub async fn threads_handler() -> Result<Json<Vec<SmsThread>>, ApiError> {
     params(("id" = String, Path)),
     responses((status = 200, body = Vec<SmsMessage>))
 )]
-pub async fn messages_handler(Path(thread_id): Path<String>) -> Result<Json<Vec<SmsMessage>>, ApiError> {
-    let out = adb_shell(&format!(
+pub async fn messages_handler(serial: &str, Path(thread_id): Path<String>) -> Result<Json<Vec<SmsMessage>>, ApiError> {
+    let out = adb_shell(serial, &format!(
         "content query --uri content://sms --projection _id:address:body:date:type --where \"thread_id={}\" --sort 'date ASC'",
         thread_id
     )).await?;
@@ -111,10 +111,11 @@ pub async fn messages_handler(Path(thread_id): Path<String>) -> Result<Json<Vec<
     request_body = SendSmsBody,
     responses((status = 200, body = OkResponse))
 )]
-pub async fn send_handler(state: Arc<AppState>, Json(body): Json<SendSmsBody>) -> Result<Json<serde_json::Value>, ApiError> {
+pub async fn send_handler(state: Arc<PhoneState>, Json(body): Json<SendSmsBody>) -> Result<Json<serde_json::Value>, ApiError> {
+    let serial = &state.config.adb_serial;
     let to_encoded = urlencoding::encode(&body.to);
     let body_encoded = urlencoding::encode(&body.body);
-    state.bridge.device_query(
+    state.bridge.device_query(serial,
         &format!("sms/send?to={to_encoded}&body={body_encoded}")
     ).await?;
     Ok(Json(serde_json::json!({"ok": true})))

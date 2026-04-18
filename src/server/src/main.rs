@@ -1,11 +1,12 @@
 mod api;
 mod dbus_monitor;
+pub mod fleet;
+pub mod phone;
 
 use axum::{
     Router,
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
-    response::{Html, IntoResponse, Response},
-    routing::get,
+    response::{IntoResponse, Response},
 };
 use futures::{SinkExt, StreamExt};
 use std::{
@@ -33,7 +34,7 @@ impl std::fmt::Display for AudioBackend {
 }
 
 #[derive(Clone)]
-struct AudioConfig {
+pub struct AudioConfig {
     backend: AudioBackend,
     sample_rate: u32,
     channels: u16,
@@ -59,17 +60,28 @@ fn alsa_cmd(tool: &str, device: &str, rate: u32, channels: u16) -> Vec<String> {
 impl AudioConfig {
     fn from_env() -> Self {
         let backend = env::var("AUDIO_BACKEND").unwrap_or_else(|_| "alsa".into());
+        Self::build(&backend, None)
+    }
 
-        match backend.as_str() {
+    /// Build an AudioConfig for a specific phone's BT MAC.
+    /// If phone_bt_mac is Some, uses that device specifically; otherwise uses wildcard.
+    fn for_phone(phone_bt_mac: Option<&str>) -> Self {
+        let backend = env::var("AUDIO_BACKEND").unwrap_or_else(|_| "alsa".into());
+        Self::build(&backend, phone_bt_mac)
+    }
+
+    fn build(backend: &str, phone_bt_mac: Option<&str>) -> Self {
+        match backend {
             "bluetooth" => {
-                // HFP via BlueALSA. mSBC codec runs at 16kHz (wideband).
-                // BlueALSA exposes a standard ALSA device named "bluealsa".
                 let sample_rate = 16000u32;
                 let channels = 1u16;
-                // Device format: "bluealsa:DEV=AA:BB:CC:DD:EE:FF,PROFILE=sco"
-                // Default uses first connected device; override with BLUEALSA_DEVICE.
-                let device = env::var("BLUEALSA_DEVICE")
-                    .unwrap_or_else(|_| "bluealsa:DEV=00:00:00:00:00:00,PROFILE=sco".into());
+                // Per-phone: use specific device MAC if known, else wildcard
+                let device = if let Some(mac) = phone_bt_mac {
+                    format!("bluealsa:DEV={mac},PROFILE=sco")
+                } else {
+                    env::var("BLUEALSA_DEVICE")
+                        .unwrap_or_else(|_| "bluealsa:DEV=00:00:00:00:00:00,PROFILE=sco".into())
+                };
                 let a2dp_device = device.replace("PROFILE=sco", "PROFILE=a2dp");
                 let a2dp_sample_rate = 44100u32;
                 let a2dp_channels = 2u16;
@@ -113,28 +125,68 @@ impl AudioConfig {
 }
 
 pub struct AppState {
-    /// Broadcast channel for captured audio (Pi mic → clients)
-    capture_tx: broadcast::Sender<Vec<u8>>,
-    /// Broadcast channel for A2DP media audio (phone → clients)
-    a2dp_tx: Option<broadcast::Sender<Vec<u8>>>,
-    /// Mutex protecting the single playback sender slot
-    playback_owner: Mutex<Option<u64>>,
-    /// Audio configuration
-    audio_config: AudioConfig,
-    /// Cached accessibility snapshot for ref lookups (ADB fallback)
-    snapshot_cache: Mutex<Option<api::snapshot::SnapshotCache>>,
-    /// Bridge to device owner app's HTTP server
-    pub bridge: Arc<api::bridge::BridgeState>,
-    /// Broadcast channel for JSON event messages (sink state, etc.)
-    events_tx: broadcast::Sender<String>,
-    /// Currently active audio sinks (D-Bus path → event data)
-    active_sinks: Arc<Mutex<HashMap<String, serde_json::Value>>>,
-    /// Screen recording state
-    recording: api::record::RecordingState,
-    /// Simulated call state for testing without hardware
-    pub sim_call: Mutex<api::test_sim::SimCallState>,
-    /// Whether /ws/audio/call has an active client (single-consumer enforcement)
-    call_audio_occupied: std::sync::atomic::AtomicBool,
+    /// Map from phone ID to per-phone state
+    pub phones: tokio::sync::RwLock<HashMap<String, Arc<phone::PhoneState>>>,
+    /// Broadcast channel for system-level events (phone added/removed)
+    pub system_events_tx: broadcast::Sender<String>,
+    /// Path to phones.json config file
+    pub config_path: std::path::PathBuf,
+}
+
+/// Create a PhoneState from a PhoneConfig.
+/// Uses per-phone BlueALSA device if the phone has a BT MAC assigned.
+fn create_phone_state(config: phone::PhoneConfig, audio_config: &AudioConfig) -> Arc<phone::PhoneState> {
+    // Build per-phone audio config if phone has a BT MAC
+    let per_phone_audio;
+    let audio_config = if config.phone_bt_mac.is_some() {
+        per_phone_audio = AudioConfig::for_phone(config.phone_bt_mac.as_deref());
+        &per_phone_audio
+    } else {
+        audio_config
+    };
+    let (capture_tx, _) = broadcast::channel::<Vec<u8>>(64);
+    let (events_tx, _) = broadcast::channel::<String>(256);
+    let active_sinks = Arc::new(Mutex::new(HashMap::new()));
+
+    let a2dp_tx = if audio_config.a2dp_capture_cmd.is_some() {
+        let (tx, _) = broadcast::channel::<Vec<u8>>(64);
+        Some(tx)
+    } else {
+        None
+    };
+
+    let bridge = Arc::new(api::bridge::BridgeState::new(
+        config.snapshot_port,
+        config.adb_serial.clone(),
+    ));
+    api::bridge::spawn_health_checker(bridge.clone());
+
+    // Audio capture is now lazy — started when first WebSocket client connects
+    // D-Bus monitor for BlueALSA sink state is still always-on (lightweight)
+    if matches!(audio_config.backend, AudioBackend::Bluetooth) {
+        dbus_monitor::spawn_monitor(events_tx.clone(), active_sinks.clone());
+    }
+
+    Arc::new(phone::PhoneState {
+        config,
+        capture_tx,
+        a2dp_tx,
+        playback_owner: Mutex::new(None),
+        audio_config: audio_config.clone(),
+        snapshot_cache: Mutex::new(Some(api::snapshot::SnapshotCache::default())),
+        bridge,
+        events_tx,
+        active_sinks,
+        recording: Arc::new(Mutex::new(None)),
+        sim_call: Mutex::new(api::test_sim::SimCallState::default()),
+        call_audio_occupied: std::sync::atomic::AtomicBool::new(false),
+        display: Mutex::new(phone::DisplayResources::default()),
+        vnc_clients: std::sync::atomic::AtomicU32::new(0),
+        capture_clients: std::sync::atomic::AtomicU32::new(0),
+        media_clients: std::sync::atomic::AtomicU32::new(0),
+        capture_running: std::sync::atomic::AtomicBool::new(false),
+        a2dp_capture_running: std::sync::atomic::AtomicBool::new(false),
+    })
 }
 
 #[tokio::main]
@@ -155,83 +207,52 @@ async fn main() {
     let audio_config = AudioConfig::from_env();
     eprintln!("Audio backend: {} ({}Hz, {}ch)", audio_config.backend, audio_config.sample_rate, audio_config.channels);
 
-    let (capture_tx, _) = broadcast::channel::<Vec<u8>>(64);
+    // Load phone configs from disk (or create default single-phone config)
+    let config_path = std::path::PathBuf::from(
+        env::var("PHONES_CONFIG").unwrap_or_else(|_| "/data/otacon/phones.json".into())
+    );
+    let phone_configs = phone::load_phones(&config_path).await;
 
-    // Extract fields needed by spawned tasks before moving audio_config into state
-    let capture_cmd = audio_config.capture_cmd.clone();
-    let mp3_cmd = audio_config.mp3_cmd.clone();
-
-    let a2dp_tx = if let Some(cmd) = audio_config.a2dp_capture_cmd.clone() {
-        let (tx, _) = broadcast::channel::<Vec<u8>>(64);
-        tokio::spawn(capture_audio(cmd, tx.clone()));
-        Some(tx)
-    } else {
-        None
-    };
-
-    let bridge = Arc::new(api::bridge::BridgeState::new());
-    api::bridge::spawn_health_checker(bridge.clone());
-
-    let (events_tx, _) = broadcast::channel::<String>(256);
-    let active_sinks = Arc::new(Mutex::new(HashMap::new()));
-
-    let state = Arc::new(AppState {
-        capture_tx: capture_tx.clone(),
-        a2dp_tx,
-        playback_owner: Mutex::new(None),
-        audio_config,
-        snapshot_cache: Mutex::new(Some(api::snapshot::SnapshotCache::default())),
-        bridge,
-        events_tx,
-        active_sinks,
-        recording: Arc::new(Mutex::new(None)),
-        sim_call: Mutex::new(api::test_sim::SimCallState::default()),
-        call_audio_occupied: std::sync::atomic::AtomicBool::new(false),
-    });
-
-    // Start D-Bus monitor for BlueALSA sink state (Bluetooth backend only)
-    if matches!(state.audio_config.backend, AudioBackend::Bluetooth) {
-        dbus_monitor::spawn_monitor(state.events_tx.clone(), state.active_sinks.clone());
+    if phone_configs.is_empty() {
+        eprintln!("No phones in {config_path:?} — waiting for device-monitor to register via POST /phones");
     }
 
-    // Call/SMS events are now pushed from the device owner app via /api/internal/event
-    // (no more polling — see internal.rs)
+    // Build phone state map
+    let mut phones = HashMap::new();
+    for config in &phone_configs {
+        let phone_state = create_phone_state(config.clone(), &audio_config);
+        eprintln!("Loaded phone '{}' (serial: {})", config.id, config.adb_serial);
+        phones.insert(config.id.clone(), phone_state);
+    }
 
-    tokio::spawn(capture_audio(capture_cmd, capture_tx));
+    let (system_events_tx, _) = broadcast::channel::<String>(64);
 
-    let app = Router::new()
-        .route("/", get(index_handler))
-        .route("/ws/audio/call", get({
-            let state = state.clone();
-            move |ws| ws_handler(ws, state)
-        }))
-        .route("/ws/audio/media", get({
-            let state = state.clone();
-            move |ws| ws_media_handler(ws, state)
-        }))
-        .route("/ws/record", get({
-            let state = state.clone();
-            move |ws: WebSocketUpgrade, query: axum::extract::Query<HashMap<String, String>>| {
-                let max_duration: u32 = query.0.get("max_duration")
-                    .and_then(|v| v.parse().ok())
-                    .unwrap_or(30)
-                    .min(180);
-                async move { ws.on_upgrade(move |socket| handle_ws_record(socket, state, max_duration)) }
-            }
-        }))
-        .route("/ws/events", get({
-            let state = state.clone();
-            move |ws| ws_events_handler(ws, state)
-        }))
-        .route("/audio", get({
-            move || mp3_stream_handler(mp3_cmd)
-        }))
-        .nest("/api", api::router(state.clone()));
+    let state = Arc::new(AppState {
+        phones: tokio::sync::RwLock::new(phones),
+        system_events_tx,
+        config_path,
+    });
+
+    // Start lazy VNC proxy listeners for each phone
+    for (_id, phone_state) in state.phones.read().await.iter() {
+        spawn_vnc_proxy(phone_state.clone());
+    }
+
+    // Start fleet client if REGISTRY_URL is set
+    if let Some(fleet_client) = fleet::FleetClient::from_env() {
+        let fleet_client = Arc::new(fleet_client);
+        fleet::spawn_heartbeat(fleet_client, state.clone());
+        eprintln!("Fleet client enabled");
+    } else {
+        eprintln!("Fleet client disabled (no REGISTRY_URL)");
+    }
+
+    let app = api::router(state.clone());
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
 
-    // Internal HTTP listener on port 8081 for device owner app push events
-    // (plain HTTP — device app connects via adb reverse, can't do TLS)
+    // Internal plain HTTP listener for device-monitor and per-phone push events.
+    // Serves the full app on plain HTTP so local callers don't need TLS.
     let internal_port: u16 = env::var("INTERNAL_PORT")
         .ok()
         .and_then(|s| s.parse().ok())
@@ -240,7 +261,7 @@ async fn main() {
     let internal_app = app.clone();
     tokio::spawn(async move {
         let listener = tokio::net::TcpListener::bind(internal_addr).await.unwrap();
-        eprintln!("Internal HTTP listener on http://{internal_addr} (plain, for device push events)");
+        eprintln!("Internal HTTP listener on http://{internal_addr} (plain, for device-monitor)");
         axum::serve(listener, internal_app).await.unwrap();
     });
 
@@ -251,7 +272,7 @@ async fn main() {
 
     match axum_server::tls_rustls::RustlsConfig::from_pem_file(&cert_path, &key_path).await {
         Ok(tls_config) => {
-            eprintln!("Audio server listening on https://{addr} (TLS)");
+            eprintln!("Server listening on https://{addr} (TLS)");
             axum_server::bind_rustls(addr, tls_config)
                 .serve(app.into_make_service())
                 .await
@@ -265,9 +286,20 @@ async fn main() {
     }
 }
 
-/// Continuously capture audio and broadcast PCM to all subscribers
-async fn capture_audio(cmd: Vec<String>, tx: broadcast::Sender<Vec<u8>>) {
+/// Capture audio while there are active clients. Stops when client count drops to 0.
+async fn capture_audio_lazy(
+    cmd: Vec<String>,
+    tx: broadcast::Sender<Vec<u8>>,
+    running: &std::sync::atomic::AtomicBool,
+    clients: &std::sync::atomic::AtomicU32,
+) {
     loop {
+        // Check if there are still clients
+        if clients.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+            eprintln!("No audio clients, stopping capture");
+            break;
+        }
+
         eprintln!("Starting capture: {:?}", cmd);
         let mut child = match Command::new(&cmd[0])
             .args(&cmd[1..])
@@ -293,21 +325,140 @@ async fn capture_audio(cmd: Vec<String>, tx: broadcast::Sender<Vec<u8>>) {
                 }
                 Err(_) => break,
             }
+            // Periodically check if we should stop
+            if clients.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+                let _ = child.kill().await;
+                eprintln!("No audio clients, stopping capture");
+                return;
+            }
         }
 
         let _ = child.kill().await;
+        if clients.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+            eprintln!("No audio clients after capture exit, not restarting");
+            break;
+        }
         eprintln!("Capture exited, restarting in 2s");
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
 }
 
-/// Serve the monitoring UI
-async fn index_handler() -> Html<&'static str> {
-    Html(include_str!("../static/index.html"))
+/// Start audio capture for a phone if not already running.
+fn ensure_capture(state: &Arc<phone::PhoneState>) {
+    use std::sync::atomic::Ordering;
+    if state.capture_running.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_ok() {
+        let cmd = state.audio_config.capture_cmd.clone();
+        let tx = state.capture_tx.clone();
+        let state = state.clone();
+        tokio::spawn(async move {
+            capture_audio_lazy(cmd, tx, &state.capture_running, &state.capture_clients).await;
+            state.capture_running.store(false, Ordering::Release);
+        });
+    }
+}
+
+/// Start A2DP capture for a phone if not already running.
+fn ensure_a2dp_capture(state: &Arc<phone::PhoneState>) {
+    use std::sync::atomic::Ordering;
+    if state.a2dp_capture_running.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_ok() {
+        if let Some(ref cmd) = state.audio_config.a2dp_capture_cmd {
+            if let Some(ref tx) = state.a2dp_tx {
+                let cmd = cmd.clone();
+                let tx = tx.clone();
+                let state = state.clone();
+                tokio::spawn(async move {
+                    capture_audio_lazy(cmd, tx, &state.a2dp_capture_running, &state.media_clients).await;
+                    state.a2dp_capture_running.store(false, Ordering::Release);
+                });
+            }
+        }
+    }
+}
+
+/// Spawn a lazy VNC proxy for a phone. Listens on the phone's VNC port,
+/// starts Xvnc+scrcpy on first connection, idles after 60s with no clients.
+fn spawn_vnc_proxy(state: Arc<phone::PhoneState>) {
+    let vnc_port = state.config.vnc_port;
+    let phone_id = state.config.id.clone();
+
+    tokio::spawn(async move {
+        // Bind to VNC port
+        let listener = match tokio::net::TcpListener::bind(("0.0.0.0", vnc_port)).await {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("[{phone_id}] Failed to bind VNC proxy on port {vnc_port}: {e}");
+                return;
+            }
+        };
+        eprintln!("[{phone_id}] VNC proxy listening on port {vnc_port}");
+
+        loop {
+            let (client_stream, addr) = match listener.accept().await {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("[{phone_id}] VNC accept error: {e}");
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    continue;
+                }
+            };
+            eprintln!("[{phone_id}] VNC client from {addr}");
+
+            // Ensure display is started
+            if let Err(e) = state.ensure_display().await {
+                eprintln!("[{phone_id}] Failed to start display: {e}");
+                drop(client_stream);
+                continue;
+            }
+
+            // Connect to the actual Xvnc (which is now on an internal port = vnc_port + 1000)
+            let internal_vnc_port = vnc_port + 1000;
+            let backend = match tokio::net::TcpStream::connect(("127.0.0.1", internal_vnc_port)).await {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("[{phone_id}] Cannot connect to Xvnc on {internal_vnc_port}: {e}");
+                    drop(client_stream);
+                    continue;
+                }
+            };
+
+            // Proxy the connection — track active client count so reconnects
+            // within the idle grace period don't kill the display.
+            state.vnc_clients.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let state_clone = state.clone();
+            let phone_id_clone = phone_id.clone();
+            tokio::spawn(async move {
+                let (mut cr, mut cw) = client_stream.into_split();
+                let (mut br, mut bw) = backend.into_split();
+
+                let c2b = tokio::io::copy(&mut cr, &mut bw);
+                let b2c = tokio::io::copy(&mut br, &mut cw);
+
+                tokio::select! {
+                    _ = c2b => {},
+                    _ = b2c => {},
+                }
+
+                let remaining = state_clone.vnc_clients.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) - 1;
+                eprintln!("[{phone_id_clone}] VNC client disconnected ({remaining} remaining)");
+
+                // Schedule idle display shutdown after 60s — but only if no
+                // client reconnected during the grace period.
+                let idle_state = state_clone.clone();
+                let pid = phone_id_clone.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                    if idle_state.vnc_clients.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+                        eprintln!("[{pid}] No VNC clients for 60s — stopping display");
+                        idle_state.stop_display().await;
+                    }
+                });
+            });
+        }
+    });
 }
 
 /// WebSocket handler: bidirectional PCM audio (single-consumer: 409 if occupied)
-async fn ws_handler(ws: WebSocketUpgrade, state: Arc<AppState>) -> Response {
+async fn ws_handler(ws: WebSocketUpgrade, state: Arc<phone::PhoneState>) -> Response {
     use std::sync::atomic::Ordering;
     if state.call_audio_occupied.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err() {
         return (
@@ -318,10 +469,30 @@ async fn ws_handler(ws: WebSocketUpgrade, state: Arc<AppState>) -> Response {
     ws.on_upgrade(move |socket| handle_ws(socket, state))
 }
 
-async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
+/// Guard that decrements capture_clients and clears call_audio_occupied on drop,
+/// ensuring cleanup even if the WebSocket handler is cancelled or panics.
+struct CaptureClientGuard {
+    state: Arc<phone::PhoneState>,
+    id: u64,
+}
+
+impl Drop for CaptureClientGuard {
+    fn drop(&mut self) {
+        self.state.capture_clients.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        self.state.call_audio_occupied.store(false, std::sync::atomic::Ordering::Release);
+        eprintln!("WebSocket client {} disconnected (guard drop)", self.id);
+    }
+}
+
+async fn handle_ws(socket: WebSocket, state: Arc<phone::PhoneState>) {
     static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let client_id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     eprintln!("WebSocket client {client_id} connected");
+
+    // Lazily start audio capture — guard ensures decrement on all exit paths
+    state.capture_clients.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let _guard = CaptureClientGuard { state: state.clone(), id: client_id };
+    ensure_capture(&state);
 
     let (mut ws_tx, mut ws_rx) = socket.split();
     let mut capture_rx = state.capture_tx.subscribe();
@@ -334,7 +505,7 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
     let _ = ws_tx.send(Message::Text(config_msg.into())).await;
 
     // Task: send captured audio to this client
-    let send_task = tokio::spawn(async move {
+    let mut send_task = tokio::spawn(async move {
         while let Ok(data) = capture_rx.recv().await {
             if ws_tx.send(Message::Binary(data.into())).await.is_err() {
                 break;
@@ -348,7 +519,7 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
     // which causes stutter when audio resumes.
     let playback_cmd = state.audio_config.playback_cmd.clone();
     let state_clone = state.clone();
-    let recv_task = tokio::spawn(async move {
+    let mut recv_task = tokio::spawn(async move {
         let mut player: Option<tokio::process::Child> = None;
         let mut is_owner = false;
 
@@ -410,7 +581,7 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
                         // Start the mixing ticker in a separate task
                         let buf_for_tick = audio_buf.clone();
                         let flush_for_tick = flush_flag.clone();
-                        let mut tick_stdin = player.as_mut()
+                        let tick_stdin = player.as_mut()
                             .and_then(|c| c.stdin.take());
 
                         if let Some(mut stdin) = tick_stdin {
@@ -478,22 +649,42 @@ async fn handle_ws(socket: WebSocket, state: Arc<AppState>) {
     });
 
     tokio::select! {
-        _ = send_task => {},
-        _ = recv_task => {},
+        _ = &mut send_task => {
+            recv_task.abort();
+        },
+        _ = &mut recv_task => {
+            send_task.abort();
+        },
     }
 
-    // Release single-consumer lock
-    state.call_audio_occupied.store(false, std::sync::atomic::Ordering::Release);
-    eprintln!("WebSocket client {client_id} disconnected");
+    // _guard handles capture_clients decrement and call_audio_occupied reset on drop
 }
 
 /// WebSocket handler: A2DP media audio (subscribe-only)
-async fn ws_media_handler(ws: WebSocketUpgrade, state: Arc<AppState>) -> Response {
+async fn ws_media_handler(ws: WebSocketUpgrade, state: Arc<phone::PhoneState>) -> Response {
     ws.on_upgrade(move |socket| handle_ws_media(socket, state))
 }
 
-async fn handle_ws_media(socket: WebSocket, state: Arc<AppState>) {
+/// Guard that decrements media_clients on drop.
+struct MediaClientGuard {
+    state: Arc<phone::PhoneState>,
+}
+
+impl Drop for MediaClientGuard {
+    fn drop(&mut self) {
+        self.state.media_clients.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        eprintln!("Media WebSocket client disconnected (guard drop)");
+    }
+}
+
+async fn handle_ws_media(socket: WebSocket, state: Arc<phone::PhoneState>) {
     let Some(ref a2dp_tx) = state.a2dp_tx else { return; };
+
+    // Lazily start A2DP capture — guard ensures decrement on all exit paths
+    state.media_clients.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let _guard = MediaClientGuard { state: state.clone() };
+    ensure_a2dp_capture(&state);
+
     let (mut ws_tx, _) = socket.split();
     let mut rx = a2dp_tx.subscribe();
 
@@ -503,7 +694,7 @@ async fn handle_ws_media(socket: WebSocket, state: Arc<AppState>) {
         state.audio_config.a2dp_channels
     );
     if ws_tx.send(Message::Text(config_msg.into())).await.is_err() {
-        return;
+        return; // _guard handles decrement
     }
 
     while let Ok(data) = rx.recv().await {
@@ -511,14 +702,16 @@ async fn handle_ws_media(socket: WebSocket, state: Arc<AppState>) {
             break;
         }
     }
+
+    // _guard handles decrement on drop
 }
 
 /// WebSocket handler: subscribe-only event stream
-async fn ws_events_handler(ws: WebSocketUpgrade, state: Arc<AppState>) -> Response {
+async fn ws_events_handler(ws: WebSocketUpgrade, state: Arc<phone::PhoneState>) -> Response {
     ws.on_upgrade(move |socket| handle_ws_events(socket, state))
 }
 
-async fn handle_ws_events(socket: WebSocket, state: Arc<AppState>) {
+async fn handle_ws_events(socket: WebSocket, state: Arc<phone::PhoneState>) {
     let (mut ws_tx, mut ws_rx) = socket.split();
     let mut rx = state.events_tx.subscribe();
 
@@ -567,7 +760,7 @@ async fn handle_ws_events(socket: WebSocket, state: Arc<AppState>) {
 }
 
 /// WebSocket handler: screen recording with live status
-async fn handle_ws_record(socket: WebSocket, state: Arc<AppState>, max_duration: u32) {
+async fn handle_ws_record(socket: WebSocket, state: Arc<phone::PhoneState>, max_duration: u32) {
     let (mut ws_tx, mut ws_rx) = socket.split();
 
     // Check if already recording

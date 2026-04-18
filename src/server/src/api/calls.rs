@@ -5,7 +5,7 @@ use utoipa::ToSchema;
 
 use super::adb::adb_shell;
 use super::{ApiError, OkResponse};
-use crate::AppState;
+use crate::phone::PhoneState;
 
 #[derive(Deserialize, Serialize, ToSchema)]
 pub struct DialBody {
@@ -29,9 +29,10 @@ pub struct CallStatus {
     request_body = DialBody,
     responses((status = 200, body = OkResponse))
 )]
-pub async fn dial_handler(state: Arc<AppState>, Json(body): Json<DialBody>) -> Result<Json<serde_json::Value>, ApiError> {
+pub async fn dial_handler(state: Arc<PhoneState>, Json(body): Json<DialBody>) -> Result<Json<serde_json::Value>, ApiError> {
+    let serial = &state.config.adb_serial;
     // ADB for actions — device owner app handles event detection
-    adb_shell(&format!(
+    adb_shell(serial, &format!(
         "am start -a android.intent.action.CALL -d tel:{}",
         body.number.replace(' ', "")
     )).await?;
@@ -52,8 +53,9 @@ pub async fn dial_handler(state: Arc<AppState>, Json(body): Json<DialBody>) -> R
     operation_id = "answerCall",
     responses((status = 200, body = OkResponse))
 )]
-pub async fn answer_handler(_state: Arc<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
-    adb_shell("input keyevent KEYCODE_CALL").await?;
+pub async fn answer_handler(state: Arc<PhoneState>) -> Result<Json<serde_json::Value>, ApiError> {
+    let serial = &state.config.adb_serial;
+    adb_shell(serial, "input keyevent KEYCODE_CALL").await?;
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -64,8 +66,9 @@ pub async fn answer_handler(_state: Arc<AppState>) -> Result<Json<serde_json::Va
     operation_id = "hangupCall",
     responses((status = 200, body = OkResponse))
 )]
-pub async fn hangup_handler(state: Arc<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
-    adb_shell("input keyevent KEYCODE_ENDCALL").await?;
+pub async fn hangup_handler(state: Arc<PhoneState>) -> Result<Json<serde_json::Value>, ApiError> {
+    let serial = &state.config.adb_serial;
+    adb_shell(serial, "input keyevent KEYCODE_ENDCALL").await?;
     // Reset state locally — device owner app will also push call.ended
     // but we don't wait for it
     {
@@ -86,7 +89,8 @@ pub async fn hangup_handler(state: Arc<AppState>) -> Result<Json<serde_json::Val
     operation_id = "getCallStatus",
     responses((status = 200, body = CallStatus))
 )]
-pub async fn status_handler(state: Arc<AppState>) -> Result<Json<CallStatus>, ApiError> {
+pub async fn status_handler(state: Arc<PhoneState>) -> Result<Json<CallStatus>, ApiError> {
+    let serial = &state.config.adb_serial;
     // Check push-event state first (updated by internal.rs and test_sim.rs)
     {
         let sim = state.sim_call.lock().await;
@@ -101,7 +105,7 @@ pub async fn status_handler(state: Arc<AppState>) -> Result<Json<CallStatus>, Ap
     }
 
     // Fall back to ADB query (works even without push events)
-    if let Ok(status) = query_call_state_adb().await {
+    if let Ok(status) = query_call_state_adb(serial).await {
         return Ok(Json(status));
     }
 
@@ -113,8 +117,8 @@ pub async fn status_handler(state: Arc<AppState>) -> Result<Json<CallStatus>, Ap
 }
 
 /// Query call state via `adb shell dumpsys telephony.registry`
-async fn query_call_state_adb() -> Result<CallStatus, ApiError> {
-    let out = adb_shell("dumpsys telephony.registry | grep -E 'mCallState|mCallIncomingNumber'").await?;
+async fn query_call_state_adb(serial: &str) -> Result<CallStatus, ApiError> {
+    let out = adb_shell(serial, "dumpsys telephony.registry | grep -E 'mCallState|mCallIncomingNumber'").await?;
 
     let mut call_state = 0i32;
     let mut number: Option<String> = None;

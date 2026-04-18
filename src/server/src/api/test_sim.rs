@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use super::ApiError;
-use crate::AppState;
+use crate::phone::PhoneState;
 
 /// Server-side simulated call state for testing without hardware.
 #[derive(Default)]
@@ -43,7 +43,7 @@ pub struct SimSmsBody {
 
 /// POST /api/test/call/incoming — simulate an incoming call
 pub async fn sim_incoming(
-    state: Arc<AppState>,
+    state: Arc<PhoneState>,
     Json(body): Json<SimIncomingBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let mut sim = state.sim_call.lock().await;
@@ -70,7 +70,7 @@ pub async fn sim_incoming(
 
 /// POST /api/test/call/connect — simulate call answered/connected
 pub async fn sim_connect(
-    state: Arc<AppState>,
+    state: Arc<PhoneState>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let mut sim = state.sim_call.lock().await;
     if sim.state != "ringing" {
@@ -96,7 +96,7 @@ pub async fn sim_connect(
 
 /// POST /api/test/call/end — simulate call ending
 pub async fn sim_end(
-    state: Arc<AppState>,
+    state: Arc<PhoneState>,
     Json(body): Json<SimEndBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let mut sim = state.sim_call.lock().await;
@@ -120,7 +120,7 @@ pub async fn sim_end(
 
 /// POST /api/test/sms/receive — simulate receiving an SMS
 pub async fn sim_sms_receive(
-    state: Arc<AppState>,
+    state: Arc<PhoneState>,
     Json(body): Json<SimSmsBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let event = serde_json::json!({

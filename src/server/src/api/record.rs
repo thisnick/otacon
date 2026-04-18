@@ -8,7 +8,7 @@ use tokio::process::Command;
 use tokio::sync::Mutex;
 use utoipa::ToSchema;
 
-use crate::AppState;
+use crate::phone::PhoneState;
 
 const RECORD_PATH: &str = "/tmp/otacon_rec.mp4";
 const MAX_DURATION_LIMIT: u32 = 180;
@@ -54,7 +54,7 @@ pub struct RecordStatus {
     )
 )]
 pub async fn start_handler(
-    state: Arc<AppState>,
+    state: Arc<PhoneState>,
     Json(body): Json<StartRecordBody>,
 ) -> Result<Json<serde_json::Value>, Response> {
     let max_duration = body.max_duration.min(MAX_DURATION_LIMIT);
@@ -75,8 +75,10 @@ pub async fn start_handler(
     let _ = tokio::fs::remove_file(RECORD_PATH).await;
 
     // Use scrcpy for video+audio capture (runs alongside the existing VNC scrcpy instance)
+    let serial = &state.config.adb_serial;
     let child = Command::new("scrcpy")
         .args([
+            &format!("--serial={serial}"),
             "--no-window",
             "--no-playback",
             "--audio-source=output",
@@ -111,7 +113,7 @@ pub async fn start_handler(
         (status = 404, description = "No active recording", body = super::ErrorResponse),
     )
 )]
-pub async fn stop_handler(state: Arc<AppState>) -> Result<Response, Response> {
+pub async fn stop_handler(state: Arc<PhoneState>) -> Result<Response, Response> {
     let mut guard = state.recording.lock().await;
     let info = guard.take().ok_or_else(|| {
         (StatusCode::NOT_FOUND,
@@ -129,7 +131,7 @@ pub async fn stop_handler(state: Arc<AppState>) -> Result<Response, Response> {
     operation_id = "getRecordingStatus",
     responses((status = 200, body = RecordStatus))
 )]
-pub async fn status_handler(state: Arc<AppState>) -> Json<RecordStatus> {
+pub async fn status_handler(state: Arc<PhoneState>) -> Json<RecordStatus> {
     let mut guard = state.recording.lock().await;
     match guard.as_mut() {
         Some(info) => {

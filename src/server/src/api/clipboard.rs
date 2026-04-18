@@ -5,7 +5,7 @@ use utoipa::ToSchema;
 
 use super::adb::parse_content_row;
 use super::{ApiError, OkResponse};
-use crate::AppState;
+use crate::phone::PhoneState;
 
 #[derive(Deserialize, Serialize, ToSchema)]
 #[schema(description = "Clipboard text content")]
@@ -26,13 +26,14 @@ pub struct SetClipboardBody {
     operation_id = "getClipboard",
     responses((status = 200, description = "Current clipboard content", body = ClipboardContent))
 )]
-pub async fn get_handler(state: Arc<AppState>) -> Result<Json<ClipboardContent>, ApiError> {
+pub async fn get_handler(state: Arc<PhoneState>) -> Result<Json<ClipboardContent>, ApiError> {
+    let serial = &state.config.adb_serial;
     if !state.bridge.is_device_owner_available() {
         return Err(ApiError::Adb(
             "clipboard requires device owner app (not available)".into(),
         ));
     }
-    let output = state.bridge.device_query("clipboard").await?;
+    let output = state.bridge.device_query(serial, "clipboard").await?;
     let text = parse_content_row(&output)
         .and_then(|row| row.get("text").cloned())
         .filter(|t| t != "NULL");
@@ -48,15 +49,16 @@ pub async fn get_handler(state: Arc<AppState>) -> Result<Json<ClipboardContent>,
     responses((status = 200, body = OkResponse))
 )]
 pub async fn set_handler(
-    state: Arc<AppState>,
+    state: Arc<PhoneState>,
     Json(body): Json<SetClipboardBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    let serial = &state.config.adb_serial;
     if !state.bridge.is_device_owner_available() {
         return Err(ApiError::Adb(
             "clipboard requires device owner app (not available)".into(),
         ));
     }
     let encoded = urlencoding::encode(&body.text);
-    state.bridge.device_query(&format!("clipboard/set?text={encoded}")).await?;
+    state.bridge.device_query(serial, &format!("clipboard/set?text={encoded}")).await?;
     Ok(Json(serde_json::json!({"ok": true})))
 }

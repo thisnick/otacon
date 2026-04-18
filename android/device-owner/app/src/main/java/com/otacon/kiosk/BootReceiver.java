@@ -78,10 +78,73 @@ public class BootReceiver extends BroadcastReceiver {
         dpm.setCameraDisabled(admin, true);
         Log.i(TAG, "Camera disabled");
 
-        // Allow lock screen — don't disable keyguard
-        // (User can set their own PIN/pattern via device settings)
+        // Hide app stores so they can't auto-update apps in the background.
+        // setApplicationHidden returns true if the change was applied. We don't
+        // disable Play Services itself — too many things depend on it.
+        for (String pkg : new String[]{
+                "com.android.vending",                     // Google Play Store
+                "com.sec.android.app.samsungapps",         // Galaxy Store (Samsung)
+                "com.samsung.android.app.omcagent",        // Samsung OMC config update agent
+        }) {
+            try {
+                if (dpm.setApplicationHidden(admin, pkg, true)) {
+                    Log.i(TAG, "Hidden: " + pkg);
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "setApplicationHidden(" + pkg + ") failed: " + e.getMessage());
+            }
+        }
+
+        // Disable keyguard so PIN lock screen doesn't show
+        try {
+            dpm.setKeyguardDisabled(admin, true);
+            Log.i(TAG, "Keyguard disabled");
+        } catch (Exception e) {
+            Log.w(TAG, "setKeyguardDisabled failed: " + e.getMessage());
+        }
+
+        // Set up reset password token for unattended password clearing.
+        // The token is persisted in app private storage and activated once
+        // the user confirms their PIN via /lock/activate.
+        setupResetPasswordToken(context, dpm, admin);
 
         Log.i(TAG, "All restrictions applied");
+    }
+
+    /** Generate and set a reset-password token if one isn't already stored. */
+    private static void setupResetPasswordToken(Context context, DevicePolicyManager dpm,
+                                                 ComponentName admin) {
+        java.io.File tokenFile = new java.io.File(context.getFilesDir(), "reset_token");
+        byte[] token;
+
+        if (tokenFile.exists()) {
+            // Reuse existing token
+            try {
+                token = java.nio.file.Files.readAllBytes(tokenFile.toPath());
+                if (token.length >= 32) {
+                    // Re-set the token with DPM (survives app updates)
+                    dpm.setResetPasswordToken(admin, token);
+                    Log.i(TAG, "Re-set existing reset password token");
+                    return;
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "Failed to read token file: " + e.getMessage());
+            }
+        }
+
+        // Generate new token
+        token = new byte[32];
+        new java.security.SecureRandom().nextBytes(token);
+        try {
+            dpm.setResetPasswordToken(admin, token);
+            // Persist token
+            java.io.FileOutputStream fos = new java.io.FileOutputStream(tokenFile);
+            fos.write(token);
+            fos.close();
+            Log.i(TAG, "Generated and set new reset password token");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to set reset password token: " + e.getMessage());
+        }
     }
 
     private static void clearRestrictions(Context context) {
@@ -110,6 +173,15 @@ public class BootReceiver extends BroadcastReceiver {
         try {
             dpm.clearResetPasswordToken(admin);
         } catch (Exception ignored) {}
+
+        // Un-hide app stores in case CLEAR is being used to recover usability
+        for (String pkg : new String[]{
+                "com.android.vending",
+                "com.sec.android.app.samsungapps",
+                "com.samsung.android.app.omcagent",
+        }) {
+            try { dpm.setApplicationHidden(admin, pkg, false); } catch (Exception ignored) {}
+        }
 
         Log.i(TAG, "All restrictions cleared");
     }

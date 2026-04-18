@@ -19,8 +19,8 @@ android {
         applicationId = "com.otacon.kiosk"
         minSdk = 33
         targetSdk = 34
-        versionCode = 22
-        versionName = "3.2.0"
+        versionCode = 26
+        versionName = "3.5.0"
     }
 
     buildTypes {

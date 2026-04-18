@@ -5,7 +5,7 @@ use utoipa::ToSchema;
 
 use super::adb::adb_shell;
 use super::ApiError;
-use crate::AppState;
+use crate::phone::PhoneState;
 
 #[derive(Serialize, ToSchema)]
 pub struct EsimProfile {
@@ -74,7 +74,8 @@ pub struct SetDefaultsBody {
     operation_id = "listEsimProfiles",
     responses((status = 200, body = Vec<EsimProfile>))
 )]
-pub async fn profiles_handler(state: Arc<AppState>) -> Result<Json<Vec<EsimProfile>>, ApiError> {
+pub async fn profiles_handler(state: Arc<PhoneState>) -> Result<Json<Vec<EsimProfile>>, ApiError> {
+    let serial = &state.config.adb_serial;
     // Get active profiles from app_process (has unmasked ICCIDs)
     let active_json = state.bridge.snapshot_get("/esim/profiles").await.unwrap_or_default();
     let active: Vec<serde_json::Value> = serde_json::from_str(&active_json).unwrap_or_default();
@@ -88,11 +89,11 @@ pub async fn profiles_handler(state: Arc<AppState>) -> Result<Json<Vec<EsimProfi
     }
 
     // Get default SMS subId
-    let default_sms = adb_shell("settings get global multi_sim_sms").await
+    let default_sms = adb_shell(serial, "settings get global multi_sim_sms").await
         .unwrap_or_default().trim().parse::<i64>().unwrap_or(-1);
 
     // Parse dumpsys for ALL embedded profiles (including disabled)
-    let dump = adb_shell("dumpsys isub").await?;
+    let dump = adb_shell(serial, "dumpsys isub").await?;
     let mut profiles = Vec::new();
     let mut seen_ids = std::collections::HashSet::new();
 
@@ -170,9 +171,9 @@ pub async fn profiles_handler(state: Arc<AppState>) -> Result<Json<Vec<EsimProfi
     request_body = InstallBody,
     responses((status = 200, body = serde_json::Value))
 )]
-pub async fn install_handler(Json(body): Json<InstallBody>) -> Result<Json<serde_json::Value>, ApiError> {
+pub async fn install_handler(serial: &str, Json(body): Json<InstallBody>) -> Result<Json<serde_json::Value>, ApiError> {
     let encoded = urlencoding::encode(&body.activation_code);
-    let output = adb_shell(&format!(
+    let output = adb_shell(serial, &format!(
         "content query --uri 'content://com.otacon.kiosk/esim/install?activationCode={encoded}'"
     )).await?;
 
@@ -189,8 +190,8 @@ pub async fn install_handler(Json(body): Json<InstallBody>) -> Result<Json<serde
     request_body = DeleteBody,
     responses((status = 200, body = serde_json::Value))
 )]
-pub async fn delete_handler(Json(body): Json<DeleteBody>) -> Result<Json<serde_json::Value>, ApiError> {
-    let output = adb_shell(&format!(
+pub async fn delete_handler(serial: &str, Json(body): Json<DeleteBody>) -> Result<Json<serde_json::Value>, ApiError> {
+    let output = adb_shell(serial, &format!(
         "content query --uri 'content://com.otacon.kiosk/esim/delete?subId={}'",
         body.sub_id
     )).await?;
@@ -208,7 +209,7 @@ pub async fn delete_handler(Json(body): Json<DeleteBody>) -> Result<Json<serde_j
     request_body = SwitchBody,
     responses((status = 200, body = serde_json::Value))
 )]
-pub async fn switch_handler(state: Arc<AppState>, Json(body): Json<SwitchBody>) -> Result<Json<serde_json::Value>, ApiError> {
+pub async fn switch_handler(state: Arc<PhoneState>, Json(body): Json<SwitchBody>) -> Result<Json<serde_json::Value>, ApiError> {
     let resp = state.bridge.snapshot_get(&format!("/esim/switch?subId={}", body.sub_id)).await?;
     let parsed: serde_json::Value = serde_json::from_str(&resp)
         .map_err(|e| ApiError::Adb(format!("Invalid response: {e}")))?;
@@ -229,7 +230,7 @@ pub async fn switch_handler(state: Arc<AppState>, Json(body): Json<SwitchBody>) 
     request_body = EnableBody,
     responses((status = 200, body = serde_json::Value))
 )]
-pub async fn enable_handler(state: Arc<AppState>, Json(body): Json<EnableBody>) -> Result<Json<serde_json::Value>, ApiError> {
+pub async fn enable_handler(state: Arc<PhoneState>, Json(body): Json<EnableBody>) -> Result<Json<serde_json::Value>, ApiError> {
     let resp = state.bridge.snapshot_get(&format!(
         "/esim/enable?subId={}&enabled={}", body.sub_id, body.enabled
     )).await?;
@@ -251,12 +252,12 @@ pub async fn enable_handler(state: Arc<AppState>, Json(body): Json<EnableBody>) 
     operation_id = "getEsimDefaults",
     responses((status = 200, body = EsimDefaults))
 )]
-pub async fn defaults_get_handler() -> Result<Json<EsimDefaults>, ApiError> {
-    let sms = adb_shell("settings get global multi_sim_sms").await
+pub async fn defaults_get_handler(serial: &str) -> Result<Json<EsimDefaults>, ApiError> {
+    let sms = adb_shell(serial, "settings get global multi_sim_sms").await
         .unwrap_or_default().trim().parse::<i64>().ok();
-    let voice = adb_shell("settings get global multi_sim_voice").await
+    let voice = adb_shell(serial, "settings get global multi_sim_voice").await
         .unwrap_or_default().trim().parse::<i64>().ok();
-    let data = adb_shell("settings get global multi_sim_data_call").await
+    let data = adb_shell(serial, "settings get global multi_sim_data_call").await
         .unwrap_or_default().trim().parse::<i64>().ok();
 
     Ok(Json(EsimDefaults {
@@ -274,15 +275,15 @@ pub async fn defaults_get_handler() -> Result<Json<EsimDefaults>, ApiError> {
     request_body = SetDefaultsBody,
     responses((status = 200, body = serde_json::Value))
 )]
-pub async fn defaults_set_handler(Json(body): Json<SetDefaultsBody>) -> Result<Json<serde_json::Value>, ApiError> {
+pub async fn defaults_set_handler(serial: &str, Json(body): Json<SetDefaultsBody>) -> Result<Json<serde_json::Value>, ApiError> {
     if let Some(sms) = body.sms_sub_id {
-        adb_shell(&format!("settings put global multi_sim_sms {sms}")).await?;
+        adb_shell(serial, &format!("settings put global multi_sim_sms {sms}")).await?;
     }
     if let Some(voice) = body.voice_sub_id {
-        adb_shell(&format!("settings put global multi_sim_voice {voice}")).await?;
+        adb_shell(serial, &format!("settings put global multi_sim_voice {voice}")).await?;
     }
     if let Some(data) = body.data_sub_id {
-        adb_shell(&format!("settings put global multi_sim_data_call {data}")).await?;
+        adb_shell(serial, &format!("settings put global multi_sim_data_call {data}")).await?;
     }
     Ok(Json(serde_json::json!({"ok": true})))
 }

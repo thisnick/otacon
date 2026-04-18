@@ -4,7 +4,9 @@
     "ansible@latest",
     "direnv@latest",
     "rustup@latest",
-    "colima@latest"
+    "colima@latest",
+    "python312@latest",
+    "uv@latest"
   ],
   "shell": {
     "init_hook": [

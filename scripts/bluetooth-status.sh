@@ -29,21 +29,49 @@ else
 fi
 
 echo
-echo "=== BT Connection ==="
-CONN=$(bluetoothctl devices 2>/dev/null | head -1 | awk '{print $2}')
-if [ -n "$CONN" ]; then
-    BT_INFO=$(bluetoothctl info "$CONN" 2>/dev/null)
-    echo "$BT_INFO" | grep -E "Name|Connected|Paired|Trusted|ServicesResolved" | sed 's/^/  /'
-    UUIDS=$(echo "$BT_INFO" | grep "UUID")
-    echo
-    echo "=== Profile Check ==="
-    echo "$UUIDS" | grep -q "Handsfree Audio Gateway" && ok "Phone is HFP AG (can route call audio to us)" \
-                                                      || fail "HFP AG not in UUID list — call audio won't work"
-    echo "$UUIDS" | grep -q "Audio Source\|0000110a"  && ok "Phone is A2DP Source (can stream media to us)" \
-                                                      || fail "A2DP Source not in UUID list — media audio won't work"
+echo "=== BT Adapters & Connections ==="
+UUIDS=""
+# List all adapters and their paired devices
+ADAPTERS=$(bluetoothctl list 2>/dev/null | awk '{print $2}')
+if [ -z "$ADAPTERS" ]; then
+    info "No Bluetooth adapters found"
 else
-    info "No paired devices found"
-    UUIDS=""
+    for ADAPTER_MAC in $ADAPTERS; do
+        ADAPTER_INFO=$(bluetoothctl show "$ADAPTER_MAC" 2>/dev/null)
+        ADAPTER_NAME=$(echo "$ADAPTER_INFO" | grep "Name:" | head -1 | sed 's/.*Name: //')
+        ADAPTER_HCI=$(echo "$ADAPTER_INFO" | grep "Controller" | awk '{print $NF}' || true)
+        # Get hci name from the D-Bus path
+        ADAPTER_POWERED=$(echo "$ADAPTER_INFO" | grep "Powered:" | awk '{print $2}')
+        echo "  --- Adapter $ADAPTER_MAC ($ADAPTER_NAME) powered=$ADAPTER_POWERED ---"
+
+        # Select this adapter to list its devices
+        bluetoothctl select "$ADAPTER_MAC" >/dev/null 2>&1 || true
+        DEVICES=$(bluetoothctl devices 2>/dev/null | grep -v "^Controller" | awk '{print $2}')
+        if [ -z "$DEVICES" ]; then
+            info "  No devices on this adapter"
+        else
+            for DEV_MAC in $DEVICES; do
+                DEV_INFO=$(bluetoothctl info "$DEV_MAC" 2>/dev/null || true)
+                IS_PAIRED=$(echo "$DEV_INFO" | grep "Paired:" | awk '{print $2}')
+                [ "$IS_PAIRED" != "yes" ] && continue
+                echo "$DEV_INFO" | grep -E "Name|Connected|Paired|Trusted|ServicesResolved" | sed 's/^/    /'
+                DEV_UUIDS=$(echo "$DEV_INFO" | grep "UUID")
+                UUIDS="$UUIDS
+$DEV_UUIDS"
+                echo
+            done
+        fi
+    done
+    echo
+    echo "=== Profile Check (all paired devices) ==="
+    if [ -n "$UUIDS" ]; then
+        echo "$UUIDS" | grep -q "Handsfree Audio Gateway" && ok "HFP AG present (can route call audio to us)" \
+                                                          || fail "HFP AG not in UUID list — call audio won't work"
+        echo "$UUIDS" | grep -q "Audio Source\|0000110a"  && ok "A2DP Source present (can stream media to us)" \
+                                                          || fail "A2DP Source not in UUID list — media audio won't work"
+    else
+        info "No paired devices to check profiles for"
+    fi
 fi
 
 echo
@@ -111,7 +139,16 @@ PYEOF
 
 echo
 echo "=== SCO / HCI Link State ==="
-hciconfig hci0 2>/dev/null | grep -E "hci0|Type|BD Address|UP|RUNNING|SCO" | sed 's/^/  /' || info "hciconfig unavailable"
+# Show all HCI adapters
+HCI_DEVS=$(hciconfig 2>/dev/null | grep -oE "^hci[0-9]+" || true)
+if [ -z "$HCI_DEVS" ]; then
+    info "hciconfig unavailable or no adapters"
+else
+    for HCI in $HCI_DEVS; do
+        hciconfig "$HCI" 2>/dev/null | grep -E "$HCI|Type|BD Address|UP|RUNNING|SCO|Bus" | sed 's/^/  /'
+        echo
+    done
+fi
 SCO_COUNT=$(hcitool con 2>/dev/null | grep -c "SCO" || true)
 SCO_COUNT=${SCO_COUNT:-0}
 if [ "${SCO_COUNT}" -gt 0 ] 2>/dev/null; then

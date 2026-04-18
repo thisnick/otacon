@@ -4,7 +4,8 @@ use std::sync::Arc;
 use utoipa::ToSchema;
 
 use super::adb::adb_shell;
-use super::{ApiError, AppState, ErrorResponse, OkResponse};
+use super::{ApiError, ErrorResponse, OkResponse};
+use crate::phone::PhoneState;
 
 #[derive(Debug, Deserialize, ToSchema)]
 #[serde(tag = "action", rename_all = "snake_case")]
@@ -106,16 +107,17 @@ pub struct ScrollParams {
     )
 )]
 pub async fn handler(
-    state: Arc<AppState>,
+    state: Arc<PhoneState>,
     Json(action): Json<Action>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    let serial = &state.config.adb_serial;
     match action {
         Action::Tap(p) => handle_tap(state.clone(), p, false).await?,
         Action::LongTap(p) => handle_tap(state.clone(), p, true).await?,
-        Action::Swipe(p) => handle_swipe(p).await?,
-        Action::Pinch(p) => handle_pinch(p).await?,
-        Action::Key(p) => handle_key(p).await?,
-        Action::Type(p) => handle_type(p).await?,
+        Action::Swipe(p) => handle_swipe(serial, p).await?,
+        Action::Pinch(p) => handle_pinch(serial, p).await?,
+        Action::Key(p) => handle_key(serial, p).await?,
+        Action::Type(p) => handle_type(serial, p).await?,
         Action::SetText(p) => handle_set_text(state.clone(), p).await?,
         Action::ScrollForward(p) => handle_scroll(state.clone(), p, "scroll_forward").await?,
         Action::ScrollBackward(p) => handle_scroll(state.clone(), p, "scroll_backward").await?,
@@ -132,7 +134,8 @@ pub async fn handler(
     Ok(Json(serde_json::json!({"ok": true})))
 }
 
-async fn handle_tap(state: Arc<AppState>, p: TapParams, long: bool) -> Result<(), ApiError> {
+async fn handle_tap(state: Arc<PhoneState>, p: TapParams, long: bool) -> Result<(), ApiError> {
+    let serial = &state.config.adb_serial;
     if let Some(ref ref_id) = p.ref_id {
         let ref_info = resolve_ref(&state, ref_id).await?;
         let (x, y) = bounds_center(&ref_info.bounds);
@@ -156,9 +159,9 @@ async fn handle_tap(state: Arc<AppState>, p: TapParams, long: bool) -> Result<()
             }
 
             if long {
-                adb_shell(&format!("input swipe {x} {y} {x} {y} 1000")).await?;
+                adb_shell(serial, &format!("input swipe {x} {y} {x} {y} 1000")).await?;
             } else {
-                adb_shell(&format!("input tap {x} {y}")).await?;
+                adb_shell(serial, &format!("input tap {x} {y}")).await?;
             }
         } else {
             let action_name = if long { "long_click" } else { "click" };
@@ -167,9 +170,9 @@ async fn handle_tap(state: Arc<AppState>, p: TapParams, long: bool) -> Result<()
                 state.bridge.snapshot_post("/action", &body).await?;
             } else {
                 if long {
-                    adb_shell(&format!("input swipe {x} {y} {x} {y} 1000")).await?;
+                    adb_shell(serial, &format!("input swipe {x} {y} {x} {y} 1000")).await?;
                 } else {
-                    adb_shell(&format!("input tap {x} {y}")).await?;
+                    adb_shell(serial, &format!("input tap {x} {y}")).await?;
                 }
             }
         }
@@ -179,9 +182,9 @@ async fn handle_tap(state: Arc<AppState>, p: TapParams, long: bool) -> Result<()
     // Coordinate-based tap: always via ADB input
     if let (Some(x), Some(y)) = (p.x, p.y) {
         if long {
-            adb_shell(&format!("input swipe {x} {y} {x} {y} 1000")).await?;
+            adb_shell(serial, &format!("input swipe {x} {y} {x} {y} 1000")).await?;
         } else {
-            adb_shell(&format!("input tap {x} {y}")).await?;
+            adb_shell(serial, &format!("input tap {x} {y}")).await?;
         }
         return Ok(());
     }
@@ -238,7 +241,7 @@ fn bounds_center(bounds: &(i32, i32, i32, i32)) -> (i32, i32) {
 }
 
 /// Resolve a ref ID to its bounds and WebView context.
-async fn resolve_ref(state: &Arc<AppState>, ref_id: &str) -> Result<RefInfo, ApiError> {
+async fn resolve_ref(state: &Arc<PhoneState>, ref_id: &str) -> Result<RefInfo, ApiError> {
     if state.bridge.is_snapshot_available() {
         let snap = state.bridge.snapshot_get("/snapshot?format=json").await?;
         let tree: serde_json::Value = serde_json::from_str(&snap)
@@ -268,8 +271,8 @@ async fn resolve_ref(state: &Arc<AppState>, ref_id: &str) -> Result<RefInfo, Api
     }
 }
 
-async fn handle_swipe(p: SwipeParams) -> Result<(), ApiError> {
-    adb_shell(&format!(
+async fn handle_swipe(serial: &str, p: SwipeParams) -> Result<(), ApiError> {
+    adb_shell(serial, &format!(
         "input swipe {} {} {} {} {}",
         p.x1, p.y1, p.x2, p.y2, p.duration_ms
     ))
@@ -277,7 +280,7 @@ async fn handle_swipe(p: SwipeParams) -> Result<(), ApiError> {
     Ok(())
 }
 
-async fn handle_pinch(p: PinchParams) -> Result<(), ApiError> {
+async fn handle_pinch(serial: &str, p: PinchParams) -> Result<(), ApiError> {
     // Two concurrent swipes moving symmetrically around the center point.
     // Finger 1: top of center, Finger 2: bottom of center.
     let f1_start_y = p.y - p.start_radius;
@@ -294,13 +297,13 @@ async fn handle_pinch(p: PinchParams) -> Result<(), ApiError> {
         p.x, f2_start_y, p.x, f2_end_y, p.duration_ms
     );
 
-    let (r1, r2) = tokio::join!(adb_shell(&cmd1), adb_shell(&cmd2));
+    let (r1, r2) = tokio::join!(adb_shell(serial, &cmd1), adb_shell(serial, &cmd2));
     r1?;
     r2?;
     Ok(())
 }
 
-async fn handle_key(p: KeyParams) -> Result<(), ApiError> {
+async fn handle_key(serial: &str, p: KeyParams) -> Result<(), ApiError> {
     let key_lower = p.key.to_lowercase();
 
     // Handle modifier combos like "ctrl+v", "ctrl+a", "shift+tab"
@@ -312,12 +315,12 @@ async fn handle_key(p: KeyParams) -> Result<(), ApiError> {
             .collect();
         let codes = keycodes?;
         let args = codes.join(" ");
-        adb_shell(&format!("input keycombination {args}")).await?;
+        adb_shell(serial, &format!("input keycombination {args}")).await?;
         return Ok(());
     }
 
     let keycode = key_to_code(&key_lower)?;
-    adb_shell(&format!("input keyevent {keycode}")).await?;
+    adb_shell(serial, &format!("input keyevent {keycode}")).await?;
     Ok(())
 }
 
@@ -343,6 +346,10 @@ fn key_to_code(name: &str) -> Result<String, ApiError> {
         "shift_right" => Ok("60".into()),
         "alt" | "alt_left" => Ok("57".into()),
         "alt_right" => Ok("58".into()),
+        "meta" | "meta_left" | "cmd" | "cmd_left" | "search" => Ok("117".into()),
+        "meta_right" | "cmd_right" => Ok("118".into()),
+        "wakeup" | "wake" => Ok("224".into()),
+        "sleep" => Ok("223".into()),
         // Letters a-z
         s if s.len() == 1 && s.chars().next().unwrap().is_ascii_lowercase() => {
             Ok((s.chars().next().unwrap() as u32 - 'a' as u32 + 29).to_string())
@@ -353,7 +360,7 @@ fn key_to_code(name: &str) -> Result<String, ApiError> {
     }
 }
 
-async fn handle_type(p: TypeParams) -> Result<(), ApiError> {
+async fn handle_type(serial: &str, p: TypeParams) -> Result<(), ApiError> {
     // adb shell input text requires escaping: spaces → %s, special chars escaped
     let escaped = p
         .text
@@ -369,11 +376,12 @@ async fn handle_type(p: TypeParams) -> Result<(), ApiError> {
         .replace('\'', "\\'")
         .replace('"', "\\\"")
         .replace('`', "\\`");
-    adb_shell(&format!("input text '{escaped}'")).await?;
+    adb_shell(serial, &format!("input text '{escaped}'")).await?;
     Ok(())
 }
 
-async fn handle_set_text(state: Arc<AppState>, p: SetTextParams) -> Result<(), ApiError> {
+async fn handle_set_text(state: Arc<PhoneState>, p: SetTextParams) -> Result<(), ApiError> {
+    let serial = &state.config.adb_serial;
     let ref_info = resolve_ref(&state, &p.ref_id).await?;
 
     // Try performAction(ACTION_SET_TEXT) first — works on native and most WebView EditTexts.
@@ -397,19 +405,19 @@ async fn handle_set_text(state: Arc<AppState>, p: SetTextParams) -> Result<(), A
     // Supports full Unicode via clipboard.
     if state.bridge.is_device_owner_available() {
         let encoded = urlencoding::encode(&p.text);
-        state.bridge.device_query(&format!("clipboard/set?text={encoded}")).await?;
+        state.bridge.device_query(serial, &format!("clipboard/set?text={encoded}")).await?;
         let (x, y) = bounds_center(&ref_info.bounds);
-        adb_shell(&format!("input tap {x} {y}")).await?;
+        adb_shell(serial, &format!("input tap {x} {y}")).await?;
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        adb_shell("input keyevent 29 --longpress").await.ok(); // Ctrl+A
+        adb_shell(serial, "input keyevent 29 --longpress").await.ok(); // Ctrl+A
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        adb_shell("input keyevent 50 --longpress").await.ok(); // Ctrl+V
+        adb_shell(serial, "input keyevent 50 --longpress").await.ok(); // Ctrl+V
         return Ok(());
     }
 
     // Last resort: tap + input text (ASCII only)
     let (x, y) = bounds_center(&ref_info.bounds);
-    adb_shell(&format!("input tap {x} {y}")).await?;
+    adb_shell(serial, &format!("input tap {x} {y}")).await?;
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     let escaped = p.text
         .replace('\\', "\\\\")
@@ -417,11 +425,12 @@ async fn handle_set_text(state: Arc<AppState>, p: SetTextParams) -> Result<(), A
         .replace('&', "\\&")
         .replace('\'', "\\'")
         .replace('"', "\\\"");
-    adb_shell(&format!("input text '{escaped}'")).await?;
+    adb_shell(serial, &format!("input text '{escaped}'")).await?;
     Ok(())
 }
 
-async fn handle_scroll(state: Arc<AppState>, p: ScrollParams, direction: &str) -> Result<(), ApiError> {
+async fn handle_scroll(state: Arc<PhoneState>, p: ScrollParams, direction: &str) -> Result<(), ApiError> {
+    let serial = &state.config.adb_serial;
     // Fast path: snapshot server performAction
     if state.bridge.is_snapshot_available() {
         let body = serde_json::json!({"action": direction, "ref": p.ref_id}).to_string();
@@ -447,9 +456,9 @@ async fn handle_scroll(state: Arc<AppState>, p: ScrollParams, direction: &str) -
     drop(guard);
 
     if direction == "scroll_forward" {
-        adb_shell(&format!("input swipe {cx} {bot} {cx} {top} 300")).await?;
+        adb_shell(serial, &format!("input swipe {cx} {bot} {cx} {top} 300")).await?;
     } else {
-        adb_shell(&format!("input swipe {cx} {top} {cx} {bot} 300")).await?;
+        adb_shell(serial, &format!("input swipe {cx} {top} {cx} {bot} 300")).await?;
     }
     Ok(())
 }

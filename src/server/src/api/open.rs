@@ -18,9 +18,9 @@ pub struct OpenBody {
     request_body = OpenBody,
     responses((status = 200, body = OkResponse))
 )]
-pub async fn handler(Json(body): Json<OpenBody>) -> Result<Json<serde_json::Value>, ApiError> {
+pub async fn handler(serial: &str, Json(body): Json<OpenBody>) -> Result<Json<serde_json::Value>, ApiError> {
     // Shell-escape the URI (single quotes, escape any embedded single quotes)
     let escaped = body.uri.replace('\'', "'\\''");
-    adb_shell(&format!("am start -a android.intent.action.VIEW -d '{escaped}'")).await?;
+    adb_shell(serial, &format!("am start -a android.intent.action.VIEW -d '{escaped}'")).await?;
     Ok(Json(serde_json::json!({"ok": true})))
 }

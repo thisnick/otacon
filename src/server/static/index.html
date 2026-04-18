@@ -243,7 +243,8 @@
     overflow: hidden;
   }
   .info-item {
-    flex: 1;
+    flex: 1 1 0;
+    min-width: 0;             /* allow flex child to shrink below content size */
     background: var(--surface);
     padding: 14px 20px;
   }
@@ -261,6 +262,7 @@
     font-family: 'JetBrains Mono', monospace;
     overflow: hidden;
     text-overflow: ellipsis;
+    white-space: nowrap;      /* one-line, ellipsis if too long */
   }
 
   .tree-body::-webkit-scrollbar { width: 6px; }
@@ -596,6 +598,9 @@
 <div class="shell">
   <header>
     <h1>Otacon</h1>
+    <select id="phoneSelector" onchange="onPhoneChange()" style="background:var(--surface);color:var(--text);border:1px solid var(--border);padding:6px 10px;border-radius:6px;font-family:inherit;font-size:13px;">
+      <option value="">Loading…</option>
+    </select>
     <div class="dot" id="statusDot"></div>
   </header>
 
@@ -640,6 +645,13 @@
         <img id="screenshot" alt="" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=">
       </div>
       <div class="screen-status" id="screenStatus"></div>
+      <div class="device-controls" style="display:flex;gap:8px;padding:8px 0;flex-wrap:wrap;">
+        <button class="ch-btn" onclick="sendKey('power')" title="Power button">Power</button>
+        <button class="ch-btn" onclick="unlockPhone()" title="Wake + Menu (dismiss lockscreen)">Menu</button>
+        <button class="ch-btn" onclick="sendKey('home')" title="Home button">Home</button>
+        <button class="ch-btn" onclick="sendKey('back')" title="Back button">Back</button>
+        <button class="ch-btn" onclick="sendKey('recents')" title="Recent apps">Recents</button>
+      </div>
       <div class="ref-list" id="refList">
         <div class="ref-list-empty">tap targets appear here after loading</div>
       </div>
@@ -658,10 +670,14 @@
   </div>
 
   <div class="info-bar" id="infoBar">
+    <div class="info-item"><dt>Phone</dt><dd>—</dd></div>
+    <div class="info-item"><dt>Serial</dt><dd>—</dd></div>
     <div class="info-item"><dt>Model</dt><dd>—</dd></div>
+    <div class="info-item"><dt>Number</dt><dd>—</dd></div>
     <div class="info-item"><dt>Activity</dt><dd>—</dd></div>
     <div class="info-item"><dt>Resolution</dt><dd>—</dd></div>
-    <div class="info-item"><dt>Window</dt><dd>—</dd></div>
+    <div class="info-item"><dt>Bridge</dt><dd>—</dd></div>
+    <div class="info-item"><dt>Snapshot</dt><dd>—</dd></div>
   </div>
 
   <div class="sim-panel">
@@ -708,6 +724,54 @@
 </div>
 
 <script>
+// --- Phone scoping ---
+// All REST/WS calls are namespaced under /phones/{phoneId}/...
+let phoneId = new URLSearchParams(location.search).get('phone')
+              || localStorage.getItem('otacon.phoneId')
+              || '';
+let phoneMeta = {};   // populated by loadPhoneList(): { id, adb_serial, ... }
+function apiBase() { return phoneId ? `/phones/${phoneId}/api` : '/api'; }
+function wsBase() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return phoneId ? `${proto}//${location.host}/phones/${phoneId}/ws`
+                 : `${proto}//${location.host}/ws`;
+}
+async function loadPhoneList() {
+  try {
+    const res = await fetch('/phones');
+    const phones = await res.json();
+    const sel = document.getElementById('phoneSelector');
+    sel.innerHTML = '';
+    if (phones.length === 0) {
+      sel.innerHTML = '<option value="">No phones</option>';
+      return;
+    }
+    phones.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.id;
+      opt.textContent = `${p.id} (${p.adb_serial})`;
+      sel.appendChild(opt);
+    });
+    if (!phoneId || !phones.find(p => p.id === phoneId)) {
+      phoneId = phones[0].id;
+      localStorage.setItem('otacon.phoneId', phoneId);
+    }
+    sel.value = phoneId;
+    phoneMeta = phones.find(p => p.id === phoneId) || {};
+  } catch (e) {
+    console.error('loadPhoneList failed', e);
+  }
+}
+function onPhoneChange() {
+  const sel = document.getElementById('phoneSelector');
+  phoneId = sel.value;
+  localStorage.setItem('otacon.phoneId', phoneId);
+  const url = new URL(location.href);
+  url.searchParams.set('phone', phoneId);
+  history.replaceState({}, '', url);
+  location.reload();
+}
+
 // --- State ---
 let HFP_SAMPLE_RATE = 16000, HFP_CHANNELS = 1;
 let MEDIA_SAMPLE_RATE = 44100, MEDIA_CHANNELS = 2;
@@ -753,7 +817,7 @@ async function screenTap(e, long) {
   tapping = true;
   setScreenStatus(`${label} ${tapX}, ${tapY}...`, true);
   try {
-    const res = await fetch('/api/action', {
+    const res = await fetch(`${apiBase()}/action`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({action, x: tapX, y: tapY})
@@ -782,7 +846,7 @@ async function tapRef(refId, long) {
   tapping = true;
   setScreenStatus(`${label} ${refId}...`, true);
   try {
-    const res = await fetch('/api/action', {
+    const res = await fetch(`${apiBase()}/action`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({action, ref: refId})
@@ -800,13 +864,17 @@ async function tapRef(refId, long) {
   tapping = false;
 }
 
-// --- HFP ---
+// --- HFP (lazy: WebSocket connects only when user clicks Listen) ---
 function connectHfp() {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  hfpWs = new WebSocket(`${proto}//${location.host}/ws/audio/call`);
+  if (hfpWs && hfpWs.readyState <= 1) return; // already open or connecting
+  hfpWs = new WebSocket(`${wsBase()}/audio/call`);
   hfpWs.binaryType = 'arraybuffer';
   hfpWs.onopen = () => setStatus('connected');
-  hfpWs.onclose = () => { setStatus(''); hfpListening = false; micActive = false; updateButtons(); setTimeout(connectHfp, 2000); };
+  hfpWs.onclose = () => {
+    setStatus(''); micActive = false; updateButtons();
+    // Only reconnect if user is still listening
+    if (hfpListening) setTimeout(connectHfp, 2000);
+  };
   hfpWs.onerror = () => setStatus('error');
   hfpWs.onmessage = (e) => {
     if (typeof e.data === 'string') {
@@ -826,18 +894,31 @@ function connectHfp() {
     document.getElementById('hfpListenLevel').style.width = Math.min(100, Math.sqrt(s / float.length) * 300) + '%';
   };
 }
+function disconnectHfp() {
+  if (hfpWs) { hfpWs.onclose = null; hfpWs.close(); hfpWs = null; }
+  setStatus('');
+}
 function toggleHfpListen() {
-  if (!hfpListening) { hfpCtx = new AudioContext({sampleRate: HFP_SAMPLE_RATE}); hfpListening = true; }
-  else { hfpListening = false; if (hfpCtx) { hfpCtx.close(); hfpCtx = null; } hfpNextTime = 0; document.getElementById('hfpListenLevel').style.width = '0%'; }
+  if (!hfpListening) {
+    hfpCtx = new AudioContext({sampleRate: HFP_SAMPLE_RATE}); hfpListening = true;
+    connectHfp();
+  } else {
+    hfpListening = false; if (hfpCtx) { hfpCtx.close(); hfpCtx = null; } hfpNextTime = 0;
+    document.getElementById('hfpListenLevel').style.width = '0%';
+    disconnectHfp();
+  }
   updateButtons();
 }
 
-// --- Media ---
+// --- Media (lazy: WebSocket connects only when user clicks Listen) ---
 function connectMedia() {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  mediaWs = new WebSocket(`${proto}//${location.host}/ws/audio/media`);
+  if (mediaWs && mediaWs.readyState <= 1) return; // already open or connecting
+  mediaWs = new WebSocket(`${wsBase()}/audio/media`);
   mediaWs.binaryType = 'arraybuffer';
-  mediaWs.onclose = () => { mediaListening = false; updateButtons(); setTimeout(connectMedia, 2000); };
+  mediaWs.onclose = () => {
+    updateButtons();
+    if (mediaListening) setTimeout(connectMedia, 2000);
+  };
   mediaWs.onmessage = (e) => {
     if (typeof e.data === 'string') {
       try { const m = JSON.parse(e.data); if (m.type === 'config') { MEDIA_SAMPLE_RATE = m.sampleRate || MEDIA_SAMPLE_RATE; MEDIA_CHANNELS = m.channels || MEDIA_CHANNELS; } } catch(_){}
@@ -854,9 +935,18 @@ function connectMedia() {
     document.getElementById('mediaListenLevel').style.width = Math.min(100, Math.sqrt(s / c0.length) * 300) + '%';
   };
 }
+function disconnectMedia() {
+  if (mediaWs) { mediaWs.onclose = null; mediaWs.close(); mediaWs = null; }
+}
 function toggleMediaListen() {
-  if (!mediaListening) { mediaCtx = new AudioContext({sampleRate: MEDIA_SAMPLE_RATE}); mediaListening = true; }
-  else { mediaListening = false; if (mediaCtx) { mediaCtx.close(); mediaCtx = null; } mediaNextTime = 0; document.getElementById('mediaListenLevel').style.width = '0%'; }
+  if (!mediaListening) {
+    mediaCtx = new AudioContext({sampleRate: MEDIA_SAMPLE_RATE}); mediaListening = true;
+    connectMedia();
+  } else {
+    mediaListening = false; if (mediaCtx) { mediaCtx.close(); mediaCtx = null; } mediaNextTime = 0;
+    document.getElementById('mediaListenLevel').style.width = '0%';
+    disconnectMedia();
+  }
   updateButtons();
 }
 
@@ -902,6 +992,7 @@ let micWorkletReady = false;
 
 async function toggleMic() {
   if (!micActive) {
+    connectHfp(); // ensure HFP WebSocket is connected for sending audio
     try {
       micStream = await navigator.mediaDevices.getUserMedia({audio: {sampleRate: HFP_SAMPLE_RATE, channelCount: HFP_CHANNELS, echoCancellation: true}});
       const ctx = new AudioContext({sampleRate: HFP_SAMPLE_RATE});
@@ -941,7 +1032,7 @@ function updateButtons() {
 // --- Screenshot + Snapshot ---
 async function refreshScreenshot() {
   try {
-    const res = await fetch('/api/screenshot');
+    const res = await fetch(`${apiBase()}/screenshot`);
     if (!res.ok) throw new Error(res.status);
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
@@ -958,7 +1049,7 @@ async function refreshSnapshot() {
   const el = document.getElementById('treeContent');
   try {
     // Always fetch JSON to build the ref list
-    const jsonRes = await fetch('/api/snapshot?format=json');
+    const jsonRes = await fetch(`${apiBase()}/snapshot?format=json`);
     if (!jsonRes.ok) throw new Error(jsonRes.status);
     const data = await jsonRes.json();
     buildRefList(data);
@@ -967,7 +1058,7 @@ async function refreshSnapshot() {
       el.textContent = JSON.stringify(data, null, 2);
     } else {
       // Fetch text format for the tree display
-      const textRes = await fetch('/api/snapshot?format=text');
+      const textRes = await fetch(`${apiBase()}/snapshot?format=text`);
       if (!textRes.ok) throw new Error(textRes.status);
       const t = await textRes.text();
       el.innerHTML = highlightTree(t);
@@ -1074,7 +1165,7 @@ async function setText(refId, text) {
   tapping = true;
   setScreenStatus(`set-text ${refId}: "${text}"...`, true);
   try {
-    const res = await fetch('/api/action', {
+    const res = await fetch(`${apiBase()}/action`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({action: 'set_text', ref: refId, text})
@@ -1095,7 +1186,7 @@ async function setText(refId, text) {
 // --- Device Info ---
 async function refreshInfo() {
   try {
-    const res = await fetch('/api/info');
+    const res = await fetch(`${apiBase()}/info`);
     if (!res.ok) return;
     const info = await res.json();
     // Store phone resolution for tap coordinate mapping
@@ -1105,13 +1196,99 @@ async function refreshInfo() {
     }
     const ssColor = info.snapshot_server ? 'var(--green)' : 'var(--text-muted)';
     const ssLabel = info.snapshot_server ? 'fast' : 'adb';
+    const bridgeColor = info.bridge ? 'var(--green)' : 'var(--text-muted)';
+    const dot = (color) => `<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${color};margin-right:4px;vertical-align:middle"></span>`;
+    // BT status (graceful: only render if field present)
+    let btHtml = '';
+    if (typeof info.bt_connected === 'boolean') {
+      const btColor = info.bt_connected ? 'var(--green)' : 'var(--text-muted)';
+      const btLabel = info.bt_connected ? 'connected' : 'disconnected';
+      const macTitle = info.adapter_mac ? escHtml(info.adapter_mac) : '';
+      btHtml = `<div class="info-item" title="${macTitle}"><dt>BT</dt><dd style="color:${btColor}">${dot(btColor)}${btLabel}</dd></div>`;
+    }
+    // WiFi status (graceful: only render if wifi present)
+    let wifiHtml = '';
+    if (info.wifi && typeof info.wifi === 'object') {
+      const w = info.wifi;
+      let wColor, wText;
+      if (w.connected) {
+        wColor = 'var(--green)';
+        const ssid = w.ssid ? escHtml(w.ssid) : '—';
+        const rssi = (typeof w.rssi === 'number') ? ` ${w.rssi}dBm` : '';
+        wText = `${ssid}${rssi}`;
+      } else if (!w.enabled) {
+        wColor = 'var(--text-muted)';
+        wText = 'disabled';
+      } else {
+        wColor = 'var(--text-muted)';
+        wText = 'not connected';
+      }
+      wifiHtml = `<div class="info-item"><dt>WiFi</dt><dd style="color:${wColor}">${dot(wColor)}${wText}</dd></div>`;
+    }
+    // Stats (CPU/Mem/Battery/Temp) — graceful: only render if present
+    let cpuHtml = '', memHtml = '', battHtml = '';
+    if (info.stats && typeof info.stats === 'object') {
+      const s = info.stats;
+      if (typeof s.cpu_pct === 'number') {
+        const cpuColor = s.cpu_pct > 80 ? 'var(--red)' : s.cpu_pct > 50 ? 'var(--amber)' : 'var(--green)';
+        cpuHtml = `<div class="info-item"><dt>CPU</dt><dd style="color:${cpuColor}">${s.cpu_pct.toFixed(0)}%</dd></div>`;
+      }
+      if (typeof s.mem_used_mb === 'number' && typeof s.mem_total_mb === 'number') {
+        const memPct = (s.mem_used_mb / s.mem_total_mb * 100);
+        const memColor = memPct > 90 ? 'var(--red)' : memPct > 75 ? 'var(--amber)' : 'var(--green)';
+        memHtml = `<div class="info-item" title="${s.mem_used_mb} / ${s.mem_total_mb} MB"><dt>Mem</dt><dd style="color:${memColor}">${memPct.toFixed(0)}%</dd></div>`;
+      }
+      if (typeof s.battery_pct === 'number') {
+        const battColor = s.battery_pct < 20 ? 'var(--red)' : s.battery_pct < 50 ? 'var(--amber)' : 'var(--green)';
+        const tempStr = (typeof s.temp_c === 'number') ? ` ${s.temp_c.toFixed(0)}°C` : '';
+        battHtml = `<div class="info-item"><dt>Battery</dt><dd style="color:${battColor}">${s.battery_pct}%${tempStr}</dd></div>`;
+      }
+    }
+    const serialVal = info.adb_serial || phoneMeta.adb_serial || '—';
     document.getElementById('infoBar').innerHTML = `
+      <div class="info-item"><dt>Phone</dt><dd>${phoneId || '—'}</dd></div>
+      <div class="info-item"><dt>Serial</dt><dd>${serialVal}</dd></div>
       <div class="info-item"><dt>Model</dt><dd>${info.model || '—'}</dd></div>
+      <div class="info-item"><dt>Number</dt><dd>${info.phone_number || '—'}</dd></div>
       <div class="info-item"><dt>Activity</dt><dd>${info.activity || '—'}</dd></div>
       <div class="info-item"><dt>Resolution</dt><dd>${info.resolution || '—'}</dd></div>
+      <div class="info-item"><dt>Bridge</dt><dd style="color:${bridgeColor}">${info.bridge ? 'ok' : 'down'}</dd></div>
       <div class="info-item"><dt>Snapshot</dt><dd style="color:${ssColor}">${ssLabel}</dd></div>
+      ${btHtml}
+      ${wifiHtml}
+      ${cpuHtml}
+      ${memHtml}
+      ${battHtml}
     `;
   } catch(_) {}
+}
+
+// --- Device controls (power, unlock, home, back) ---
+async function sendKey(key) {
+  try {
+    await fetch(`${apiBase()}/action`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action: 'key', key})
+    });
+    setTimeout(refreshScreenshot, 400);
+  } catch(e) { console.error('sendKey failed', e); }
+}
+
+async function unlockPhone() {
+  // Standard Android unlock via ADB: WAKEUP (224) then MENU (82) — dismisses lockscreen if no PIN
+  try {
+    await fetch(`${apiBase()}/action`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action: 'key', key: 'wakeup'})
+    });
+    await new Promise(r => setTimeout(r, 300));
+    await fetch(`${apiBase()}/action`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action: 'key', key: 'menu'})
+    });
+    setTimeout(refreshAll, 600);
+  } catch(e) { console.error('unlock failed', e); }
 }
 
 // --- Call controls ---
@@ -1121,7 +1298,7 @@ async function dialCall() {
   const num = document.getElementById('dialInput').value.trim();
   if (!num) return;
   try {
-    await fetch('/api/calls/dial', {
+    await fetch(`${apiBase()}/calls/dial`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({number: num})
@@ -1131,18 +1308,18 @@ async function dialCall() {
 }
 
 async function answerCall() {
-  try { await fetch('/api/calls/answer', {method: 'POST'}); } catch(e) {}
+  try { await fetch(`${apiBase()}/calls/answer`, {method: 'POST'}); } catch(e) {}
   pollCallStatus();
 }
 
 async function hangupCall() {
-  try { await fetch('/api/calls/hangup', {method: 'POST'}); } catch(e) {}
+  try { await fetch(`${apiBase()}/calls/hangup`, {method: 'POST'}); } catch(e) {}
   pollCallStatus();
 }
 
 async function pollCallStatus() {
   try {
-    const res = await fetch('/api/calls/status');
+    const res = await fetch(`${apiBase()}/calls/status`);
     if (!res.ok) return;
     const data = await res.json();
     const dot = document.getElementById('callDot');
@@ -1169,7 +1346,7 @@ function toggleSimPanel() {
 
 async function refreshSimProfiles() {
   try {
-    const res = await fetch('/api/esim/profiles');
+    const res = await fetch(`${apiBase()}/esim/profiles`);
     if (!res.ok) return;
     const profiles = await res.json();
     const el = document.getElementById('simProfiles');
@@ -1202,7 +1379,7 @@ async function refreshSimProfiles() {
 async function simSwitch(subId) {
   if (!confirm(`Switch to eSIM profile #${subId}?`)) return;
   try {
-    const res = await fetch('/api/esim/switch', {
+    const res = await fetch(`${apiBase()}/esim/switch`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({subId})
@@ -1219,7 +1396,7 @@ async function simInstall() {
   if (!confirm('Install eSIM profile?\n\n' + code)) return;
   try {
     document.getElementById('simActivationCode').value = 'installing...';
-    const res = await fetch('/api/esim/install', {
+    const res = await fetch(`${apiBase()}/esim/install`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({activationCode: code})
@@ -1241,7 +1418,7 @@ async function simInstall() {
 async function simDelete(subId, carrier) {
   if (!confirm(`Delete eSIM profile "${carrier}" (subId:${subId})?\n\nThis cannot be undone.`)) return;
   try {
-    const res = await fetch('/api/esim/delete', {
+    const res = await fetch(`${apiBase()}/esim/delete`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({subId})
@@ -1268,7 +1445,7 @@ function toggleSmsPanel() {
 
 async function refreshSmsThreads() {
   try {
-    const res = await fetch('/api/sms/threads');
+    const res = await fetch(`${apiBase()}/sms/threads`);
     if (!res.ok) return;
     const threads = await res.json();
     const el = document.getElementById('smsThreads');
@@ -1299,7 +1476,7 @@ document.getElementById('smsThreads').addEventListener('click', (e) => {
 
 async function loadMessages(threadId) {
   try {
-    const res = await fetch(`/api/sms/threads/${threadId}/messages`);
+    const res = await fetch(`${apiBase()}/sms/threads/${threadId}/messages`);
     if (!res.ok) return;
     const msgs = await res.json();
     const el = document.getElementById('smsMsgList');
@@ -1321,7 +1498,7 @@ async function sendSms() {
   const body = document.getElementById('smsBody2').value.trim();
   if (!to || !body) return;
   try {
-    const res = await fetch('/api/sms/messages', {
+    const res = await fetch(`${apiBase()}/sms/messages`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({to, body})
@@ -1338,8 +1515,7 @@ async function sendSms() {
 let eventsWs = null;
 
 function connectEvents() {
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  eventsWs = new WebSocket(`${proto}//${location.host}/ws/events`);
+  eventsWs = new WebSocket(`${wsBase()}/events`);
   eventsWs.onclose = () => setTimeout(connectEvents, 2000);
   eventsWs.onmessage = (e) => {
     try {
@@ -1360,12 +1536,18 @@ function connectEvents() {
 }
 
 // --- Init ---
-connectHfp();
-connectMedia();
-connectEvents();
-refreshAll();
-pollCallStatus();
-refreshSmsThreads();
+(async () => {
+  await loadPhoneList();
+  if (!phoneId) {
+    setScreenStatus && setScreenStatus('No phones connected');
+    return;
+  }
+  // Audio WebSockets are now lazy — connected only when user clicks Listen
+  connectEvents();
+  refreshAll();
+  pollCallStatus();
+  refreshSmsThreads();
+})();
 </script>
 </body>
 </html>

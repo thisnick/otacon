@@ -9,6 +9,7 @@ use utoipa::ToSchema;
 
 use super::adb::adb;
 use super::ApiError;
+use crate::phone::PhoneState;
 
 /// Cached snapshot state: previous tree + monotonic ref counter.
 pub struct SnapshotCache {
@@ -341,9 +342,10 @@ fn render_text(nodes: &[A11yNode], indent: usize, out: &mut String) {
     )
 )]
 pub async fn handler(
-    state: std::sync::Arc<super::AppState>,
+    state: std::sync::Arc<PhoneState>,
     Query(query): Query<SnapshotQuery>,
 ) -> Result<Response, ApiError> {
+    let serial = &state.config.adb_serial;
     // Fast path: snapshot server (app_process with shell permissions)
     if state.bridge.is_snapshot_available() {
         let path = format!("/snapshot?format={}", query.format);
@@ -357,7 +359,7 @@ pub async fn handler(
     }
 
     // Slow path: ADB uiautomator dump
-    let raw = adb(&["exec-out", "uiautomator", "dump", "/dev/tty"]).await?;
+    let raw = adb(serial, &["exec-out", "uiautomator", "dump", "/dev/tty"]).await?;
     let raw_str = String::from_utf8_lossy(&raw);
 
     // uiautomator appends "UI hierchary dumped to: /dev/tty" after the XML

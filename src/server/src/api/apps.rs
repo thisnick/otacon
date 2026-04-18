@@ -20,8 +20,8 @@ pub struct App {
     operation_id = "listApps",
     responses((status = 200, body = Vec<App>))
 )]
-pub async fn list_handler() -> Result<Json<Vec<App>>, ApiError> {
-    let out = adb_shell("pm list packages -3").await?;
+pub async fn list_handler(serial: &str) -> Result<Json<Vec<App>>, ApiError> {
+    let out = adb_shell(serial, "pm list packages -3").await?;
     let apps: Vec<App> = out
         .lines()
         .filter_map(|line| {
@@ -41,9 +41,9 @@ pub async fn list_handler() -> Result<Json<Vec<App>>, ApiError> {
     operation_id = "listRunningApps",
     responses((status = 200, body = Vec<App>))
 )]
-pub async fn running_handler() -> Result<Json<Vec<App>>, ApiError> {
+pub async fn running_handler(serial: &str) -> Result<Json<Vec<App>>, ApiError> {
     // Get recently used / running apps
-    let out = adb_shell(
+    let out = adb_shell(serial,
         "dumpsys activity activities | grep -E 'mResumedActivity|topResumedActivity|realActivity'"
     ).await?;
 
@@ -82,9 +82,9 @@ pub struct LaunchBody {
     request_body = LaunchBody,
     responses((status = 200, body = OkResponse))
 )]
-pub async fn launch_handler(Json(body): Json<LaunchBody>) -> Result<Json<serde_json::Value>, ApiError> {
+pub async fn launch_handler(serial: &str, Json(body): Json<LaunchBody>) -> Result<Json<serde_json::Value>, ApiError> {
     // Use monkey to launch the main activity of the package
-    adb_shell(&format!(
+    adb_shell(serial, &format!(
         "monkey -p {} -c android.intent.category.LAUNCHER 1",
         body.package
     ))
@@ -100,8 +100,8 @@ pub async fn launch_handler(Json(body): Json<LaunchBody>) -> Result<Json<serde_j
     params(("package" = String, Path)),
     responses((status = 200, body = OkResponse))
 )]
-pub async fn stop_handler(Path(package): Path<String>) -> Result<Json<serde_json::Value>, ApiError> {
-    adb_shell(&format!("am force-stop {package}")).await?;
+pub async fn stop_handler(serial: &str, Path(package): Path<String>) -> Result<Json<serde_json::Value>, ApiError> {
+    adb_shell(serial, &format!("am force-stop {package}")).await?;
     Ok(Json(serde_json::json!({"ok": true})))
 }
 
@@ -116,7 +116,7 @@ pub async fn stop_handler(Path(package): Path<String>) -> Result<Json<serde_json
         (status = 400, body = super::ErrorResponse),
     )
 )]
-pub async fn install_handler(body: axum::body::Bytes) -> Result<Json<serde_json::Value>, ApiError> {
+pub async fn install_handler(serial: &str, body: axum::body::Bytes) -> Result<Json<serde_json::Value>, ApiError> {
     if body.is_empty() {
         return Err(ApiError::BadRequest("empty APK body".into()));
     }
@@ -127,7 +127,7 @@ pub async fn install_handler(body: axum::body::Bytes) -> Result<Json<serde_json:
         .map_err(|e| ApiError::Adb(format!("failed to write APK: {e}")))?;
 
     // Install via ADB
-    let output = adb(&["install", "-r", tmp_path]).await?;
+    let output = adb(serial, &["install", "-r", tmp_path]).await?;
     let result = String::from_utf8_lossy(&output);
 
     // Clean up

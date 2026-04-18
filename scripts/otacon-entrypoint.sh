@@ -10,43 +10,8 @@ else
     export VNC_AUTH_ARGS="-SecurityTypes None"
 fi
 
-# Wait for ADB device (needed for display resolution before supervisord starts)
-echo "Waiting for ADB device..."
-while ! adb devices 2>/dev/null | grep -q 'device$'; do
-    sleep 2
-done
-SERIAL=$(adb devices | grep 'device$' | head -1 | awk '{print $1}')
-echo "Found device: ${SERIAL}"
-
-# Detect phone resolution and calculate display size
-PHONE_RES=$(adb shell wm size | grep -oP '\d+x\d+' | tail -1)
-PHONE_W=$(echo "$PHONE_RES" | cut -dx -f1)
-PHONE_H=$(echo "$PHONE_RES" | cut -dx -f2)
-echo "Phone resolution: ${PHONE_W}x${PHONE_H}"
-
-# Scale down by SCRCPY_MAX_SIZE (limits the larger dimension)
-if [ "$PHONE_H" -ge "$PHONE_W" ]; then
-    SCALE=$(echo "scale=6; ${SCRCPY_MAX_SIZE} / ${PHONE_H}" | bc)
-else
-    SCALE=$(echo "scale=6; ${SCRCPY_MAX_SIZE} / ${PHONE_W}" | bc)
-fi
-DISPLAY_W=$(echo "${PHONE_W} * ${SCALE} / 1" | bc)
-DISPLAY_H=$(echo "${PHONE_H} * ${SCALE} / 1" | bc)
-
-# Make dimensions even (required by some encoders)
-DISPLAY_W=$(( DISPLAY_W / 2 * 2 ))
-DISPLAY_H=$(( DISPLAY_H / 2 * 2 ))
-
-export DISPLAY_W
-export DISPLAY_H
-export DISPLAY_RESOLUTION="${DISPLAY_W}x${DISPLAY_H}"
-export DISPLAY=:${DISPLAY_NUM}
-echo "Display resolution: ${DISPLAY_RESOLUTION}"
-
-# BlueALSA audio uses DEV=00:00:00:00:00:00 (wildcard) by default,
-# which connects to the first available BT device. This only works
-# when a single phone is paired. For multiple devices, set
-# BLUEALSA_DEVICE=bluealsa:DEV=AA:BB:CC:DD:EE:FF,PROFILE=sco in .env.
+# Display/scrcpy/VNC are spawned per-phone by device-monitor.py.
+# No single-phone ADB wait needed here.
 
 # Build supervisor config based on audio backend
 cp /etc/supervisor/conf.d/supervisord-base.conf /tmp/supervisord.conf

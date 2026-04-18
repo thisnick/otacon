@@ -2,7 +2,7 @@ use axum::Json;
 use serde::Deserialize;
 use std::sync::Arc;
 
-use crate::AppState;
+use crate::phone::PhoneState;
 
 #[derive(Deserialize)]
 pub struct DeviceEvent {
@@ -13,7 +13,7 @@ pub struct DeviceEvent {
 /// Receives push events from the device owner app (via adb reverse).
 /// Broadcasts them on /ws/events and updates call state for /api/calls/status.
 pub async fn event_handler(
-    state: Arc<AppState>,
+    state: Arc<PhoneState>,
     Json(body): Json<DeviceEvent>,
 ) -> Json<serde_json::Value> {
     let event = serde_json::json!({

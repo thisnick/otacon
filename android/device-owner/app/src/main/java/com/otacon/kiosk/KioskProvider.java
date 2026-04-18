@@ -72,10 +72,19 @@ public class KioskProvider extends ContentProvider {
             if (path.equals("wifi/connect")) {
                 return wifiConnect(uri);
             }
+            if (path.equals("wifi/forget")) {
+                return wifiForget(uri);
+            }
+            if (path.equals("wifi/status")) {
+                return wifiStatus();
+            }
 
             // --- Bluetooth ---
             if (path.equals("bluetooth/pair")) {
                 return bluetoothPair(uri);
+            }
+            if (path.equals("bluetooth/unpair")) {
+                return bluetoothUnpair(uri);
             }
 
             // --- SMS ---
@@ -110,6 +119,17 @@ public class KioskProvider extends ContentProvider {
                 return esimDelete(uri);
             }
 
+            // --- Lock (passcode management) ---
+            if (path.equals("lock/status")) {
+                return lockStatus();
+            }
+            if (path.equals("lock/clear")) {
+                return lockClear();
+            }
+            if (path.equals("lock/activate")) {
+                return lockActivateToken(uri);
+            }
+
             return errorCursor("unknown endpoint: " + path);
         } catch (Exception e) {
             Log.e(TAG, "Error handling " + path, e);
@@ -128,8 +148,17 @@ public class KioskProvider extends ContentProvider {
 
     // ==================== WiFi ====================
 
-    @SuppressWarnings("deprecation")
     private Cursor wifiConnect(Uri uri) {
+        boolean needsRestore = clearWifiRestriction();
+        try {
+            return wifiConnectInner(uri);
+        } finally {
+            if (needsRestore) restoreWifiRestriction();
+        }
+    }
+
+    @SuppressWarnings("deprecation")
+    private Cursor wifiConnectInner(Uri uri) {
         String ssid = uri.getQueryParameter("ssid");
         String password = uri.getQueryParameter("password");
         if (ssid == null) return errorCursor("missing ssid parameter");
@@ -145,6 +174,10 @@ public class KioskProvider extends ContentProvider {
                 try { Thread.sleep(500); } catch (InterruptedException ignored) {}
             }
         }
+
+        // Forget any existing entries for this SSID first — saved networks AND
+        // suggestions accumulate across attempts and cause DUPLICATE failures.
+        forgetSsid(wm, ssid);
 
         // Device Owner privileged: addNetwork + enableNetwork
         try {
@@ -187,23 +220,197 @@ public class KioskProvider extends ContentProvider {
         }
     }
 
+    /** Remove all saved networks AND network suggestions matching the given SSID. */
+    @SuppressWarnings("deprecation")
+    private void forgetSsid(android.net.wifi.WifiManager wm, String ssid) {
+        String quoted = "\"" + ssid + "\"";
+        // 1. Saved configurations (legacy addNetwork)
+        try {
+            java.util.List<android.net.wifi.WifiConfiguration> configs = wm.getConfiguredNetworks();
+            if (configs != null) {
+                for (android.net.wifi.WifiConfiguration c : configs) {
+                    if (c.SSID != null && (c.SSID.equals(quoted) || c.SSID.equals(ssid))) {
+                        wm.removeNetwork(c.networkId);
+                        Log.i(TAG, "Forgot saved network " + c.networkId + " for " + ssid);
+                    }
+                }
+                wm.saveConfiguration();
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "removeNetwork failed: " + e.getMessage());
+        }
+        // 2. Network suggestions (modern API) — clear ALL of ours, not just matching,
+        //    since we can't enumerate by SSID, only remove what we previously added.
+        try {
+            wm.removeNetworkSuggestions(java.util.Collections.emptyList());
+            Log.i(TAG, "Cleared all network suggestions");
+        } catch (Exception e) {
+            Log.w(TAG, "removeNetworkSuggestions failed: " + e.getMessage());
+        }
+    }
+
+    /** Endpoint: forget a specific SSID's saved network + suggestion entries. */
+    private Cursor wifiForget(Uri uri) {
+        boolean needsRestore = clearWifiRestriction();
+        try {
+            String ssid = uri.getQueryParameter("ssid");
+            if (ssid == null) return errorCursor("missing ssid parameter");
+            android.net.wifi.WifiManager wm = (android.net.wifi.WifiManager)
+                getContext().getApplicationContext().getSystemService(android.content.Context.WIFI_SERVICE);
+            forgetSsid(wm, ssid);
+            MatrixCursor cursor = new MatrixCursor(new String[]{"ok"});
+            cursor.addRow(new Object[]{true});
+            return cursor;
+        } finally {
+            if (needsRestore) restoreWifiRestriction();
+        }
+    }
+
+    /** Endpoint: report current WiFi connection state. */
+    private Cursor wifiStatus() {
+        android.net.wifi.WifiManager wm = (android.net.wifi.WifiManager)
+            getContext().getApplicationContext().getSystemService(android.content.Context.WIFI_SERVICE);
+        boolean enabled = wm != null && wm.isWifiEnabled();
+        String ssid = "";
+        int rssi = 0;
+        boolean connected = false;
+        if (wm != null) {
+            try {
+                android.net.wifi.WifiInfo info = wm.getConnectionInfo();
+                if (info != null) {
+                    String s = info.getSSID();
+                    if (s != null && !s.equals("<unknown ssid>") && !s.equals("\"<unknown ssid>\"")) {
+                        ssid = s.replaceAll("^\"|\"$", "");
+                        rssi = info.getRssi();
+                        connected = info.getNetworkId() != -1 && rssi != -127;
+                    }
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "wifiStatus failed: " + e.getMessage());
+            }
+        }
+        MatrixCursor cursor = new MatrixCursor(new String[]{"ok", "enabled", "connected", "ssid", "rssi"});
+        cursor.addRow(new Object[]{true, enabled, connected, ssid, rssi});
+        return cursor;
+    }
+
     // ==================== Bluetooth ====================
 
     private android.content.BroadcastReceiver pairingReceiver;
+
+    /**
+     * Temporarily clear DISALLOW_CONFIG_BLUETOOTH so pair/unpair dialogs work,
+     * then restore it in a finally block.  Returns true if the restriction was
+     * active (and therefore needs restoring).
+     */
+    private boolean clearBluetoothRestriction() {
+        try {
+            android.app.admin.DevicePolicyManager dpm = (android.app.admin.DevicePolicyManager)
+                getContext().getSystemService(android.content.Context.DEVICE_POLICY_SERVICE);
+            android.content.ComponentName admin =
+                new android.content.ComponentName(getContext(), DeviceOwnerReceiver.class);
+            if (dpm != null && dpm.isDeviceOwnerApp(getContext().getPackageName())) {
+                android.os.Bundle restrictions = dpm.getUserRestrictions(admin);
+                boolean wasSet = restrictions != null
+                    && restrictions.getBoolean(android.os.UserManager.DISALLOW_CONFIG_BLUETOOTH, false);
+                if (wasSet) {
+                    dpm.clearUserRestriction(admin, android.os.UserManager.DISALLOW_CONFIG_BLUETOOTH);
+                    Log.i(TAG, "Temporarily cleared DISALLOW_CONFIG_BLUETOOTH");
+                }
+                return wasSet;
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "clearBluetoothRestriction failed: " + e.getMessage());
+        }
+        return false;
+    }
+
+    private void restoreBluetoothRestriction() {
+        try {
+            android.app.admin.DevicePolicyManager dpm = (android.app.admin.DevicePolicyManager)
+                getContext().getSystemService(android.content.Context.DEVICE_POLICY_SERVICE);
+            android.content.ComponentName admin =
+                new android.content.ComponentName(getContext(), DeviceOwnerReceiver.class);
+            if (dpm != null && dpm.isDeviceOwnerApp(getContext().getPackageName())) {
+                dpm.addUserRestriction(admin, android.os.UserManager.DISALLOW_CONFIG_BLUETOOTH);
+                Log.i(TAG, "Restored DISALLOW_CONFIG_BLUETOOTH");
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "restoreBluetoothRestriction failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Temporarily clear DISALLOW_CONFIG_WIFI so wifiConnect/forget can modify
+     * WiFi state, then restore in finally.  Returns true if restriction was active.
+     */
+    private boolean clearWifiRestriction() {
+        try {
+            android.app.admin.DevicePolicyManager dpm = (android.app.admin.DevicePolicyManager)
+                getContext().getSystemService(android.content.Context.DEVICE_POLICY_SERVICE);
+            android.content.ComponentName admin =
+                new android.content.ComponentName(getContext(), DeviceOwnerReceiver.class);
+            if (dpm != null && dpm.isDeviceOwnerApp(getContext().getPackageName())) {
+                android.os.Bundle restrictions = dpm.getUserRestrictions(admin);
+                boolean wasSet = restrictions != null
+                    && restrictions.getBoolean(android.os.UserManager.DISALLOW_CONFIG_WIFI, false);
+                if (wasSet) {
+                    dpm.clearUserRestriction(admin, android.os.UserManager.DISALLOW_CONFIG_WIFI);
+                    Log.i(TAG, "Temporarily cleared DISALLOW_CONFIG_WIFI");
+                }
+                return wasSet;
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "clearWifiRestriction failed: " + e.getMessage());
+        }
+        return false;
+    }
+
+    private void restoreWifiRestriction() {
+        try {
+            android.app.admin.DevicePolicyManager dpm = (android.app.admin.DevicePolicyManager)
+                getContext().getSystemService(android.content.Context.DEVICE_POLICY_SERVICE);
+            android.content.ComponentName admin =
+                new android.content.ComponentName(getContext(), DeviceOwnerReceiver.class);
+            if (dpm != null && dpm.isDeviceOwnerApp(getContext().getPackageName())) {
+                dpm.addUserRestriction(admin, android.os.UserManager.DISALLOW_CONFIG_WIFI);
+                Log.i(TAG, "Restored DISALLOW_CONFIG_WIFI");
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "restoreWifiRestriction failed: " + e.getMessage());
+        }
+    }
 
     private Cursor bluetoothPair(Uri uri) {
         String mac = uri.getQueryParameter("mac");
         if (mac == null) return errorCursor("missing mac parameter");
         mac = mac.toUpperCase();
 
-        android.bluetooth.BluetoothManager bm = (android.bluetooth.BluetoothManager)
-            getContext().getSystemService(android.content.Context.BLUETOOTH_SERVICE);
-        android.bluetooth.BluetoothAdapter adapter = bm.getAdapter();
+        boolean needsRestore = clearBluetoothRestriction();
+        try {
+            return bluetoothPairInner(mac);
+        } finally {
+            if (needsRestore) restoreBluetoothRestriction();
+        }
+    }
+
+    private Cursor bluetoothPairInner(String mac) {
+        android.bluetooth.BluetoothManager bm;
+        android.bluetooth.BluetoothAdapter adapter;
+        try {
+            bm = (android.bluetooth.BluetoothManager)
+                getContext().getSystemService(android.content.Context.BLUETOOTH_SERVICE);
+            adapter = bm.getAdapter();
+        } catch (Exception e) {
+            return errorCursor("BluetoothManager init failed: " + e.getMessage());
+        }
 
         if (adapter == null) return errorCursor("no bluetooth adapter");
 
         if (!adapter.isEnabled()) {
-            adapter.enable();
+            try { adapter.enable(); } catch (Exception e) {
+                return errorCursor("adapter.enable() failed: " + e.getMessage());
+            }
             for (int i = 0; i < 20; i++) {
                 if (adapter.isEnabled()) break;
                 try { Thread.sleep(500); } catch (InterruptedException ignored) {}
@@ -211,7 +418,12 @@ public class KioskProvider extends ContentProvider {
             if (!adapter.isEnabled()) return errorCursor("could not enable bluetooth");
         }
 
-        android.bluetooth.BluetoothDevice device = adapter.getRemoteDevice(mac);
+        android.bluetooth.BluetoothDevice device;
+        try {
+            device = adapter.getRemoteDevice(mac);
+        } catch (Exception e) {
+            return errorCursor("getRemoteDevice failed: " + e.getMessage());
+        }
         if (device == null) return errorCursor("device not found: " + mac);
 
         if (device.getBondState() == android.bluetooth.BluetoothDevice.BOND_BONDED) {
@@ -222,7 +434,13 @@ public class KioskProvider extends ContentProvider {
 
         registerPairingReceiver(mac);
 
-        boolean started = device.createBond();
+        boolean started;
+        try {
+            started = device.createBond();
+        } catch (Exception e) {
+            unregisterPairingReceiver();
+            return errorCursor("createBond exception: " + e.getMessage());
+        }
         if (!started) {
             unregisterPairingReceiver();
             return errorCursor("createBond failed");
@@ -245,6 +463,64 @@ public class KioskProvider extends ContentProvider {
         return errorCursor("pairing timed out or failed");
     }
 
+    private Cursor bluetoothUnpair(Uri uri) {
+        String mac = uri.getQueryParameter("mac");
+        if (mac == null) return errorCursor("missing mac parameter");
+        mac = mac.toUpperCase();
+
+        boolean needsRestore = clearBluetoothRestriction();
+        try {
+            return bluetoothUnpairInner(mac);
+        } finally {
+            if (needsRestore) restoreBluetoothRestriction();
+        }
+    }
+
+    private Cursor bluetoothUnpairInner(String mac) {
+        android.bluetooth.BluetoothManager bm;
+        android.bluetooth.BluetoothAdapter adapter;
+        try {
+            bm = (android.bluetooth.BluetoothManager)
+                getContext().getSystemService(android.content.Context.BLUETOOTH_SERVICE);
+            adapter = bm.getAdapter();
+        } catch (Exception e) {
+            return errorCursor("BluetoothManager init failed: " + e.getMessage());
+        }
+        if (adapter == null) return errorCursor("no bluetooth adapter");
+
+        android.bluetooth.BluetoothDevice device;
+        try {
+            device = adapter.getRemoteDevice(mac);
+        } catch (Exception e) {
+            return errorCursor("getRemoteDevice failed: " + e.getMessage());
+        }
+
+        if (device.getBondState() != android.bluetooth.BluetoothDevice.BOND_BONDED) {
+            MatrixCursor cursor = new MatrixCursor(new String[]{"ok", "status"});
+            cursor.addRow(new Object[]{true, "not_bonded"});
+            return cursor;
+        }
+
+        // removeBond is hidden API but accessible via reflection
+        try {
+            java.lang.reflect.Method removeBond = device.getClass().getMethod("removeBond");
+            boolean ok = (Boolean) removeBond.invoke(device);
+            if (ok) {
+                // Wait for bond state to clear
+                for (int i = 0; i < 20; i++) {
+                    if (device.getBondState() == android.bluetooth.BluetoothDevice.BOND_NONE) break;
+                    try { Thread.sleep(500); } catch (InterruptedException ignored) {}
+                }
+            }
+            MatrixCursor cursor = new MatrixCursor(new String[]{"ok", "status"});
+            cursor.addRow(new Object[]{ok, ok ? "removed" : "removeBond_returned_false"});
+            return cursor;
+        } catch (Exception e) {
+            return errorCursor("removeBond failed: " + e.getMessage());
+        }
+    }
+
+    @SuppressWarnings("deprecation")
     private void registerPairingReceiver(String targetMac) {
         unregisterPairingReceiver();
         pairingReceiver = new android.content.BroadcastReceiver() {
@@ -252,8 +528,7 @@ public class KioskProvider extends ContentProvider {
             public void onReceive(android.content.Context ctx, android.content.Intent intent) {
                 if (android.bluetooth.BluetoothDevice.ACTION_PAIRING_REQUEST.equals(intent.getAction())) {
                     android.bluetooth.BluetoothDevice dev =
-                        intent.getParcelableExtra(android.bluetooth.BluetoothDevice.EXTRA_DEVICE,
-                            android.bluetooth.BluetoothDevice.class);
+                        intent.getParcelableExtra(android.bluetooth.BluetoothDevice.EXTRA_DEVICE);
                     if (dev != null && dev.getAddress().equalsIgnoreCase(targetMac)) {
                         Log.i(TAG, "Auto-confirming pairing with " + targetMac);
                         dev.setPairingConfirmation(true);
@@ -265,7 +540,12 @@ public class KioskProvider extends ContentProvider {
         android.content.IntentFilter filter = new android.content.IntentFilter(
             android.bluetooth.BluetoothDevice.ACTION_PAIRING_REQUEST);
         filter.setPriority(android.content.IntentFilter.SYSTEM_HIGH_PRIORITY);
-        getContext().registerReceiver(pairingReceiver, filter);
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            getContext().registerReceiver(pairingReceiver, filter,
+                android.content.Context.RECEIVER_EXPORTED);
+        } else {
+            getContext().registerReceiver(pairingReceiver, filter);
+        }
     }
 
     private void unregisterPairingReceiver() {
@@ -631,6 +911,170 @@ public class KioskProvider extends ContentProvider {
             Log.w(TAG, "findSubIdByIccid failed: " + e.getMessage());
         }
         return -1;
+    }
+
+    // ==================== Lock (passcode) ====================
+
+    private byte[] loadResetToken() {
+        java.io.File tokenFile = new java.io.File(getContext().getFilesDir(), "reset_token");
+        if (!tokenFile.exists()) return null;
+        try {
+            return java.nio.file.Files.readAllBytes(tokenFile.toPath());
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to read reset token: " + e.getMessage());
+            return null;
+        }
+    }
+
+    private Cursor lockStatus() {
+        android.app.KeyguardManager km = (android.app.KeyguardManager)
+            getContext().getSystemService(android.content.Context.KEYGUARD_SERVICE);
+        android.app.admin.DevicePolicyManager dpm = (android.app.admin.DevicePolicyManager)
+            getContext().getSystemService(android.content.Context.DEVICE_POLICY_SERVICE);
+        android.content.ComponentName admin =
+            new android.content.ComponentName(getContext(), DeviceOwnerReceiver.class);
+
+        boolean secure = km != null && km.isDeviceSecure();
+        boolean locked = km != null && km.isKeyguardLocked();
+
+        boolean tokenActivated = false;
+        byte[] token = loadResetToken();
+        if (token != null && dpm != null && dpm.isDeviceOwnerApp(getContext().getPackageName())) {
+            try {
+                tokenActivated = dpm.isResetPasswordTokenActive(admin);
+            } catch (Exception e) {
+                Log.w(TAG, "isResetPasswordTokenActive failed: " + e.getMessage());
+            }
+        }
+
+        MatrixCursor cursor = new MatrixCursor(new String[]{
+            "ok", "is_secure", "is_locked", "token_activated"
+        });
+        cursor.addRow(new Object[]{true, secure, locked, tokenActivated});
+        return cursor;
+    }
+
+    private Cursor lockClear() {
+        android.app.admin.DevicePolicyManager dpm = (android.app.admin.DevicePolicyManager)
+            getContext().getSystemService(android.content.Context.DEVICE_POLICY_SERVICE);
+        if (dpm == null) return errorCursor("no DevicePolicyManager");
+        android.content.ComponentName admin =
+            new android.content.ComponentName(getContext(), DeviceOwnerReceiver.class);
+        if (!dpm.isDeviceOwnerApp(getContext().getPackageName())) {
+            return errorCursor("not device owner");
+        }
+
+        // Allow any password quality
+        dpm.setPasswordQuality(admin,
+            android.app.admin.DevicePolicyManager.PASSWORD_QUALITY_UNSPECIFIED);
+
+        // Try token-based reset first (works on Android 8+)
+        byte[] token = loadResetToken();
+        if (token != null) {
+            try {
+                if (dpm.isResetPasswordTokenActive(admin)) {
+                    boolean ok = dpm.resetPasswordWithToken(admin, "", token, 0);
+                    if (ok) {
+                        MatrixCursor cursor = new MatrixCursor(new String[]{"ok", "method"});
+                        cursor.addRow(new Object[]{true, "resetPasswordWithToken"});
+                        return cursor;
+                    }
+                    Log.w(TAG, "resetPasswordWithToken returned false");
+                } else {
+                    Log.w(TAG, "Reset password token not yet activated");
+                }
+            } catch (Exception e) {
+                Log.w(TAG, "resetPasswordWithToken failed: " + e.getMessage());
+            }
+        }
+
+        // Fallback: deprecated resetPassword (works on Android 7 and below)
+        try {
+            @SuppressWarnings("deprecation")
+            boolean ok = dpm.resetPassword("", 0);
+            MatrixCursor cursor = new MatrixCursor(new String[]{"ok", "method"});
+            cursor.addRow(new Object[]{ok, "resetPassword"});
+            return cursor;
+        } catch (SecurityException e) {
+            return errorCursor("password clear denied: " + e.getMessage()
+                + " (token not activated — use /lock/activate?password=PIN first)");
+        } catch (Exception e) {
+            return errorCursor(e.getClass().getSimpleName() + ": " + e.getMessage());
+        }
+    }
+
+    /** Activate the reset password token by confirming the current PIN/password. */
+    private Cursor lockActivateToken(Uri uri) {
+        String password = uri.getQueryParameter("password");
+        if (password == null) return errorCursor("missing password parameter");
+
+        android.app.admin.DevicePolicyManager dpm = (android.app.admin.DevicePolicyManager)
+            getContext().getSystemService(android.content.Context.DEVICE_POLICY_SERVICE);
+        if (dpm == null) return errorCursor("no DevicePolicyManager");
+        android.content.ComponentName admin =
+            new android.content.ComponentName(getContext(), DeviceOwnerReceiver.class);
+        if (!dpm.isDeviceOwnerApp(getContext().getPackageName())) {
+            return errorCursor("not device owner");
+        }
+
+        byte[] token = loadResetToken();
+        if (token == null) return errorCursor("no reset token found — reprovision device owner");
+
+        // Ensure token is set with DPM
+        try {
+            dpm.setResetPasswordToken(admin, token);
+        } catch (Exception e) {
+            return errorCursor("setResetPasswordToken failed: " + e.getMessage());
+        }
+
+        // Activate by confirming with the current PIN/password using KeyguardManager
+        android.app.KeyguardManager km = (android.app.KeyguardManager)
+            getContext().getSystemService(android.content.Context.KEYGUARD_SERVICE);
+
+        // On Android 8+, activating the token requires user confirmation.
+        // Since we're on the device, we use resetPasswordWithToken with the
+        // current password first, then set empty to clear.
+        // Actually, token activation happens automatically when the user
+        // unlocks the device after setResetPasswordToken is called.
+        // The simplest path: try clearing the password with locksettings first.
+        try {
+            // Use locksettings to verify the PIN and clear it
+            Runtime rt = Runtime.getRuntime();
+            Process p = rt.exec(new String[]{
+                "sh", "-c",
+                "locksettings clear --old " + password
+            });
+            p.waitFor(10, TimeUnit.SECONDS);
+            java.io.BufferedReader br = new java.io.BufferedReader(
+                new java.io.InputStreamReader(p.getInputStream()));
+            String output = br.readLine();
+            br.close();
+
+            if (output != null && output.toLowerCase().contains("cleared")) {
+                // Password cleared — now the token should be auto-activated
+                // because there's no credential guard anymore
+                boolean activated = dpm.isResetPasswordTokenActive(admin);
+                MatrixCursor cursor = new MatrixCursor(new String[]{
+                    "ok", "token_activated", "method"
+                });
+                cursor.addRow(new Object[]{true, activated, "locksettings_clear"});
+                return cursor;
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "locksettings clear failed: " + e.getMessage());
+        }
+
+        // Check if token got activated (it does when device has no credential)
+        boolean activated = false;
+        try {
+            activated = dpm.isResetPasswordTokenActive(admin);
+        } catch (Exception ignored) {}
+
+        MatrixCursor cursor = new MatrixCursor(new String[]{
+            "ok", "token_activated", "method"
+        });
+        cursor.addRow(new Object[]{activated, activated, "token_check"});
+        return cursor;
     }
 
     // ==================== Shared ====================

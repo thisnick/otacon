@@ -14,6 +14,7 @@ services:
       - /etc/tailscale/certs:/certs:ro
       - ${HOME}/.android:/root/.android:ro
       - bt-data:/var/lib/bluetooth
+      - otacon-data:/data/otacon
     environment:
       - DISPLAY_NUM=${DISPLAY_NUM:-50}
       - DISPLAY_RESOLUTION=${DISPLAY_RESOLUTION:-540x1204}
@@ -63,3 +64,4 @@ services:
 
 volumes:
   bt-data:
+  otacon-data:

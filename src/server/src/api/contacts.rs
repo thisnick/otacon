@@ -25,15 +25,15 @@ pub struct ContactsQuery {
     params(("q" = Option<String>, Query, description = "Search query")),
     responses((status = 200, body = Vec<Contact>))
 )]
-pub async fn handler(Query(query): Query<ContactsQuery>) -> Result<Json<Vec<Contact>>, ApiError> {
+pub async fn handler(serial: &str, Query(query): Query<ContactsQuery>) -> Result<Json<Vec<Contact>>, ApiError> {
     let out = if let Some(ref q) = query.q {
         // Filter by name
-        adb_shell(&format!(
+        adb_shell(serial, &format!(
             "content query --uri content://com.android.contacts/data --projection display_name:data1 --where \"mimetype='vnd.android.cursor.item/phone_v2' AND display_name LIKE '%{}%'\"",
             q.replace('\'', "''")
         )).await?
     } else {
-        adb_shell(
+        adb_shell(serial,
             "content query --uri content://com.android.contacts/data --projection display_name:data1 --where \"mimetype='vnd.android.cursor.item/phone_v2'\""
         ).await?
     };

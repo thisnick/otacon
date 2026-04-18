@@ -11,8 +11,8 @@ use super::adb::adb;
         (status = 200, description = "PNG image of the current phone screen", content_type = "image/png"),
     )
 )]
-pub async fn handler() -> Result<Response, super::ApiError> {
-    let png = adb(&["exec-out", "screencap", "-p"]).await?;
+pub async fn handler(serial: &str) -> Result<Response, super::ApiError> {
+    let png = adb(serial, &["exec-out", "screencap", "-p"]).await?;
 
     Ok((
         [
