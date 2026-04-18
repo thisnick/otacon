@@ -33,15 +33,17 @@ def check_bt_bonded(adapter_mac: str | None, phone_bt_mac: str | None,
     except Exception:
         return False
 
-    # Phone-side cross-check (log mismatch but don't fail — phone dumpsys
-    # format varies and the Pi-side bond is what matters for audio)
+    # Phone-side cross-check — if the phone has removed the bond, the Pi-side
+    # bond is stale and reconnection will never succeed.  Failing here triggers
+    # the bt_bonded heal (full re-pair) instead of futile bt_connected retries.
     if serial:
         try:
             bt_dump = adb_shell(serial, 'dumpsys bluetooth_manager', timeout=5)
             if adapter_mac.upper() not in bt_dump.upper():
-                log.warning(f'bt_bonded: Pi paired but phone has no record of {adapter_mac}')
+                log.warning(f'bt_bonded: Pi paired but phone has no record of {adapter_mac} — stale bond')
+                return False
         except Exception:
-            pass  # non-fatal
+            pass  # can't reach phone — don't fail on that
 
     return True
 
