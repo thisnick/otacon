@@ -183,7 +183,8 @@ class PhoneAgent:
         hs = self.status.heals.setdefault(name, HealStatus())
 
         # Rate-limit expensive heals (bt_bonded takes 30-150s per attempt)
-        if name == 'bt_bonded' and hs.last_at:
+        # Only cooldown after a successful heal — failed heals retry immediately
+        if name == 'bt_bonded' and hs.last_at and hs.last_result == 'ok':
             from datetime import datetime, timezone
             try:
                 elapsed = (datetime.now(timezone.utc) -
