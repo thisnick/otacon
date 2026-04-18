@@ -284,6 +284,7 @@ def allocate_and_pair_bluetooth(serial: str, snapshot_url: str,
     _do_pair_tap_loop(serial, snapshot_url)
 
     pair_thread.join(timeout=45)
+    pair_script.join(timeout=30)  # wait for BlueZ pair/trust/connect to finish
     result_data = pair_result.get('data', '')
 
     # Detect stale one-sided bond
@@ -309,6 +310,7 @@ def allocate_and_pair_bluetooth(serial: str, snapshot_url: str,
             retry_thread.start()
             _do_pair_tap_loop(serial, snapshot_url, label=' [retry]')
             retry_thread.join(timeout=45)
+            retry_script.join(timeout=30)  # wait for BlueZ pair to finish
             result_data = pair_result.get('data', '')
 
     if 'ok=true' in result_data:

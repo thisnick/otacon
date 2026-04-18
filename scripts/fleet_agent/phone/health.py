@@ -11,35 +11,30 @@ log = logging.getLogger('fleet-agent')
 
 def check_bt_bonded(adapter_mac: str | None, phone_bt_mac: str | None,
                      serial: str | None = None) -> bool:
-    """Bond exists on both Pi (BlueZ) and phone sides.
+    """Bond exists in BlueZ (Pi-side) via D-Bus.
 
-    Checks three signals to avoid false positives from one-sided state:
-    1. /var/lib/bluetooth dir exists (Pi filesystem)
-    2. bluetoothctl reports Paired: yes (BlueZ D-Bus)
-    3. Phone reports the adapter as bonded (Android dumpsys) — optional
+    Uses bluetoothctl info as the authoritative source — the /var/lib/bluetooth
+    filesystem dir is unreliable in Docker (ephemeral storage, USB dongle dirs
+    may not be written). Also cross-checks the phone side via dumpsys.
     """
     if not adapter_mac or not phone_bt_mac:
         return False
 
-    # 1. Filesystem check
-    bond_dir = f'/var/lib/bluetooth/{adapter_mac.upper()}/{phone_bt_mac.upper()}'
-    if not os.path.isdir(bond_dir):
-        return False
-
-    # 2. BlueZ D-Bus check — the authoritative Pi-side source
+    # BlueZ D-Bus check — the authoritative Pi-side source
     try:
         result = run_cmd(
             ['bluetoothctl'],
             input=f'select {adapter_mac}\ninfo {phone_bt_mac}\n',
             timeout=10,
         )
-        if 'Paired: yes' not in (result.stdout or ''):
-            log.debug(f'bt_bonded: dir exists but BlueZ says not paired')
+        stdout = result.stdout or ''
+        if 'Paired: yes' not in stdout:
             return False
     except Exception:
         return False
 
-    # 3. Phone-side cross-check (optional — log mismatch but don't block)
+    # Phone-side cross-check (log mismatch but don't fail — phone dumpsys
+    # format varies and the Pi-side bond is what matters for audio)
     if serial:
         try:
             bt_dump = adb_shell(serial, 'dumpsys bluetooth_manager', timeout=5)
