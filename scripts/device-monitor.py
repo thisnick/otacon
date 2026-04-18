@@ -613,6 +613,20 @@ class PhoneMonitor:
 
         self.adb('install', '-r', APK_PATH, timeout=30)
         self.adb_shell(f'dpm set-device-owner {DEVICE_OWNER_RECEIVER}')
+
+        # Verify device owner actually took — after testharness reset the
+        # system may not be ready, so retry up to 5 times with 5s backoff.
+        for attempt in range(1, 6):
+            if self.is_device_owner_set():
+                self.log.info(f'Device owner verified on attempt {attempt}')
+                break
+            self.log.warning(f'Device owner not set after attempt {attempt}/5 — retrying in 5s')
+            time.sleep(5)
+            self.adb_shell(f'dpm set-device-owner {DEVICE_OWNER_RECEIVER}')
+        else:
+            self.log.error('Device owner failed to set after 5 attempts')
+            return
+
         self.adb_shell(f'cmd notification allow_listener {DEVICE_OWNER_PKG}/.OtaconNotificationListener')
         self.grant_permissions()
         self.log.info('Device owner provisioned')
