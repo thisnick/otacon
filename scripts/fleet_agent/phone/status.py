@@ -40,7 +40,9 @@ class MonitorStatus:
 
 def push_status(status: 'MonitorStatus', phone_id: str | None, internal_port: int):
     """Push MonitorStatus to the Rust server via internal event channel."""
-    http_post(f'http://127.0.0.1:{internal_port}/event', {
+    if not phone_id:
+        return
+    http_post(f'http://127.0.0.1:{internal_port}/phones/{phone_id}/api/internal/event', {
         'event': 'monitor_status',
         'data': {
             'phone_id': phone_id,
