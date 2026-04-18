@@ -82,16 +82,16 @@ build-cli:
 	pnpm install && pnpm --filter otacon-cli run build
 
 restart-monitor:
-	$(SSH_CMD) "cd $(REMOTE_DIR) && docker compose exec otacon supervisorctl restart device-monitor"
+	$(SSH_CMD) "cd $(REMOTE_DIR) && docker compose exec otacon supervisorctl restart fleet-agent"
 
 bluetooth-connect:
-	$(SSH_CMD) "cd $(REMOTE_DIR) && docker compose exec otacon /opt/bluetooth-connect.sh"
+	$(SSH_CMD) "cd $(REMOTE_DIR) && docker compose exec otacon /opt/fleet-cli bt status"
 
 bluetooth-status:
-	$(SSH_CMD) "cd $(REMOTE_DIR) && docker compose exec otacon /opt/bluetooth-status.sh"
+	$(SSH_CMD) "cd $(REMOTE_DIR) && docker compose exec otacon /opt/fleet-cli bt status"
 
 bluetooth-watch:
-	$(SSH_CMD) -t "watch -n 2 'cd $(REMOTE_DIR) && docker compose exec -T otacon /opt/bluetooth-status.sh'"
+	$(SSH_CMD) -t "watch -n 2 'cd $(REMOTE_DIR) && docker compose exec -T otacon /opt/fleet-cli bt status'"
 
 clear-restrictions:
 	$(SSH_CMD) "cd $(REMOTE_DIR) && docker compose exec otacon adb shell am broadcast -a com.otacon.kiosk.CLEAR_RESTRICTIONS -n com.otacon.kiosk/.BootReceiver"

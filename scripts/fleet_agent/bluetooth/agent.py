@@ -1,15 +1,16 @@
-#!/usr/bin/env python3
 """BlueZ auto-accept pairing agent.
-- Auto-accepts all pairing requests (NoInputNoOutput)
-- Trusts paired devices
-- Keeps adapter discoverable and pairable
-BlueALSA handles all HFP audio routing — no PulseAudio needed here.
+
+Auto-accepts all pairing requests (KeyboardDisplay capability),
+trusts paired devices, keeps adapters discoverable and pairable.
 """
 
+import logging
 import dbus
 import dbus.mainloop.glib
 import dbus.service
 from gi.repository import GLib
+
+log = logging.getLogger('fleet-agent')
 
 BUS_NAME        = "org.bluez"
 AGENT_IFACE     = "org.bluez.Agent1"
@@ -22,46 +23,46 @@ AGENT_PATH      = "/otacon/agent"
 class AutoAcceptAgent(dbus.service.Object):
     @dbus.service.method(AGENT_IFACE, in_signature="", out_signature="")
     def Release(self):
-        print("Agent released")
+        log.info("Agent released")
 
     @dbus.service.method(AGENT_IFACE, in_signature="os", out_signature="")
     def AuthorizeService(self, device, uuid):
-        print(f"AuthorizeService: {device} {uuid}")
+        log.info(f"AuthorizeService: {device} {uuid}")
 
     @dbus.service.method(AGENT_IFACE, in_signature="o", out_signature="s")
     def RequestPinCode(self, device):
-        print(f"RequestPinCode: {device}")
+        log.info(f"RequestPinCode: {device}")
         return "0000"
 
     @dbus.service.method(AGENT_IFACE, in_signature="o", out_signature="u")
     def RequestPasskey(self, device):
-        print(f"RequestPasskey: {device}")
+        log.info(f"RequestPasskey: {device}")
         return dbus.UInt32(0)
 
     @dbus.service.method(AGENT_IFACE, in_signature="ouq", out_signature="")
     def DisplayPasskey(self, device, passkey, entered):
-        print(f"DisplayPasskey: {device} {passkey:06d} entered={entered}")
+        log.info(f"DisplayPasskey: {device} {passkey:06d} entered={entered}")
 
     @dbus.service.method(AGENT_IFACE, in_signature="os", out_signature="")
     def DisplayPinCode(self, device, pincode):
-        print(f"DisplayPinCode: {device} {pincode}")
+        log.info(f"DisplayPinCode: {device} {pincode}")
 
     @dbus.service.method(AGENT_IFACE, in_signature="ou", out_signature="")
     def RequestConfirmation(self, device, passkey):
-        print(f"RequestConfirmation: {device} {passkey:06d} -> auto-accepting")
-        trust_device(device)
+        log.info(f"RequestConfirmation: {device} {passkey:06d} -> auto-accepting")
+        _trust_device(device)
 
     @dbus.service.method(AGENT_IFACE, in_signature="o", out_signature="")
     def RequestAuthorization(self, device):
-        print(f"RequestAuthorization: {device} -> auto-accepting")
-        trust_device(device)
+        log.info(f"RequestAuthorization: {device} -> auto-accepting")
+        _trust_device(device)
 
     @dbus.service.method(AGENT_IFACE, in_signature="", out_signature="")
     def Cancel(self):
-        print("Pairing cancelled")
+        log.info("Pairing cancelled")
 
 
-def trust_device(device_path):
+def _trust_device(device_path):
     try:
         bus = dbus.SystemBus()
         props = dbus.Interface(
@@ -69,17 +70,17 @@ def trust_device(device_path):
             "org.freedesktop.DBus.Properties",
         )
         props.Set(DEVICE_IFACE, "Trusted", True)
-        print(f"Trusted: {device_path}")
+        log.info(f"Trusted: {device_path}")
     except Exception as e:
-        print(f"Failed to trust {device_path}: {e}")
+        log.warning(f"Failed to trust {device_path}: {e}")
 
 
-def on_properties_changed(interface, changed, invalidated, path=None):
+def _on_properties_changed(interface, changed, invalidated, path=None):
     if interface != DEVICE_IFACE:
         return
     if "Connected" in changed:
         state = "connected" if bool(changed["Connected"]) else "disconnected"
-        print(f"Device {state}: {path}")
+        log.info(f"Device {state}: {path}")
 
 
 def set_adapter_discoverable():
@@ -89,7 +90,6 @@ def set_adapter_discoverable():
         "org.freedesktop.DBus.ObjectManager",
     )
     found = False
-    # Sort adapter paths for stable alias indexing across reboots (hci0, hci1, hci2...)
     items = sorted(manager.GetManagedObjects().items(), key=lambda kv: kv[0])
     for path, interfaces in items:
         if ADAPTER_IFACE not in interfaces:
@@ -98,8 +98,6 @@ def set_adapter_discoverable():
             bus.get_object(BUS_NAME, path),
             "org.freedesktop.DBus.Properties",
         )
-        # Set unique alias per adapter so phones can tell them apart in pair UI
-        # Uses MAC suffix for stability across reboots (hci index can shuffle)
         try:
             mac = str(props.Get(ADAPTER_IFACE, "Address"))
             suffix = mac.replace(':', '')[-4:].upper()
@@ -107,11 +105,9 @@ def set_adapter_discoverable():
             current_alias = str(props.Get(ADAPTER_IFACE, "Alias"))
             if current_alias != alias_target:
                 props.Set(ADAPTER_IFACE, "Alias", alias_target)
-                print(f"Adapter {path} renamed: {current_alias} -> {alias_target}")
+                log.info(f"Adapter {path} renamed: {current_alias} -> {alias_target}")
         except Exception as e:
-            print(f"Adapter {path} alias set failed: {e}")
-        # Each Set is best-effort — adapters in active pair/connect sessions
-        # return org.bluez.Error.Busy. Don't crash the agent in that case.
+            log.warning(f"Adapter {path} alias set failed: {e}")
         for prop, val in [
             ("Discoverable",        True),
             ("DiscoverableTimeout", dbus.UInt32(0)),
@@ -121,19 +117,22 @@ def set_adapter_discoverable():
             try:
                 props.Set(ADAPTER_IFACE, prop, val)
             except dbus.exceptions.DBusException as e:
-                # Busy = adapter currently mid-operation; we'll keep going
-                print(f"Adapter {path} {prop} set skipped: {e.get_dbus_name()}")
+                log.info(f"Adapter {path} {prop} set skipped: {e.get_dbus_name()}")
         try:
             alias = props.Get(ADAPTER_IFACE, "Alias")
-            print(f"Adapter {path} ({alias}) configured")
+            log.info(f"Adapter {path} ({alias}) configured")
         except Exception:
             pass
         found = True
     if not found:
-        print("No Bluetooth adapter found")
+        log.warning("No Bluetooth adapter found")
 
 
-def main():
+def register_agent():
+    """Register the BlueZ pairing agent and configure adapters.
+
+    Returns the GLib.MainLoop so the caller can run it in a thread.
+    """
     dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
     bus = dbus.SystemBus()
 
@@ -142,28 +141,18 @@ def main():
         bus.get_object(BUS_NAME, "/org/bluez"),
         AGENT_MGR_IFACE,
     )
-    # KeyboardDisplay capability lets us handle all SSP paths:
-    # - Just Works (no UI on either side) — auto-success
-    # - Passkey display + confirm — phone shows number, we auto-confirm
-    # - Passkey entry — we return 0 (rare on modern phones)
-    # NoInputNoOutput would force "Just Works" but Samsung/Pixel sometimes
-    # negotiate to a confirm path that fails with "incorrect PIN".
     agent_mgr.RegisterAgent(AGENT_PATH, "KeyboardDisplay")
     agent_mgr.RequestDefaultAgent(AGENT_PATH)
-    print("Bluetooth auto-accept agent registered")
+    log.info("Bluetooth auto-accept agent registered")
 
     set_adapter_discoverable()
 
     bus.add_signal_receiver(
-        on_properties_changed,
+        _on_properties_changed,
         signal_name="PropertiesChanged",
         dbus_interface="org.freedesktop.DBus.Properties",
         path_keyword="path",
     )
-    print("Listening for device connections...")
+    log.info("Listening for device connections...")
 
-    GLib.MainLoop().run()
-
-
-if __name__ == "__main__":
-    main()
+    return GLib.MainLoop()

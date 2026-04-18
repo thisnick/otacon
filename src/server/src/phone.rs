@@ -101,6 +101,8 @@ pub struct PhoneState {
     pub capture_running: AtomicBool,
     /// Whether A2DP capture task is running
     pub a2dp_capture_running: AtomicBool,
+    /// Fleet-agent monitor status (pushed via internal event channel)
+    pub monitor_status: Mutex<Option<serde_json::Value>>,
 }
 
 impl PhoneState {

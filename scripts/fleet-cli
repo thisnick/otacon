@@ -1,0 +1,241 @@
+#!/usr/bin/env python3
+"""fleet-cli — manual ops for fleet-agent. Same code paths as the auto-loop."""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+
+# Add parent dir so fleet_agent package is importable
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from fleet_agent.util.log import setup_logging
+from fleet_agent.util.adb import get_connected_serials
+from fleet_agent.util.ports import PortAllocator
+from fleet_agent.phone.agent import PhoneAgent
+from fleet_agent.phone import health
+from fleet_agent.bluetooth.dongle import enum_dongles, load_dongle_assignments
+
+
+def get_phone_agent(args) -> PhoneAgent:
+    """Build a PhoneAgent for CLI use from --phone arg."""
+    serial = args.phone
+    if not serial:
+        serials = get_connected_serials()
+        if len(serials) == 1:
+            serial = next(iter(serials))
+        elif not serials:
+            print('No ADB devices connected', file=sys.stderr)
+            sys.exit(1)
+        else:
+            print(f'Multiple devices: {", ".join(sorted(serials))}. Use --phone SERIAL', file=sys.stderr)
+            sys.exit(1)
+    allocator = PortAllocator()
+    snapshot_port, internal_port, display_num, vnc_port = allocator.allocate(serial)
+    return PhoneAgent(serial, snapshot_port, internal_port, display_num, vnc_port)
+
+
+def cmd_phone_list(args):
+    serials = get_connected_serials()
+    if not serials:
+        print('No ADB devices connected')
+        return
+    allocator = PortAllocator()
+    for serial in sorted(serials):
+        sp, ip, dn, vp = allocator.allocate(serial)
+        print(f'  {serial}  snapshot={sp} internal={ip} display=:{dn} vnc={vp}')
+
+
+def cmd_phone_status(args):
+    agent = get_phone_agent(args)
+    # Run all checks
+    checks = agent._get_checks()
+    print(f'Phone: {agent.serial}')
+    print(f'  Ports: snapshot={agent.snapshot_port} internal={agent.internal_port}')
+    print(f'  Health:')
+    for name, fn in checks.items():
+        try:
+            result = fn()
+        except Exception as e:
+            result = f'error: {e}'
+        status = 'OK' if result is True else 'FAIL' if result is False else result
+        print(f'    {name}: {status}')
+
+
+def cmd_phone_setup(args):
+    agent = get_phone_agent(args)
+    agent.run_setup()
+    print('Setup complete')
+
+
+def cmd_step_run(args):
+    agent = get_phone_agent(args)
+    agent.run_single_step(args.step)
+    print(f'Step {args.step} complete')
+
+
+def cmd_check_run(args):
+    agent = get_phone_agent(args)
+    if args.check == 'all':
+        checks = agent._get_checks()
+        for name, fn in checks.items():
+            result = fn()
+            status = 'OK' if result else 'FAIL'
+            print(f'  {name}: {status}')
+    else:
+        result = agent.run_single_check(args.check)
+        status = 'OK' if result else 'FAIL'
+        print(f'{args.check}: {status}')
+
+
+def cmd_heal_run(args):
+    agent = get_phone_agent(args)
+    if args.heal == 'all':
+        checks = agent._get_checks()
+        for name, fn in checks.items():
+            if not fn():
+                print(f'  {name}: unhealthy, healing...')
+                agent.run_single_heal(name)
+            else:
+                print(f'  {name}: OK')
+    else:
+        agent.run_single_heal(args.heal)
+        print(f'Heal {args.heal} complete')
+
+
+def cmd_bt_status(args):
+    dongles = enum_dongles()
+    assignments = load_dongle_assignments()
+    if not dongles:
+        print('No BT dongles found')
+        return
+    print('BT Adapters:')
+    for mac, hci in dongles.items():
+        assigned_to = None
+        for serial, assigned_mac in assignments.items():
+            if assigned_mac and assigned_mac.upper() == mac:
+                assigned_to = serial
+                break
+        phone_str = f' -> {assigned_to}' if assigned_to else ' (free)'
+        print(f'  {mac} ({hci}){phone_str}')
+
+    # Show bonds
+    print('\nBonds:')
+    for mac, hci in dongles.items():
+        try:
+            result = subprocess.run(
+                ['bluetoothctl'],
+                input=f'select {mac}\ndevices Paired\n',
+                capture_output=True, text=True, timeout=5,
+            )
+            for line in result.stdout.splitlines():
+                if line.strip().startswith('Device'):
+                    print(f'  {mac} ({hci}): {line.strip()}')
+        except (subprocess.TimeoutExpired, FileNotFoundError):
+            pass
+
+
+def cmd_bt_repair(args):
+    adapter = args.adapter
+    print(f'Repairing adapter {adapter}...')
+    try:
+        subprocess.run(
+            ['bluetoothctl'],
+            input=f'select {adapter}\npower off\npower on\ndiscoverable on\npairable on\n',
+            capture_output=True, text=True, timeout=10,
+        )
+        print('Adapter reset complete')
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        print(f'Repair failed: {e}', file=sys.stderr)
+        sys.exit(1)
+
+
+def main():
+    setup_logging()
+    parser = argparse.ArgumentParser(prog='fleet-cli', description='Fleet agent CLI')
+    sub = parser.add_subparsers(dest='command')
+
+    # phone
+    phone_parser = sub.add_parser('phone', help='Phone operations')
+    phone_sub = phone_parser.add_subparsers(dest='phone_command')
+
+    phone_sub.add_parser('list', help='List connected phones')
+
+    status_p = phone_sub.add_parser('status', help='Show phone status')
+    status_p.add_argument('--phone', help='Phone serial or ID')
+
+    setup_p = phone_sub.add_parser('setup', help='Re-run all setup steps')
+    setup_p.add_argument('--phone', help='Phone serial or ID')
+
+    # step
+    step_parser = sub.add_parser('step', help='Run individual setup steps')
+    step_sub = step_parser.add_subparsers(dest='step_command')
+    step_run_p = step_sub.add_parser('run', help='Run a setup step')
+    step_run_p.add_argument('--phone', help='Phone serial or ID')
+    step_run_p.add_argument('--step', required=True,
+                             choices=['screen', 'silent', 'device_owner', 'snapshot',
+                                     'port_forwards', 'passcode', 'wifi', 'pair', 'restrictions'])
+
+    # check
+    check_parser = sub.add_parser('check', help='Run health checks')
+    check_sub = check_parser.add_subparsers(dest='check_command')
+    check_run_p = check_sub.add_parser('run', help='Run a health check')
+    check_run_p.add_argument('--phone', help='Phone serial or ID')
+    check_run_p.add_argument('--check', required=True,
+                              help='Check name or "all"')
+
+    # heal
+    heal_parser = sub.add_parser('heal', help='Run heals')
+    heal_sub = heal_parser.add_subparsers(dest='heal_command')
+    heal_run_p = heal_sub.add_parser('run', help='Run a heal')
+    heal_run_p.add_argument('--phone', help='Phone serial or ID')
+    heal_run_p.add_argument('--heal', required=True,
+                             help='Heal name or "all"')
+
+    # bt
+    bt_parser = sub.add_parser('bt', help='Bluetooth operations')
+    bt_sub = bt_parser.add_subparsers(dest='bt_command')
+    bt_sub.add_parser('status', help='Show all adapters and bonds')
+    repair_p = bt_sub.add_parser('repair', help='Nuke and repair an adapter')
+    repair_p.add_argument('--adapter', required=True, help='Adapter MAC')
+
+    args = parser.parse_args()
+
+    if args.command == 'phone':
+        if args.phone_command == 'list':
+            cmd_phone_list(args)
+        elif args.phone_command == 'status':
+            cmd_phone_status(args)
+        elif args.phone_command == 'setup':
+            cmd_phone_setup(args)
+        else:
+            phone_parser.print_help()
+    elif args.command == 'step':
+        if args.step_command == 'run':
+            cmd_step_run(args)
+        else:
+            step_parser.print_help()
+    elif args.command == 'check':
+        if args.check_command == 'run':
+            cmd_check_run(args)
+        else:
+            check_parser.print_help()
+    elif args.command == 'heal':
+        if args.heal_command == 'run':
+            cmd_heal_run(args)
+        else:
+            heal_parser.print_help()
+    elif args.command == 'bt':
+        if args.bt_command == 'status':
+            cmd_bt_status(args)
+        elif args.bt_command == 'repair':
+            cmd_bt_repair(args)
+        else:
+            bt_parser.print_help()
+    else:
+        parser.print_help()
+
+
+if __name__ == '__main__':
+    main()

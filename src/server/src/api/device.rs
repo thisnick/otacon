@@ -36,6 +36,9 @@ pub struct DeviceInfo {
     wifi: WifiStatus,
     /// Lightweight system stats (CPU/mem/battery/temp)
     stats: PhoneStats,
+    /// Fleet-agent monitor status (setup progress, health, heals)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    monitor: Option<serde_json::Value>,
 }
 
 #[derive(Serialize, ToSchema, Default)]
@@ -101,6 +104,8 @@ pub async fn info_handler(state: Arc<PhoneState>) -> Result<Json<DeviceInfo>, Ap
         get_phone_stats(serial),
     );
 
+    let monitor = state.monitor_status.lock().await.clone();
+
     Ok(Json(DeviceInfo {
         activity: activity.ok(),
         window: window.ok(),
@@ -117,6 +122,7 @@ pub async fn info_handler(state: Arc<PhoneState>) -> Result<Json<DeviceInfo>, Ap
         bt_connected,
         wifi,
         stats,
+        monitor,
     }))
 }
 

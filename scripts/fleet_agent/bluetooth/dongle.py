@@ -1,0 +1,147 @@
+"""BT dongle enumeration and allocation."""
+
+import json
+import logging
+import os
+import subprocess
+import threading
+import time
+
+from ..util.ports import PHONES_JSON_PATH
+
+log = logging.getLogger('fleet-agent')
+
+_dongle_lock = threading.Lock()
+_dongle_cache: dict[str, str] | None = None
+_bt_mac_cache: dict[str, str] = {}
+
+
+def _seed_cache():
+    """Populate _dongle_cache from phones.json if not yet loaded."""
+    global _dongle_cache
+    if _dongle_cache is not None:
+        return
+    _dongle_cache = {}
+    try:
+        with open(PHONES_JSON_PATH) as f:
+            phones = json.load(f)
+        for p in phones:
+            s = p.get('adb_serial')
+            mac = p.get('adapter_mac')
+            if s and mac:
+                _dongle_cache[s] = mac.upper()
+            btm = p.get('phone_bt_mac')
+            if s and btm:
+                _bt_mac_cache[s] = btm
+    except (FileNotFoundError, json.JSONDecodeError, KeyError):
+        pass
+
+
+def enum_dongles() -> dict[str, str]:
+    """Enumerate all HCI adapters. Returns {bt_mac: hci_name}."""
+    dongles = {}
+    try:
+        result = subprocess.run(
+            ['hciconfig'], capture_output=True, text=True, timeout=5,
+        )
+        current_hci = None
+        for raw_line in result.stdout.splitlines():
+            stripped = raw_line.strip()
+            if not stripped:
+                continue
+            if 'BD Address:' in stripped and current_hci:
+                mac = stripped.split('BD Address:')[1].strip().split()[0]
+                if mac and mac != '00:00:00:00:00:00':
+                    dongles[mac.upper()] = current_hci
+                current_hci = None
+            elif not raw_line[0].isspace() and ':' in stripped:
+                current_hci = stripped.split(':')[0]
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        pass
+    return dongles
+
+
+def save_dongle_assignment(serial: str, adapter_mac: str, phone_bt_mac: str | None = None):
+    """Update the in-memory cache and best-effort persist to phones.json."""
+    if _dongle_cache is not None:
+        _dongle_cache[serial] = adapter_mac.upper()
+    if phone_bt_mac:
+        _bt_mac_cache[serial] = phone_bt_mac
+
+    try:
+        phones = []
+        try:
+            with open(PHONES_JSON_PATH) as f:
+                phones = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            pass
+
+        found = False
+        for p in phones:
+            if p.get('adb_serial') == serial:
+                p['adapter_mac'] = adapter_mac
+                if phone_bt_mac:
+                    p['phone_bt_mac'] = phone_bt_mac
+                found = True
+                break
+        if not found:
+            entry = {'adb_serial': serial, 'adapter_mac': adapter_mac}
+            if phone_bt_mac:
+                entry['phone_bt_mac'] = phone_bt_mac
+            phones.append(entry)
+
+        os.makedirs(os.path.dirname(PHONES_JSON_PATH), exist_ok=True)
+        with open(PHONES_JSON_PATH, 'w') as f:
+            json.dump(phones, f, indent=2)
+    except OSError as e:
+        log.warning(f'Could not persist dongle assignment: {e}')
+
+
+def load_dongle_assignments() -> dict[str, str]:
+    """Return a {serial: adapter_mac} mapping from the in-memory cache."""
+    with _dongle_lock:
+        _seed_cache()
+        return dict(_dongle_cache)  # type: ignore[arg-type]
+
+
+def get_cached_bt_mac(serial: str) -> str | None:
+    """Return cached phone_bt_mac for a serial, or None."""
+    return _bt_mac_cache.get(serial)
+
+
+def allocate_dongle(serial: str) -> tuple[str, str] | None:
+    """Allocate a BT dongle for a phone. Returns (adapter_mac, hci_name) or None."""
+    dongles = {}
+    for attempt in range(10):
+        dongles = enum_dongles()
+        if dongles:
+            break
+        if attempt < 9:
+            log.info(f'No BT dongles found yet, retrying in 3s ({attempt + 1}/10)...')
+            time.sleep(3)
+    if not dongles:
+        log.warning('No BT dongles found after 10 attempts')
+        return None
+
+    with _dongle_lock:
+        _seed_cache()
+        used_macs = {mac for s, mac in _dongle_cache.items() if s != serial}
+
+        saved_mac = _dongle_cache.get(serial)
+        if saved_mac and saved_mac.upper() in dongles:
+            hci = dongles[saved_mac.upper()]
+            log.info(f'Reusing saved dongle {saved_mac} ({hci}) for {serial}')
+            return (saved_mac.upper(), hci)
+
+        if saved_mac:
+            log.warning(f'Saved dongle {saved_mac} not present, reassigning...')
+
+        for mac, hci in dongles.items():
+            if mac not in used_macs:
+                log.info(f'Assigning free dongle {mac} ({hci}) to {serial}')
+                _dongle_cache[serial] = mac
+                save_dongle_assignment(serial, mac)
+                return (mac, hci)
+
+        log.error(f'No free BT dongle for {serial}')
+        return None

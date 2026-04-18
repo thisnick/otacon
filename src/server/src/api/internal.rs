@@ -45,6 +45,12 @@ pub async fn event_handler(
             sim.number = None;
             sim.connected_at = None;
         }
+        "monitor_status" => {
+            if let Some(status) = body.data.get("status") {
+                let mut ms = state.monitor_status.lock().await;
+                *ms = Some(status.clone());
+            }
+        }
         _ => {}
     }
 

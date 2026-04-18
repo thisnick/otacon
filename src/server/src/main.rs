@@ -186,6 +186,7 @@ fn create_phone_state(config: phone::PhoneConfig, audio_config: &AudioConfig) ->
         media_clients: std::sync::atomic::AtomicU32::new(0),
         capture_running: std::sync::atomic::AtomicBool::new(false),
         a2dp_capture_running: std::sync::atomic::AtomicBool::new(false),
+        monitor_status: Mutex::new(None),
     })
 }
 
