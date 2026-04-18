@@ -246,12 +246,26 @@ pub async fn set_config(
 ) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
     let mut phones = store.phones.write().await;
     let phone = phones.get_mut(&id).ok_or(axum::http::StatusCode::NOT_FOUND)?;
-    phone.config = config;
+    phone.config = config.clone();
     phone.updated_at = Utc::now();
+    let host_id = phone.host_id.clone();
     drop(phones);
     store.save_phones().await;
-    // TODO: push config change to host via WebSocket
-    Ok(Json(serde_json::json!({"ok": true})))
+
+    // Push config change to the host via WebSocket
+    let pushed = if let Some(ref host_id) = host_id {
+        store.push_config(host_id, &id, &config).await
+    } else {
+        false
+    };
+
+    store.add_event("phone.config_updated", Some(id.clone()),
+        Some(serde_json::json!({
+            "config": config,
+            "pushed": pushed,
+        }))).await;
+
+    Ok(Json(serde_json::json!({"ok": true, "pushed": pushed})))
 }
 
 fn generate_phone_id(body: &RegisterPhoneBody, phones: &std::collections::HashMap<String, Phone>) -> String {

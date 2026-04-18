@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use tokio::sync::RwLock;
+use tokio::sync::{broadcast, mpsc, RwLock};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Host {
@@ -82,6 +82,15 @@ pub struct Event {
     pub data: Option<serde_json::Value>,
 }
 
+/// A config push message sent to a host over its WebSocket.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConfigPush {
+    #[serde(rename = "type")]
+    pub msg_type: String,
+    pub phone_id: String,
+    pub config: PhoneConfig,
+}
+
 /// In-memory registry state backed by JSON files on disk.
 pub struct RegistryStore {
     pub hosts: RwLock<HashMap<String, Host>>,
@@ -91,6 +100,10 @@ pub struct RegistryStore {
     pub events: RwLock<Vec<Event>>,
     next_event_id: RwLock<u64>,
     data_dir: PathBuf,
+    /// Broadcast channel for fleet events (consumed by /ws/fleet/events subscribers)
+    pub events_tx: broadcast::Sender<Event>,
+    /// Per-host config push channels (host_id → sender). Hosts register on WS connect.
+    pub host_config_senders: RwLock<HashMap<String, mpsc::Sender<ConfigPush>>>,
 }
 
 impl RegistryStore {
@@ -104,6 +117,7 @@ impl RegistryStore {
         let sims = load_map(&data_dir.join("sims.json")).await;
         let events = load_events(&data_dir.join("events.jsonl")).await;
         let next_id = events.last().map(|e| e.id + 1).unwrap_or(1);
+        let (events_tx, _) = broadcast::channel::<Event>(256);
 
         Self {
             hosts: RwLock::new(hosts),
@@ -113,6 +127,8 @@ impl RegistryStore {
             events: RwLock::new(events),
             next_event_id: RwLock::new(next_id),
             data_dir: data_dir.to_path_buf(),
+            events_tx,
+            host_config_senders: RwLock::new(HashMap::new()),
         }
     }
 
@@ -157,6 +173,9 @@ impl RegistryStore {
         // Append to events vec
         self.events.write().await.push(event.clone());
 
+        // Broadcast to fleet event subscribers (ignore if no receivers)
+        let _ = self.events_tx.send(event.clone());
+
         // Append to events.jsonl
         if let Ok(line) = serde_json::to_string(&event) {
             use tokio::io::AsyncWriteExt;
@@ -172,6 +191,21 @@ impl RegistryStore {
         }
 
         event
+    }
+
+    /// Push a config update to a connected host. Returns true if the host was connected.
+    pub async fn push_config(&self, host_id: &str, phone_id: &str, config: &PhoneConfig) -> bool {
+        let senders = self.host_config_senders.read().await;
+        if let Some(tx) = senders.get(host_id) {
+            let msg = ConfigPush {
+                msg_type: "config_update".into(),
+                phone_id: phone_id.into(),
+                config: config.clone(),
+            };
+            tx.send(msg).await.is_ok()
+        } else {
+            false
+        }
     }
 }
 

@@ -4,6 +4,7 @@ use tower_http::cors::CorsLayer;
 
 mod api;
 mod store;
+mod ws;
 
 #[tokio::main]
 async fn main() {

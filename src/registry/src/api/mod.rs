@@ -2,6 +2,7 @@ use axum::{routing::{get, post}, Router};
 use std::sync::Arc;
 
 use crate::store::RegistryStore;
+use crate::ws;
 
 pub mod dongles;
 pub mod events;
@@ -32,5 +33,8 @@ pub fn router(store: Arc<RegistryStore>) -> Router {
         .route("/api/v1/dongles/register", post(dongles::register))
         // Events
         .route("/api/v1/events", get(events::list).post(events::report))
+        // WebSocket channels
+        .route("/ws/host/config", get(ws::host_config_ws))
+        .route("/ws/fleet/events", get(ws::fleet_events_ws))
         .with_state(store)
 }
