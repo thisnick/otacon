@@ -4,14 +4,13 @@
 import argparse
 import json
 import os
-import subprocess
 import sys
 
 # Add parent dir so fleet_agent package is importable
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from fleet_agent.util.log import setup_logging
-from fleet_agent.util.adb import get_connected_serials
+from fleet_agent.util.adb import get_connected_serials, run_cmd
 from fleet_agent.util.ports import PortAllocator
 from fleet_agent.phone.agent import PhoneAgent
 from fleet_agent.phone import health
@@ -124,15 +123,15 @@ def cmd_bt_status(args):
     print('\nBonds:')
     for mac, hci in dongles.items():
         try:
-            result = subprocess.run(
+            result = run_cmd(
                 ['bluetoothctl'],
                 input=f'select {mac}\ndevices Paired\n',
-                capture_output=True, text=True, timeout=5,
+                timeout=5,
             )
             for line in result.stdout.splitlines():
                 if line.strip().startswith('Device'):
                     print(f'  {mac} ({hci}): {line.strip()}')
-        except (subprocess.TimeoutExpired, FileNotFoundError):
+        except Exception:
             pass
 
 
@@ -140,13 +139,13 @@ def cmd_bt_repair(args):
     adapter = args.adapter
     print(f'Repairing adapter {adapter}...')
     try:
-        subprocess.run(
+        run_cmd(
             ['bluetoothctl'],
             input=f'select {adapter}\npower off\npower on\ndiscoverable on\npairable on\n',
-            capture_output=True, text=True, timeout=10,
+            timeout=10,
         )
         print('Adapter reset complete')
-    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+    except Exception as e:
         print(f'Repair failed: {e}', file=sys.stderr)
         sys.exit(1)
 

@@ -19,18 +19,17 @@ def configure_screen(serial: str):
     adb_shell(serial, 'pm disable-user --user 0 com.google.android.apps.messaging')
 
 
-def _stream_max(serial: str, stream: str) -> int | None:
-    """Look up the max index for an audio stream from dumpsys."""
-    out = adb_shell(serial, 'dumpsys audio')
+def parse_stream_max(dumpsys_output: str, stream: str) -> int | None:
+    """Parse max volume for a stream from dumpsys audio output. Pure function."""
     names = {'0': 'STREAM_VOICE_CALL', '3': 'STREAM_MUSIC'}
     name = names.get(stream)
     if not name:
         return None
     marker = f'- {name}:'
-    idx = out.find(marker)
+    idx = dumpsys_output.find(marker)
     if idx < 0:
         return None
-    tail = out[idx:idx + 400]
+    tail = dumpsys_output[idx:idx + 400]
     for line in tail.splitlines():
         line = line.strip()
         if line.startswith('Max:'):
@@ -39,6 +38,12 @@ def _stream_max(serial: str, stream: str) -> int | None:
             except (ValueError, IndexError):
                 return None
     return None
+
+
+def _stream_max(serial: str, stream: str) -> int | None:
+    """Look up the max index for an audio stream from dumpsys."""
+    out = adb_shell(serial, 'dumpsys audio')
+    return parse_stream_max(out, stream)
 
 
 def configure_silent(serial: str):

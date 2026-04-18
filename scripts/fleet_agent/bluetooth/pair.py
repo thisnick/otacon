@@ -5,12 +5,11 @@ import json
 import logging
 import os
 import re
-import subprocess
 import threading
 import time
 import urllib.parse
 
-from ..util.adb import adb_shell
+from ..util.adb import adb_shell, run_cmd
 from ..util.http import http_get, http_post
 from .dongle import (
     allocate_dongle, enum_dongles, get_cached_bt_mac,
@@ -23,8 +22,11 @@ log = logging.getLogger('fleet-agent')
 PHONES_JSON_PATH = os.environ.get('PHONES_CONFIG', '/data/otacon/phones.json')
 
 
-def _find_pair_button(snapshot_url: str) -> str | None:
-    data = http_get(f'{snapshot_url}/snapshot?format=json', timeout=3)
+def find_pair_button_in_tree(data) -> str | None:
+    """Walk a snapshot a11y tree and find a clickable Pair/Allow button.
+
+    Pure function — takes parsed JSON data, returns ref_id or None.
+    """
     if not data:
         return None
 
@@ -46,6 +48,11 @@ def _find_pair_button(snapshot_url: str) -> str | None:
         if ref:
             return ref
     return None
+
+
+def _find_pair_button(snapshot_url: str) -> str | None:
+    data = http_get(f'{snapshot_url}/snapshot?format=json', timeout=3)
+    return find_pair_button_in_tree(data)
 
 
 def _tap_pair_notification(serial: str) -> bool:
@@ -94,11 +101,11 @@ def _tap_pair_notification(serial: str) -> bool:
 def _run_pair_script(adapter_hci: str, serial: str):
     """Run bluetooth-pair.sh with the assigned adapter."""
     try:
-        result = subprocess.run(
+        result = run_cmd(
             ['/opt/bluetooth-pair.sh',
              '--adapter', adapter_hci,
              '--serial', serial],
-            capture_output=True, text=True, timeout=60,
+            timeout=60,
         )
         if result.returncode != 0:
             log.warning(f'bluetooth-pair.sh exit={result.returncode}\n'
@@ -204,10 +211,10 @@ def allocate_and_pair_bluetooth(serial: str, snapshot_url: str,
 
     # Detect stale one-sided bond
     if 'already_paired' in result_data and phone_bt_mac:
-        bluez_check = subprocess.run(
+        bluez_check = run_cmd(
             ['bluetoothctl'],
             input=f'select {adapter_mac}\ninfo {phone_bt_mac}\n',
-            capture_output=True, text=True, timeout=10,
+            timeout=10,
         )
         if 'Paired: yes' not in (bluez_check.stdout or ''):
             log.warning(f'[{serial}] Phone reports already_paired but BlueZ has no record -- forcing unpair and retrying')
@@ -239,13 +246,13 @@ def allocate_and_pair_bluetooth(serial: str, snapshot_url: str,
     if phone_bt_mac and 'ok=true' in (pair_result.get('data', '')):
         save_dongle_assignment(serial, adapter_mac, phone_bt_mac)
         try:
-            subprocess.run(
+            run_cmd(
                 ['bluetoothctl'],
                 input=f'select {adapter_mac}\ntrust {phone_bt_mac}\n',
-                capture_output=True, text=True, timeout=10,
+                timeout=10,
             )
             log.info(f'[{serial}] Trusted {phone_bt_mac} on {adapter_mac}')
-        except (subprocess.TimeoutExpired, FileNotFoundError):
+        except Exception:
             pass
 
     return (adapter_mac, adapter_hci, phone_bt_mac)

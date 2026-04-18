@@ -2,9 +2,8 @@
 
 import logging
 import os
-import subprocess
 
-from ..util.adb import adb, adb_shell
+from ..util.adb import adb, adb_shell, run_cmd
 from ..steps.provisioning import DEVICE_OWNER_PKG
 
 log = logging.getLogger('fleet-agent')
@@ -23,13 +22,13 @@ def check_bt_connected(adapter_mac: str | None, phone_bt_mac: str | None) -> boo
     if not adapter_mac or not phone_bt_mac:
         return False
     try:
-        result = subprocess.run(
+        result = run_cmd(
             ['bluetoothctl'],
             input=f'select {adapter_mac}\ninfo {phone_bt_mac}\n',
-            capture_output=True, text=True, timeout=10,
+            timeout=10,
         )
         return 'Connected: yes' in (result.stdout or '')
-    except (subprocess.TimeoutExpired, FileNotFoundError):
+    except Exception:
         return False
 
 

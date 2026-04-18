@@ -29,6 +29,10 @@ pigen/work/
 # Node (changesets)
 node_modules/
 
+# Python
+__pycache__/
+*.pyc
+
 # OS
 .DS_Store
 *.swp

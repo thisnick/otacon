@@ -3,10 +3,10 @@
 import json
 import logging
 import os
-import subprocess
 import threading
 import time
 
+from ..util.adb import run_cmd
 from ..util.ports import PHONES_JSON_PATH
 
 log = logging.getLogger('fleet-agent')
@@ -37,28 +37,31 @@ def _seed_cache():
         pass
 
 
+def parse_hciconfig(output: str) -> dict[str, str]:
+    """Parse hciconfig output into {bt_mac: hci_name}. Pure function for testing."""
+    dongles = {}
+    current_hci = None
+    for raw_line in output.splitlines():
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+        if 'BD Address:' in stripped and current_hci:
+            mac = stripped.split('BD Address:')[1].strip().split()[0]
+            if mac and mac != '00:00:00:00:00:00':
+                dongles[mac.upper()] = current_hci
+            current_hci = None
+        elif raw_line and not raw_line[0].isspace() and ':' in stripped:
+            current_hci = stripped.split(':')[0]
+    return dongles
+
+
 def enum_dongles() -> dict[str, str]:
     """Enumerate all HCI adapters. Returns {bt_mac: hci_name}."""
-    dongles = {}
     try:
-        result = subprocess.run(
-            ['hciconfig'], capture_output=True, text=True, timeout=5,
-        )
-        current_hci = None
-        for raw_line in result.stdout.splitlines():
-            stripped = raw_line.strip()
-            if not stripped:
-                continue
-            if 'BD Address:' in stripped and current_hci:
-                mac = stripped.split('BD Address:')[1].strip().split()[0]
-                if mac and mac != '00:00:00:00:00:00':
-                    dongles[mac.upper()] = current_hci
-                current_hci = None
-            elif not raw_line[0].isspace() and ':' in stripped:
-                current_hci = stripped.split(':')[0]
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        pass
-    return dongles
+        result = run_cmd(['hciconfig'], timeout=5)
+        return parse_hciconfig(result.stdout)
+    except (Exception,):
+        return {}
 
 
 def save_dongle_assignment(serial: str, adapter_mac: str, phone_bt_mac: str | None = None):

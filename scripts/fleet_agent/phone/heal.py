@@ -1,7 +1,9 @@
 """Idempotent heal functions. Each fixes the matching health check."""
 
 import logging
+import time
 
+from ..util.adb import run_cmd
 from ..bluetooth.pair import allocate_and_pair_bluetooth
 from ..steps.wifi import connect_wifi
 from ..steps.provisioning import provision_device_owner, apply_restrictions
@@ -19,18 +21,18 @@ def heal_bt_bonded(serial: str, snapshot_url: str,
 
 def heal_bt_connected(adapter_mac: str | None, phone_bt_mac: str | None) -> bool:
     """Reconnect an existing bond via bluetoothctl."""
-    import subprocess
     if not adapter_mac or not phone_bt_mac:
         return False
     log.info(f'Healing: bt_connected (reconnecting {phone_bt_mac})')
     try:
-        result = subprocess.run(
+        result = run_cmd(
             ['bluetoothctl'],
             input=f'select {adapter_mac}\nconnect {phone_bt_mac}\n',
-            capture_output=True, text=True, timeout=15,
+            timeout=15,
         )
-        return 'successful' in (result.stdout or '').lower() or 'already connected' in (result.stdout or '').lower()
-    except (subprocess.TimeoutExpired, FileNotFoundError):
+        stdout = result.stdout or ''
+        return 'successful' in stdout.lower() or 'already connected' in stdout.lower()
+    except Exception:
         return False
 
 
@@ -52,7 +54,6 @@ def heal_restrictions(serial: str):
 def heal_snapshot_alive(serial: str, snapshot_port: int, internal_port: int):
     log.info(f'[{serial}] Healing: snapshot_alive (restarting)')
     start_snapshot_server(serial)
-    import time
     time.sleep(3)
     setup_port_forwards(serial, snapshot_port, internal_port)
 
