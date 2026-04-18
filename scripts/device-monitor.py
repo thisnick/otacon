@@ -526,22 +526,51 @@ class PhoneMonitor:
         self.adb_shell('settings put global stay_on_while_plugged_in 0')
         self.adb_shell('settings put system screen_off_timeout 300000')  # 5 min
         self.adb_shell('settings put system screen_brightness_mode 1')
+        # Lock to portrait — kiosk phones don't rotate
+        self.adb_shell('settings put system accelerometer_rotation 0')
+        self.adb_shell('settings put system user_rotation 0')
         self.adb_shell('locksettings set-password-quality 0')
         self.adb_shell('svc data disable')
         self.adb_shell('pm disable-user --user 0 com.google.android.apps.messaging')
 
-    def configure_silent(self):
-        """Mute all alerts + vibrations. Kiosk phones should be silent.
+    def _stream_max(self, stream: str) -> int | None:
+        """Look up the max index for an audio stream from dumpsys."""
+        out = self.adb_shell(f'dumpsys audio')
+        # Find the stream block (e.g., "- STREAM_MUSIC:") and the first "Max:" after it.
+        names = {'0': 'STREAM_VOICE_CALL', '3': 'STREAM_MUSIC'}
+        name = names.get(stream)
+        if not name:
+            return None
+        marker = f'- {name}:'
+        idx = out.find(marker)
+        if idx < 0:
+            return None
+        tail = out[idx:idx + 400]
+        for line in tail.splitlines():
+            line = line.strip()
+            if line.startswith('Max:'):
+                try:
+                    return int(line.split(':', 1)[1].strip().split()[0])
+                except (ValueError, IndexError):
+                    return None
+        return None
 
-        Sets stream volumes to 0 directly (not via DISALLOW_ADJUST_VOLUME which
-        breaks BlueALSA BT audio on Samsung). Disables vibration on ring/touch.
-        Per-stream mute leaves voice_call/music alone so HFP/A2DP audio still works.
+    def configure_silent(self):
+        """Mute alerts, max music + voice. Kiosk phones: silent for ring/notif,
+        full volume for our audio routing (BT A2DP / HFP).
+
+        Uses cmd notification set_dnd alarms (zen=3) for the silencing —
+        leaves STREAM_MUSIC + STREAM_ALARM audible. Then maxes MUSIC and
+        VOICE_CALL so AVRCP-mirrored BT volume defaults to max.
         """
         self.log.info('Setting silent mode...')
-        # Mute the user-facing alert streams (keep music/voice for our audio routing)
-        for stream in ('5', '2', '1', '8'):  # NOTIFICATION, RING, SYSTEM, ACCESSIBILITY
-            self.adb_shell(f'media volume --stream {stream} --set 0 2>/dev/null || true')
         self.adb_shell('cmd notification set_dnd alarms')  # zen=3: silence ring/notif, keep media+alarms
+        # Max out music + voice so BT (AVRCP-mirrored) starts at max
+        for stream in ('3', '0'):  # MUSIC, VOICE_CALL
+            mx = self._stream_max(stream)
+            if mx is not None:
+                self.adb_shell(f'cmd media_session volume --stream {stream} --set {mx}')
+                self.log.info(f'  stream {stream} -> {mx}')
         # Disable vibration
         self.adb_shell('settings put system vibrate_when_ringing 0')
         self.adb_shell('settings put system haptic_feedback_enabled 0')
