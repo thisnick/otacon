@@ -43,9 +43,6 @@ pub async fn handler(
         .unwrap_or_default()
         .as_secs();
 
-    // Write marker file so device-monitor knows to reprovision after reboot
-    adb_shell(serial, "echo reset > /data/local/tmp/otacon-reset-pending").await?;
-
     let dry_run = std::env::var("OTACON_ALLOW_TESTHARNESS")
         .map(|v| v != "1")
         .unwrap_or(true);
@@ -57,6 +54,8 @@ pub async fn handler(
             path_id, serial, serial,
         );
     } else {
+        // Write marker file so device-monitor knows to reprovision after reboot
+        adb_shell(serial, "echo reset > /data/local/tmp/otacon-reset-pending").await?;
         eprintln!(
             "phone.factory_reset: phone_id={} serial={} dry_run=false — executing testharness reset",
             path_id, serial,

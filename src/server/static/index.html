@@ -770,9 +770,11 @@
   <div class="modal-box">
     <h3>Factory Reset</h3>
     <p>This will wipe the phone and reprovision it. ADB trust is preserved via testharness mode. This action cannot be undone.</p>
+    <p style="margin-bottom:8px">Type <strong id="resetPhoneIdLabel"></strong> to confirm:</p>
+    <input type="text" id="resetConfirmInput" autocomplete="off" spellcheck="false" oninput="checkResetInput()" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:4px;font-family:'JetBrains Mono',monospace;font-size:12px;margin-bottom:14px">
     <div class="modal-actions">
       <button class="pill" onclick="hideFactoryResetModal()">Cancel</button>
-      <button class="pill danger" id="resetConfirmBtn" onclick="confirmFactoryReset()">Confirm Reset</button>
+      <button class="pill danger" id="resetConfirmBtn" disabled onclick="confirmFactoryReset()">Confirm Reset</button>
     </div>
   </div>
 </div>
@@ -1591,13 +1593,21 @@ function connectEvents() {
 
 // --- Factory Reset ---
 function showFactoryResetModal() {
+  document.getElementById('resetPhoneIdLabel').textContent = phoneId;
+  document.getElementById('resetConfirmInput').value = '';
+  document.getElementById('resetConfirmBtn').disabled = true;
   document.getElementById('resetModal').classList.add('open');
 }
 function hideFactoryResetModal() {
   document.getElementById('resetModal').classList.remove('open');
 }
+function checkResetInput() {
+  const match = document.getElementById('resetConfirmInput').value === phoneId;
+  document.getElementById('resetConfirmBtn').disabled = !match;
+}
 async function confirmFactoryReset() {
   if (!phoneId) return;
+  if (document.getElementById('resetConfirmInput').value !== phoneId) return;
   const btn = document.getElementById('resetConfirmBtn');
   btn.textContent = 'Resetting...';
   btn.disabled = true;
