@@ -16,6 +16,8 @@ pub struct FleetClient {
     client: reqwest::Client,
     /// Maps local phone ID → registry phone ID (they may differ)
     registry_ids: Mutex<HashMap<String, String>>,
+    /// Dongle IDs reported to the registry (for heartbeat)
+    dongle_ids: Mutex<Vec<String>>,
 }
 
 impl FleetClient {
@@ -33,6 +35,7 @@ impl FleetClient {
                 .build()
                 .unwrap_or_default(),
             registry_ids: Mutex::new(HashMap::new()),
+            dongle_ids: Mutex::new(Vec::new()),
         })
     }
 
@@ -70,6 +73,59 @@ impl FleetClient {
         }
     }
 
+    /// Enumerate BT adapters via bluetoothctl and report them to the registry.
+    pub async fn report_dongles(&self, state: &AppState) {
+        let adapters = enumerate_bt_adapters().await;
+        if adapters.is_empty() {
+            eprintln!("[fleet] No BT adapters found to report");
+            return;
+        }
+
+        // Try to match adapters to phones by adapter_mac
+        let phones = state.phones.read().await;
+        let dongles: Vec<serde_json::Value> = adapters.iter().map(|(mac, hci)| {
+            let phone_id = phones.values()
+                .find(|ps| ps.config.adapter_mac.as_deref()
+                    .map(|m| m.eq_ignore_ascii_case(mac))
+                    .unwrap_or(false))
+                .map(|ps| ps.config.id.clone());
+            serde_json::json!({
+                "bt_mac": mac,
+                "hci_device": hci,
+                "phone_id": phone_id,
+            })
+        }).collect();
+        drop(phones);
+
+        let body = serde_json::json!({
+            "host_id": self.host_id,
+            "dongles": dongles,
+        });
+
+        match self.client
+            .post(format!("{}/api/v1/dongles/register", self.registry_url))
+            .json(&body)
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => {
+                // Store dongle IDs for heartbeat (format: dongle-<last6hex>)
+                let ids: Vec<String> = adapters.iter().map(|(mac, _)| {
+                    let slug = mac.replace(':', "").to_lowercase();
+                    format!("dongle-{}", &slug[slug.len().saturating_sub(6)..])
+                }).collect();
+                eprintln!("[fleet] Reported {} dongles: {:?}", ids.len(), ids);
+                *self.dongle_ids.lock().await = ids;
+            }
+            Ok(resp) => {
+                eprintln!("[fleet] Dongle registration failed: {}", resp.status());
+            }
+            Err(e) => {
+                eprintln!("[fleet] Dongle registration error: {e}");
+            }
+        }
+    }
+
     /// Send a heartbeat with the list of connected phones and dongles.
     pub async fn heartbeat(&self, state: &AppState) {
         let phones = state.phones.read().await;
@@ -83,10 +139,13 @@ impl FleetClient {
             .collect();
         drop(reg_ids);
 
+        // Build dongle IDs from last-known adapters
+        let dongle_ids = self.dongle_ids.lock().await.clone();
+
         let body = serde_json::json!({
             "host_id": self.host_id,
             "phones": phone_ids,
-            "dongles": [],
+            "dongles": dongle_ids,
         });
 
         if let Err(e) = self.client
@@ -100,10 +159,11 @@ impl FleetClient {
     }
 
     /// Register a phone with the registry. Stores the registry-assigned phone_id.
-    pub async fn register_phone(&self, local_id: &str, serial: &str) {
+    pub async fn register_phone(&self, local_id: &str, config: &crate::phone::PhoneConfig) {
         let body = serde_json::json!({
             "host_id": self.host_id,
-            "adb_serial": serial,
+            "adb_serial": config.adb_serial,
+            "adapter_mac": config.adapter_mac,
         });
 
         match self.client
@@ -192,11 +252,14 @@ pub fn spawn_heartbeat(fleet: Arc<FleetClient>, state: Arc<AppState>) {
     tokio::spawn(async move {
         fleet.register_host().await;
 
+        // Report BT dongles
+        fleet.report_dongles(&state).await;
+
         // Register all initially connected phones
         {
             let phones = state.phones.read().await;
             for (id, ps) in phones.iter() {
-                fleet.register_phone(id, &ps.config.adb_serial).await;
+                fleet.register_phone(id, &ps.config).await;
             }
         }
 
@@ -343,6 +406,72 @@ async fn apply_config(serial: &str, config: &RegistryPhoneConfig) {
     if let Err(e) = bt_result {
         eprintln!("[fleet] Failed to set bluetooth on {serial}: {e}");
     }
+}
+
+/// Enumerate Bluetooth adapters via `bluetoothctl list`.
+/// Returns a list of (MAC address, hci device name) pairs.
+async fn enumerate_bt_adapters() -> Vec<(String, String)> {
+    let output = match tokio::process::Command::new("bluetoothctl")
+        .args(["list"])
+        .output()
+        .await
+    {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("[fleet] Failed to run bluetoothctl list: {e}");
+            return Vec::new();
+        }
+    };
+
+    if !output.status.success() {
+        return Vec::new();
+    }
+
+    // Each line looks like: "Controller F4:4E:FC:59:A6:09 otacon-pi [default]"
+    // or "Controller F4:4E:FC:27:B3:E8 hci2"
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut adapters = Vec::new();
+    for line in stdout.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 3 && parts[0] == "Controller" {
+            let mac = parts[1].to_string();
+            // Try to get the hci device name by matching the MAC via hciconfig
+            let hci = get_hci_for_mac(&mac).await
+                .unwrap_or_else(|| parts[2].to_string());
+            adapters.push((mac, hci));
+        }
+    }
+
+    adapters
+}
+
+/// Map a BT adapter MAC to its hciN device name via `hciconfig`.
+async fn get_hci_for_mac(mac: &str) -> Option<String> {
+    let output = tokio::process::Command::new("hciconfig")
+        .output()
+        .await
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut current_hci: Option<String> = None;
+    let mac_upper = mac.to_uppercase();
+
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        // Lines like "hci0:   Type: Primary  Bus: USB"
+        if !trimmed.is_empty() && !line.starts_with('\t') && !line.starts_with(' ') {
+            current_hci = trimmed.split(':').next().map(|s| s.to_string());
+        }
+        // Lines like "        BD Address: F4:4E:FC:59:A6:09  ACL MTU: ..."
+        if trimmed.contains("BD Address:") && trimmed.contains(&mac_upper) {
+            return current_hci;
+        }
+    }
+
+    None
 }
 
 fn gethostname() -> Option<String> {
