@@ -233,6 +233,45 @@
   }
   .pill:hover { border-color: var(--text-muted); color: var(--text); }
   .pill.active { border-color: var(--accent-dim); color: var(--accent); }
+  .pill.danger { border-color: var(--red); color: var(--red); }
+  .pill.danger:hover { background: var(--red); color: #fff; }
+
+  /* --- Confirm modal --- */
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px 28px;
+    max-width: 400px;
+    width: 90%;
+  }
+  .modal-box h3 {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--red);
+    margin-bottom: 12px;
+  }
+  .modal-box p {
+    font-size: 13px;
+    color: var(--text-dim);
+    line-height: 1.5;
+    margin-bottom: 18px;
+  }
+  .modal-box .modal-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+  }
 
   /* --- Info bar --- */
   .info-bar {
@@ -719,6 +758,21 @@
           <button class="ch-btn" onclick="sendSms()">Send</button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <div style="margin-top:20px;display:flex;justify-content:flex-end">
+    <button class="pill danger" onclick="showFactoryResetModal()">Factory Reset</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="resetModal">
+  <div class="modal-box">
+    <h3>Factory Reset</h3>
+    <p>This will wipe the phone and reprovision it. ADB trust is preserved via testharness mode. This action cannot be undone.</p>
+    <div class="modal-actions">
+      <button class="pill" onclick="hideFactoryResetModal()">Cancel</button>
+      <button class="pill danger" id="resetConfirmBtn" onclick="confirmFactoryReset()">Confirm Reset</button>
     </div>
   </div>
 </div>
@@ -1533,6 +1587,41 @@ function connectEvents() {
       }
     } catch(_) {}
   };
+}
+
+// --- Factory Reset ---
+function showFactoryResetModal() {
+  document.getElementById('resetModal').classList.add('open');
+}
+function hideFactoryResetModal() {
+  document.getElementById('resetModal').classList.remove('open');
+}
+async function confirmFactoryReset() {
+  if (!phoneId) return;
+  const btn = document.getElementById('resetConfirmBtn');
+  btn.textContent = 'Resetting...';
+  btn.disabled = true;
+  try {
+    const res = await fetch(`/phones/${phoneId}/api/factory-reset`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({confirm: true, phone_id: phoneId})
+    });
+    const data = await res.json();
+    if (res.ok) {
+      hideFactoryResetModal();
+      alert(data.dry_run
+        ? 'Factory reset DRY RUN: OTACON_ALLOW_TESTHARNESS is not set. No wipe was performed.'
+        : 'Factory reset triggered. The phone will wipe and reboot.');
+    } else {
+      alert('Error: ' + (data.error || res.statusText));
+    }
+  } catch(e) {
+    alert('Request failed: ' + e.message);
+  } finally {
+    btn.textContent = 'Confirm Reset';
+    btn.disabled = false;
+  }
 }
 
 // --- Init ---
