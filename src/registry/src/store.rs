@@ -41,7 +41,7 @@ pub struct PhoneConfig {
 impl Default for PhoneConfig {
     fn default() -> Self {
         Self {
-            wifi_enabled: false,
+            wifi_enabled: true,
             bluetooth_enabled: true,
         }
     }
