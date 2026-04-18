@@ -86,7 +86,8 @@ class TestCheckDeviceOwner:
 
 
 class TestCheckRestrictions:
-    FULL_RESTRICTIONS = (
+    # Samsung/A14 format: single combined section
+    FULL_RESTRICTIONS_SAMSUNG = (
         '  Device policy restrictions:\n'
         '    no_config_wifi\n'
         '    no_config_bluetooth\n'
@@ -98,10 +99,31 @@ class TestCheckRestrictions:
         '    no_config_tethering\n'
     )
 
-    def test_returns_true_when_all_restrictions_present(self):
+    # Pixel/AOSP format: split into global + local sections
+    FULL_RESTRICTIONS_PIXEL = (
+        '    Device policy global restrictions:\n'
+        '      no_airplane_mode\n'
+        '      no_usb_file_transfer\n'
+        '      no_factory_reset\n'
+        '      no_safe_boot\n'
+        '      no_config_tethering\n'
+        '    Device policy local restrictions:\n'
+        '      User Id: 0\n'
+        '        no_config_bluetooth\n'
+        '        no_config_location\n'
+        '        no_config_wifi\n'
+    )
+
+    def test_returns_true_samsung_format(self):
         from fleet_agent.phone.health import check_restrictions
         with patch('fleet_agent.phone.health.adb_shell',
-                   return_value=self.FULL_RESTRICTIONS):
+                   return_value=self.FULL_RESTRICTIONS_SAMSUNG):
+            assert check_restrictions('SERIAL') is True
+
+    def test_returns_true_pixel_format(self):
+        from fleet_agent.phone.health import check_restrictions
+        with patch('fleet_agent.phone.health.adb_shell',
+                   return_value=self.FULL_RESTRICTIONS_PIXEL):
             assert check_restrictions('SERIAL') is True
 
     def test_returns_false_when_restriction_missing(self):
@@ -127,7 +149,7 @@ class TestCheckRestrictions:
             assert check_restrictions('SERIAL') is False
 
     def test_returns_false_when_device_policy_section_empty(self):
-        """Pixel edge case: Device policy restrictions section exists but is empty."""
+        """Device policy restrictions section exists but is empty."""
         from fleet_agent.phone.health import check_restrictions
         dumpsys = (
             '  Device policy restrictions:\n'
@@ -152,6 +174,23 @@ class TestCheckRestrictions:
             '    no_config_tethering\n'
         )
         with patch('fleet_agent.phone.health.adb_shell', return_value=dumpsys):
+            assert check_restrictions('SERIAL') is False
+
+    def test_pixel_partial_missing_from_local(self):
+        """Pixel format with restrictions missing from local section."""
+        from fleet_agent.phone.health import check_restrictions
+        dumpsys = (
+            '    Device policy global restrictions:\n'
+            '      no_airplane_mode\n'
+            '      no_factory_reset\n'
+            '      no_safe_boot\n'
+            '      no_config_tethering\n'
+            '    Device policy local restrictions:\n'
+            '      User Id: 0\n'
+            '        no_config_wifi\n'
+        )
+        with patch('fleet_agent.phone.health.adb_shell', return_value=dumpsys):
+            # Missing: no_usb_file_transfer, no_config_bluetooth, no_config_location
             assert check_restrictions('SERIAL') is False
 
 

@@ -93,19 +93,40 @@ def check_device_owner(serial: str) -> bool:
 
 
 def _parse_device_policy_restrictions(dumpsys_output: str) -> set[str]:
-    """Extract restriction keys from the 'Device policy restrictions:' section."""
+    """Extract restriction keys from DPM restriction sections of dumpsys user.
+
+    Android versions format this differently:
+    - Samsung/A14: single "Device policy restrictions:" section
+    - Pixel/AOSP: split into "Device policy global restrictions:" and
+      "Device policy local restrictions:" (with a "User Id: N" sub-header)
+
+    We parse all three section headers and collect every no_* key found
+    in any of them.
+    """
+    _DPM_HEADERS = (
+        'Device policy restrictions:',
+        'Device policy global restrictions:',
+        'Device policy local restrictions:',
+    )
     restrictions: set[str] = set()
     in_section = False
     for line in dumpsys_output.splitlines():
         stripped = line.strip()
-        if stripped.startswith('Device policy restrictions:'):
+        if any(stripped.startswith(h) for h in _DPM_HEADERS):
             in_section = True
             continue
         if in_section:
-            # Section ends at the next non-indented line or blank line
-            if not stripped or (not line.startswith(' ') and not line.startswith('\t')):
-                break
-            # Lines look like "no_config_bluetooth: true" or just "no_factory_reset"
+            # "User Id: N" sub-header inside local restrictions — stay in section
+            if stripped.startswith('User Id:'):
+                continue
+            # Section ends at non-indented non-empty line (next top-level key)
+            if stripped and not line.startswith(' ') and not line.startswith('\t'):
+                in_section = False
+                continue
+            # Skip blank lines but don't exit — another DPM section may follow
+            if not stripped:
+                in_section = False
+                continue
             match = re.match(r'(no_\w+)', stripped)
             if match:
                 restrictions.add(match.group(1))
