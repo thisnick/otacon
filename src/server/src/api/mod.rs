@@ -7,6 +7,7 @@ pub mod clipboard;
 pub mod contacts;
 pub mod device;
 pub mod esim;
+pub mod factory_reset;
 pub mod open;
 pub mod phones;
 pub mod record;
@@ -158,6 +159,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/phones/{id}/api/esim/switch", post(phone_esim_switch))
         .route("/phones/{id}/api/esim/enable", post(phone_esim_enable))
         .route("/phones/{id}/api/esim/defaults", get(phone_esim_defaults_get).put(phone_esim_defaults_set))
+        .route("/phones/{id}/api/factory-reset", post(phone_factory_reset))
         .route("/phones/{id}/api/open", post(phone_open))
         .route("/phones/{id}/api/record/start", post(phone_record_start))
         .route("/phones/{id}/api/record/stop", post(phone_record_stop))
@@ -404,6 +406,14 @@ async fn phone_esim_defaults_set(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let ps = extract_phone(State(state), Path(id)).await?;
     esim::defaults_set_handler(&ps.config.adb_serial, body).await
+}
+
+async fn phone_factory_reset(
+    State(state): State<Arc<AppState>>, Path(id): Path<String>,
+    body: Json<factory_reset::FactoryResetBody>,
+) -> Result<(axum::http::StatusCode, Json<factory_reset::FactoryResetResponse>), ApiError> {
+    let ps = extract_phone(State(state.clone()), Path(id.clone())).await?;
+    factory_reset::handler(ps, id, body).await
 }
 
 async fn phone_open(
