@@ -48,6 +48,28 @@ pub async fn handler(
         path_id, serial,
     );
 
+    // Check if already in test harness mode — testharness enable is a no-op
+    // when the flag is already set (exits 0, no wipe happens).
+    let harness_prop = adb_shell(serial, "getprop persist.sys.test_harness")
+        .await
+        .unwrap_or_default();
+    let already_testharness = harness_prop.trim() == "1";
+
+    if already_testharness {
+        eprintln!(
+            "phone.factory_reset: phone already in testharness mode — \
+             clearing flag via settings db before re-enable"
+        );
+        // On non-root devices we can't setprop, but we can clear it via
+        // settings global. The testharness service checks the persist prop,
+        // but also stores state in settings. Clear both paths.
+        let _ = adb_shell(
+            serial,
+            "settings put global test_harness_mode 0",
+        )
+        .await;
+    }
+
     // Clear DPM restrictions first — DISALLOW_FACTORY_RESET blocks
     // testharness enable silently (exits 0 but does nothing).
     eprintln!("phone.factory_reset: clearing restrictions before reset");
@@ -56,11 +78,10 @@ pub async fn handler(
         "am broadcast -a com.otacon.kiosk.CLEAR_RESTRICTIONS -n com.otacon.kiosk/.BootReceiver",
     )
     .await;
-    // Brief pause so the receiver finishes clearing restrictions
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-    // Remove device owner so wipeData can proceed (device owner also blocks
-    // factory reset on some Android versions even after clearing restrictions)
+    // Remove device owner — it must be removed before testharness enable,
+    // otherwise DPM blocks the wipe even with restrictions cleared.
     eprintln!("phone.factory_reset: removing device owner");
     let _ = adb_shell(
         serial,
@@ -69,8 +90,21 @@ pub async fn handler(
     .await;
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-    // This command wipes the phone but preserves ADB trust
+    // Attempt testharness reset (wipes /data, preserves ADB trust)
     adb(serial, &["shell", "cmd", "testharness", "enable"]).await?;
+
+    // If already in testharness mode and the above was still a no-op,
+    // report it so the caller can take alternative action.
+    if already_testharness {
+        return Ok((
+            axum::http::StatusCode::OK,
+            Json(FactoryResetResponse {
+                status: "already_in_test_harness_mode".into(),
+                dry_run: false,
+                triggered_at: now,
+            }),
+        ));
+    }
 
     Ok((
         axum::http::StatusCode::ACCEPTED,
