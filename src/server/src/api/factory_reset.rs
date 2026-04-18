@@ -43,36 +43,20 @@ pub async fn handler(
         .unwrap_or_default()
         .as_secs();
 
-    let dry_run = std::env::var("OTACON_ALLOW_TESTHARNESS")
-        .map(|v| v != "1")
-        .unwrap_or(true);
-
-    if dry_run {
-        eprintln!(
-            "phone.factory_reset: phone_id={} serial={} dry_run=true \
-             (OTACON_ALLOW_TESTHARNESS not set — would run: adb -s {} shell cmd testharness enable)",
-            path_id, serial, serial,
-        );
-    } else {
-        // Write marker file so device-monitor knows to reprovision after reboot
-        adb_shell(serial, "echo reset > /data/local/tmp/otacon-reset-pending").await?;
-        eprintln!(
-            "phone.factory_reset: phone_id={} serial={} dry_run=false — executing testharness reset",
-            path_id, serial,
-        );
-        // This command wipes the phone but preserves ADB trust
-        adb(serial, &["shell", "cmd", "testharness", "enable"]).await?;
-    }
+    // Write marker file so device-monitor knows to reprovision after reboot
+    adb_shell(serial, "echo reset > /data/local/tmp/otacon-reset-pending").await?;
+    eprintln!(
+        "phone.factory_reset: phone_id={} serial={} — executing testharness reset",
+        path_id, serial,
+    );
+    // This command wipes the phone but preserves ADB trust
+    adb(serial, &["shell", "cmd", "testharness", "enable"]).await?;
 
     Ok((
         axum::http::StatusCode::ACCEPTED,
         Json(FactoryResetResponse {
-            status: if dry_run {
-                "dry_run".into()
-            } else {
-                "triggered".into()
-            },
-            dry_run,
+            status: "triggered".into(),
+            dry_run: false,
             triggered_at: now,
         }),
     ))
