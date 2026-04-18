@@ -249,11 +249,11 @@ impl FleetClient {
 
 /// Spawn the fleet heartbeat loop as a background task.
 pub fn spawn_heartbeat(fleet: Arc<FleetClient>, state: Arc<AppState>) {
+    let fleet_dongle = fleet.clone();
+    let state_dongle = state.clone();
+
     tokio::spawn(async move {
         fleet.register_host().await;
-
-        // Report BT dongles
-        fleet.report_dongles(&state).await;
 
         // Register all initially connected phones
         {
@@ -269,6 +269,14 @@ pub fn spawn_heartbeat(fleet: Arc<FleetClient>, state: Arc<AppState>) {
             interval.tick().await;
             fleet.heartbeat(&state).await;
         }
+    });
+
+    // Report dongles in a separate task so it can't block phone registration
+    // or heartbeats (bluetoothctl can hang if bluetoothd isn't ready yet).
+    tokio::spawn(async move {
+        // Give bluetoothd a moment to start
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        fleet_dongle.report_dongles(&state_dongle).await;
     });
 }
 
@@ -411,25 +419,35 @@ async fn apply_config(serial: &str, config: &RegistryPhoneConfig) {
 /// Enumerate Bluetooth adapters via `bluetoothctl list`.
 /// Returns a list of (MAC address, hci device name) pairs.
 async fn enumerate_bt_adapters() -> Vec<(String, String)> {
-    let output = match tokio::process::Command::new("bluetoothctl")
-        .args(["list"])
-        .output()
-        .await
-    {
-        Ok(o) => o,
-        Err(e) => {
+    eprintln!("[fleet] Enumerating BT adapters via bluetoothctl...");
+
+    let output = match tokio::time::timeout(
+        Duration::from_secs(10),
+        tokio::process::Command::new("bluetoothctl")
+            .args(["list"])
+            .output(),
+    ).await {
+        Ok(Ok(o)) => o,
+        Ok(Err(e)) => {
             eprintln!("[fleet] Failed to run bluetoothctl list: {e}");
+            return Vec::new();
+        }
+        Err(_) => {
+            eprintln!("[fleet] bluetoothctl list timed out after 10s");
             return Vec::new();
         }
     };
 
     if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!("[fleet] bluetoothctl list failed ({}): {}", output.status, stderr.trim());
         return Vec::new();
     }
 
-    // Each line looks like: "Controller F4:4E:FC:59:A6:09 otacon-pi [default]"
-    // or "Controller F4:4E:FC:27:B3:E8 hci2"
     let stdout = String::from_utf8_lossy(&output.stdout);
+    eprintln!("[fleet] bluetoothctl list output: {}", stdout.trim());
+
+    // Each line looks like: "Controller F4:4E:FC:59:A6:09 otacon-pi [default]"
     let mut adapters = Vec::new();
     for line in stdout.lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
@@ -442,15 +460,16 @@ async fn enumerate_bt_adapters() -> Vec<(String, String)> {
         }
     }
 
+    eprintln!("[fleet] Found {} BT adapters", adapters.len());
     adapters
 }
 
 /// Map a BT adapter MAC to its hciN device name via `hciconfig`.
 async fn get_hci_for_mac(mac: &str) -> Option<String> {
-    let output = tokio::process::Command::new("hciconfig")
-        .output()
-        .await
-        .ok()?;
+    let output = tokio::time::timeout(
+        Duration::from_secs(5),
+        tokio::process::Command::new("hciconfig").output(),
+    ).await.ok()?.ok()?;
     if !output.status.success() {
         return None;
     }
