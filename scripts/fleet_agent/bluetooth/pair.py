@@ -5,7 +5,6 @@ import json
 import logging
 import os
 import re
-import subprocess
 import threading
 import time
 import urllib.parse
@@ -99,23 +98,100 @@ def _tap_pair_notification(serial: str) -> bool:
     return False
 
 
-def _run_pair_script(adapter_hci: str, serial: str):
-    """Run bluetooth-pair.sh with the assigned adapter."""
+def _btctl(adapter_mac: str, *commands: str) -> str:
+    """Run bluetoothctl commands on a specific adapter."""
+    cmds = f'select {adapter_mac}\n' + '\n'.join(commands) + '\n'
     try:
-        result = run_cmd(
-            ['/opt/bluetooth-pair.sh',
-             '--adapter', adapter_hci,
-             '--serial', serial],
-            timeout=60,
-        )
-        if result.returncode != 0:
-            log.warning(f'bluetooth-pair.sh exit={result.returncode}\n'
-                        f'  stdout: {result.stdout.strip()}\n'
-                        f'  stderr: {result.stderr.strip()}')
-        else:
-            log.info(f'bluetooth-pair.sh completed: {result.stdout.strip()[-200:]}')
-    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-        log.warning(f'bluetooth-pair.sh failed: {e}')
+        result = run_cmd(['bluetoothctl'], input=cmds, timeout=15)
+        return result.stdout or ''
+    except Exception as e:
+        log.warning(f'bluetoothctl failed: {e}')
+        return ''
+
+
+def _run_bluez_pair(adapter_mac: str, adapter_hci: str, serial: str):
+    """Pi-side BlueZ pairing flow (replaces bluetooth-pair.sh).
+
+    Powers on the adapter, runs discovery to populate the BlueZ device
+    cache, then pairs/trusts/connects.  Runs in a thread alongside the
+    phone-side ContentProvider pair request.
+    """
+    try:
+        # Wait for bluetoothd
+        for _ in range(30):
+            out = _btctl(adapter_mac, 'show')
+            if 'Controller' in out:
+                break
+            time.sleep(1)
+
+        _btctl(adapter_mac, 'power on')
+        time.sleep(1)
+        _btctl(adapter_mac, 'discoverable on')
+
+        # Enable BT on phone via ADB
+        adb_shell(serial, 'cmd bluetooth_manager enable', timeout=5)
+        time.sleep(2)
+
+        # Get phone BT MAC
+        phone_bt_mac = adb_shell(serial, 'settings get secure bluetooth_address').strip()
+        if not phone_bt_mac or phone_bt_mac == 'null':
+            log.warning(f'[{serial}] BlueZ pair: could not get phone BT MAC')
+            return
+
+        # Check if already paired — test connection
+        info_out = _btctl(adapter_mac, f'info {phone_bt_mac}')
+        if 'Paired: yes' in info_out:
+            log.info(f'[{serial}] Already paired in BlueZ — testing connection')
+            _btctl(adapter_mac, f'trust {phone_bt_mac}')
+            connect_out = _btctl(adapter_mac, f'connect {phone_bt_mac}')
+            if 'successful' in connect_out.lower() or 'already connected' in connect_out.lower():
+                _btctl(adapter_mac, 'discoverable off')
+                log.info(f'[{serial}] BlueZ: connected (already paired)')
+                return
+            else:
+                log.warning(f'[{serial}] Stale BlueZ bond — removing and re-pairing')
+                _btctl(adapter_mac, f'remove {phone_bt_mac}')
+                time.sleep(1)
+
+        # Open BT settings on phone (makes it discoverable)
+        adb_shell(serial, 'am start -a android.settings.BLUETOOTH_SETTINGS', timeout=5)
+        time.sleep(3)
+
+        # D-Bus discovery to populate BlueZ device cache
+        adapter_path = f'/org/bluez/{adapter_hci}'
+        log.info(f'[{serial}] BlueZ: running discovery on {adapter_hci}')
+        try:
+            run_cmd(
+                ['python3', '-c',
+                 'import dbus,sys,time\n'
+                 'bus=dbus.SystemBus()\n'
+                 f'a=dbus.Interface(bus.get_object("org.bluez","{adapter_path}"),"org.bluez.Adapter1")\n'
+                 'a.StartDiscovery()\n'
+                 'for _ in range(15):\n'
+                 ' time.sleep(1)\n'
+                 ' m=dbus.Interface(bus.get_object("org.bluez","/"),"org.freedesktop.DBus.ObjectManager")\n'
+                 ' for p,i in m.GetManagedObjects().items():\n'
+                 '  if "org.bluez.Device1" in i:\n'
+                 f'   if str(i["org.bluez.Device1"].get("Address","")).upper()=="{phone_bt_mac.upper()}":\n'
+                 '    a.StopDiscovery();sys.exit(0)\n'
+                 'a.StopDiscovery()\n'],
+                timeout=20,
+            )
+        except Exception as e:
+            log.warning(f'[{serial}] D-Bus discovery error: {e}')
+
+        # Pair, trust, connect
+        log.info(f'[{serial}] BlueZ: pairing with {phone_bt_mac}')
+        _btctl(adapter_mac, f'pair {phone_bt_mac}')
+        time.sleep(1)
+        _btctl(adapter_mac, f'trust {phone_bt_mac}')
+        time.sleep(1)
+        _btctl(adapter_mac, f'connect {phone_bt_mac}')
+        _btctl(adapter_mac, 'discoverable off')
+        log.info(f'[{serial}] BlueZ pair flow complete')
+
+    except Exception as e:
+        log.warning(f'[{serial}] BlueZ pair failed: {e}')
 
 
 def _do_pair_tap_loop(serial: str, snapshot_url: str, label: str = '') -> bool:
@@ -199,7 +275,7 @@ def allocate_and_pair_bluetooth(serial: str, snapshot_url: str,
 
     ensure_screen_on(serial)
 
-    pair_script = threading.Thread(target=_run_pair_script, args=(adapter_hci, serial), daemon=True)
+    pair_script = threading.Thread(target=_run_bluez_pair, args=(adapter_mac, adapter_hci, serial), daemon=True)
     pair_script.start()
 
     pair_thread = threading.Thread(target=do_pair, daemon=True)
@@ -227,7 +303,7 @@ def allocate_and_pair_bluetooth(serial: str, snapshot_url: str,
             time.sleep(2)
             pair_result.clear()
             pair_done.clear()
-            retry_script = threading.Thread(target=_run_pair_script, args=(adapter_hci, serial), daemon=True)
+            retry_script = threading.Thread(target=_run_bluez_pair, args=(adapter_mac, adapter_hci, serial), daemon=True)
             retry_script.start()
             retry_thread = threading.Thread(target=do_pair, daemon=True)
             retry_thread.start()
