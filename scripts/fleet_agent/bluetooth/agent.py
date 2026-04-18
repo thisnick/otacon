@@ -132,18 +132,33 @@ def register_agent():
     """Register the BlueZ pairing agent and configure adapters.
 
     Returns the GLib.MainLoop so the caller can run it in a thread.
+    Retries BlueZ registration internally (bluetoothd may not be ready at
+    container start), but only creates the D-Bus object once.
     """
+    import time as _time
+
     dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
     bus = dbus.SystemBus()
 
+    # Create the D-Bus object once — this claims the path on the bus connection
     agent = AutoAcceptAgent(bus, AGENT_PATH)
-    agent_mgr = dbus.Interface(
-        bus.get_object(BUS_NAME, "/org/bluez"),
-        AGENT_MGR_IFACE,
-    )
-    agent_mgr.RegisterAgent(AGENT_PATH, "KeyboardDisplay")
-    agent_mgr.RequestDefaultAgent(AGENT_PATH)
-    log.info("Bluetooth auto-accept agent registered")
+
+    # Retry BlueZ registration (bluetoothd may still be starting)
+    for attempt in range(15):
+        try:
+            agent_mgr = dbus.Interface(
+                bus.get_object(BUS_NAME, "/org/bluez"),
+                AGENT_MGR_IFACE,
+            )
+            agent_mgr.RegisterAgent(AGENT_PATH, "KeyboardDisplay")
+            agent_mgr.RequestDefaultAgent(AGENT_PATH)
+            log.info("Bluetooth auto-accept agent registered")
+            break
+        except dbus.exceptions.DBusException as e:
+            log.warning(f'BlueZ agent registration attempt {attempt+1}/15: {e}')
+            _time.sleep(2)
+    else:
+        raise RuntimeError('BlueZ agent registration failed after 15 attempts')
 
     set_adapter_discoverable()
 
