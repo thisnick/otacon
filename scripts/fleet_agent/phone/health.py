@@ -48,15 +48,13 @@ def check_device_owner(serial: str) -> bool:
 
 
 def check_restrictions(serial: str) -> bool:
-    """DPM restrictions applied (query kiosk app)."""
-    result = adb_shell(
-        serial,
-        f"content query --uri 'content://com.otacon.kiosk/restrictions/status'",
-        timeout=5,
-    )
+    """DPM restrictions applied (check user restrictions via dumpsys)."""
+    result = adb_shell(serial, 'dumpsys user', timeout=5)
     if not result:
         return False
-    return 'active=true' in result
+    # DISALLOW_FACTORY_RESET is always in the restriction set — if it's
+    # present the kiosk app has applied its restrictions successfully.
+    return 'no_factory_reset' in result
 
 
 def check_snapshot_alive(serial: str) -> bool:

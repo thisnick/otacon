@@ -155,6 +155,10 @@ class PhoneAgent:
                 result = False
             self.status.health[name] = result
             if not result:
+                # Skip bt_connected heal when bt_bonded is failing — reconnect
+                # is impossible without a bond, so only the bond heal matters.
+                if name == 'bt_connected' and not self.status.health.get('bt_bonded', True):
+                    continue
                 self._run_heal(name)
         self.status.loop_iteration += 1
         self.status.last_check_at = now_iso()
