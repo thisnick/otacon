@@ -177,6 +177,14 @@ impl FleetClient {
             eprintln!("[fleet] Phone deregistration error for '{local_id}': {e}");
         }
     }
+
+    /// Build the WebSocket URL for the host config channel.
+    pub fn config_ws_url(&self) -> String {
+        let base = self.registry_url
+            .replace("https://", "wss://")
+            .replace("http://", "ws://");
+        format!("{base}/ws/host/config?host_id={}", self.host_id)
+    }
 }
 
 /// Spawn the fleet heartbeat loop as a background task.
@@ -199,6 +207,142 @@ pub fn spawn_heartbeat(fleet: Arc<FleetClient>, state: Arc<AppState>) {
             fleet.heartbeat(&state).await;
         }
     });
+}
+
+/// Config push message from the registry (matches registry's ConfigPush).
+#[derive(serde::Deserialize, Debug)]
+struct ConfigPush {
+    #[serde(rename = "type")]
+    msg_type: String,
+    phone_id: String,
+    config: RegistryPhoneConfig,
+}
+
+/// Phone config fields pushed from the registry.
+#[derive(serde::Deserialize, Debug)]
+struct RegistryPhoneConfig {
+    wifi_enabled: bool,
+    bluetooth_enabled: bool,
+}
+
+/// Spawn the config WebSocket consumer with reconnect-on-failure.
+pub fn spawn_config_ws(fleet: Arc<FleetClient>, state: Arc<AppState>) {
+    tokio::spawn(async move {
+        let mut backoff = Duration::from_secs(1);
+        let max_backoff = Duration::from_secs(60);
+
+        loop {
+            let url = fleet.config_ws_url();
+            eprintln!("[fleet] Connecting to config WS: {url}");
+
+            match tokio_tungstenite::connect_async(&url).await {
+                Ok((ws_stream, _)) => {
+                    eprintln!("[fleet] Config WS connected");
+                    backoff = Duration::from_secs(1); // reset on success
+
+                    if let Err(e) = handle_config_ws(ws_stream, &fleet, &state).await {
+                        eprintln!("[fleet] Config WS error: {e}");
+                    }
+
+                    eprintln!("[fleet] Config WS disconnected, reconnecting in {backoff:?}");
+                }
+                Err(e) => {
+                    eprintln!("[fleet] Config WS connect failed: {e}, retrying in {backoff:?}");
+                }
+            }
+
+            tokio::time::sleep(backoff).await;
+            backoff = (backoff * 2).min(max_backoff);
+        }
+    });
+}
+
+async fn handle_config_ws(
+    ws_stream: tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+    fleet: &FleetClient,
+    state: &AppState,
+) -> Result<(), String> {
+    use futures::StreamExt;
+    use tokio_tungstenite::tungstenite::Message;
+
+    let (_tx, mut rx) = ws_stream.split();
+
+    while let Some(msg) = rx.next().await {
+        let msg = msg.map_err(|e| format!("ws recv: {e}"))?;
+
+        match msg {
+            Message::Text(text) => {
+                match serde_json::from_str::<ConfigPush>(&text) {
+                    Ok(push) if push.msg_type == "config_update" => {
+                        eprintln!("[fleet] Config push for phone '{}': wifi={}, bt={}",
+                            push.phone_id, push.config.wifi_enabled, push.config.bluetooth_enabled);
+
+                        // Find the ADB serial for this phone
+                        let serial = find_serial_for_phone(fleet, state, &push.phone_id).await;
+                        if let Some(serial) = serial {
+                            apply_config(&serial, &push.config).await;
+                        } else {
+                            eprintln!("[fleet] Phone '{}' not found on this host, ignoring config push", push.phone_id);
+                        }
+                    }
+                    Ok(push) => {
+                        eprintln!("[fleet] Unknown config WS message type: {}", push.msg_type);
+                    }
+                    Err(e) => {
+                        eprintln!("[fleet] Failed to parse config push: {e} (raw: {text})");
+                    }
+                }
+            }
+            Message::Close(_) => {
+                return Ok(());
+            }
+            _ => {} // ping/pong handled by tungstenite
+        }
+    }
+
+    Ok(())
+}
+
+/// Find the ADB serial for a registry phone_id on this host.
+async fn find_serial_for_phone(fleet: &FleetClient, state: &AppState, registry_phone_id: &str) -> Option<String> {
+    // Look up local phone ID from registry ID mapping
+    let reg_ids = fleet.registry_ids.lock().await;
+    let local_id = reg_ids.iter()
+        .find(|(_, reg_id)| reg_id.as_str() == registry_phone_id)
+        .map(|(local, _)| local.clone());
+    drop(reg_ids);
+
+    let phones = state.phones.read().await;
+    if let Some(local_id) = local_id {
+        phones.get(&local_id).map(|ps| ps.config.adb_serial.clone())
+    } else {
+        // Try direct match (local_id == registry_id)
+        phones.get(registry_phone_id).map(|ps| ps.config.adb_serial.clone())
+    }
+}
+
+/// Apply WiFi and Bluetooth config to a phone via ADB.
+async fn apply_config(serial: &str, config: &RegistryPhoneConfig) {
+    let wifi_arg = if config.wifi_enabled { "enable" } else { "disable" };
+    let bt_arg = if config.bluetooth_enabled { "enable" } else { "disable" };
+
+    eprintln!("[fleet] Applying config to {serial}: wifi {wifi_arg}, bluetooth {bt_arg}");
+
+    let wifi_result = tokio::process::Command::new("adb")
+        .args(["-s", serial, "shell", "svc", "wifi", wifi_arg])
+        .output()
+        .await;
+    if let Err(e) = wifi_result {
+        eprintln!("[fleet] Failed to set wifi on {serial}: {e}");
+    }
+
+    let bt_result = tokio::process::Command::new("adb")
+        .args(["-s", serial, "shell", "svc", "bluetooth", bt_arg])
+        .output()
+        .await;
+    if let Err(e) = bt_result {
+        eprintln!("[fleet] Failed to set bluetooth on {serial}: {e}");
+    }
 }
 
 fn gethostname() -> Option<String> {

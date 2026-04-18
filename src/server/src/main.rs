@@ -241,7 +241,8 @@ async fn main() {
     // Start fleet client if REGISTRY_URL is set
     if let Some(fleet_client) = fleet::FleetClient::from_env() {
         let fleet_client = Arc::new(fleet_client);
-        fleet::spawn_heartbeat(fleet_client, state.clone());
+        fleet::spawn_heartbeat(fleet_client.clone(), state.clone());
+        fleet::spawn_config_ws(fleet_client, state.clone());
         eprintln!("Fleet client enabled");
     } else {
         eprintln!("Fleet client disabled (no REGISTRY_URL)");
