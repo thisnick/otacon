@@ -2,11 +2,25 @@
 
 import logging
 import os
+import re
 
 from ..util.adb import adb, adb_shell, run_cmd
 from ..steps.provisioning import DEVICE_OWNER_PKG
 
 log = logging.getLogger('fleet-agent')
+
+# Ground truth: the dumpsys-user restriction keys that BootReceiver.java applies.
+# Must match USER_RESTRICTIONS[] in BootReceiver exactly.
+KIOSK_RESTRICTION_SET = frozenset({
+    'no_config_wifi',
+    'no_config_bluetooth',
+    'no_config_location',
+    'no_factory_reset',
+    'no_safe_boot',
+    'no_usb_file_transfer',
+    'no_airplane_mode',
+    'no_config_tethering',
+})
 
 
 def check_bt_bonded(adapter_mac: str | None, phone_bt_mac: str | None,
@@ -78,14 +92,37 @@ def check_device_owner(serial: str) -> bool:
     return DEVICE_OWNER_PKG in output
 
 
+def _parse_device_policy_restrictions(dumpsys_output: str) -> set[str]:
+    """Extract restriction keys from the 'Device policy restrictions:' section."""
+    restrictions: set[str] = set()
+    in_section = False
+    for line in dumpsys_output.splitlines():
+        stripped = line.strip()
+        if stripped.startswith('Device policy restrictions:'):
+            in_section = True
+            continue
+        if in_section:
+            # Section ends at the next non-indented line or blank line
+            if not stripped or (not line.startswith(' ') and not line.startswith('\t')):
+                break
+            # Lines look like "no_config_bluetooth: true" or just "no_factory_reset"
+            match = re.match(r'(no_\w+)', stripped)
+            if match:
+                restrictions.add(match.group(1))
+    return restrictions
+
+
 def check_restrictions(serial: str) -> bool:
-    """DPM restrictions applied (check user restrictions via dumpsys)."""
+    """DPM restrictions applied — all kiosk restrictions must be present."""
     result = adb_shell(serial, 'dumpsys user', timeout=5)
     if not result:
         return False
-    # DISALLOW_FACTORY_RESET is always in the restriction set — if it's
-    # present the kiosk app has applied its restrictions successfully.
-    return 'no_factory_reset' in result
+    active = _parse_device_policy_restrictions(result)
+    missing = KIOSK_RESTRICTION_SET - active
+    if missing:
+        log.warning(f'[{serial}] Missing DPM restrictions: {sorted(missing)}')
+        return False
+    return True
 
 
 def check_snapshot_alive(serial: str) -> bool:
