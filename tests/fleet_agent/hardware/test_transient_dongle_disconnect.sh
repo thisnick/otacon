@@ -26,8 +26,9 @@ echo "=== Test: transient dongle disconnect ==="
 
 # --- Step 0: Find a USB dongle (not hci0) that is assigned to a phone ---
 DONGLES=$(curl -s "$REGISTRY_URL/api/v1/dongles")
-# Pick a dongle that has a phone_id and is not hci0
-TARGET_DONGLE=$(echo "$DONGLES" | jq -r '[.[] | select(.phone_id != null and .hci_device != "hci0" and .hci_device != null)] | .[0] // empty')
+# Pick a dongle that has a phone_id (hci_device may be null in registry after
+# loss handler updates — we resolve it from hciconfig by MAC below)
+TARGET_DONGLE=$(echo "$DONGLES" | jq -r '[.[] | select(.phone_id != null and .hci_device != "hci0")] | .[0] // empty')
 
 if [ -z "$TARGET_DONGLE" ] || [ "$TARGET_DONGLE" = "null" ]; then
     echo "SKIP: no USB dongle with phone assignment found"
@@ -36,8 +37,28 @@ fi
 
 DONGLE_ID=$(echo "$TARGET_DONGLE" | jq -r '.id')
 DONGLE_MAC=$(echo "$TARGET_DONGLE" | jq -r '.bt_mac')
-DONGLE_HCI=$(echo "$TARGET_DONGLE" | jq -r '.hci_device')
+DONGLE_HCI=$(echo "$TARGET_DONGLE" | jq -r '.hci_device // empty')
 DONGLE_PHONE=$(echo "$TARGET_DONGLE" | jq -r '.phone_id')
+
+# If hci_device is missing from registry, resolve it from hciconfig by MAC
+if [ -z "$DONGLE_HCI" ] || [ "$DONGLE_HCI" = "null" ]; then
+    DONGLE_HCI=$(ssh "$PI" "docker exec $CONTAINER hciconfig -a" 2>/dev/null \
+        | awk -v mac="$DONGLE_MAC" '
+            /^hci/ { dev=$1; sub(/:$/,"",dev) }
+            /BD Address:/ { if (toupper($3) == toupper(mac)) print dev }
+        ')
+fi
+
+if [ -z "$DONGLE_HCI" ]; then
+    echo "SKIP: cannot resolve hci device for $DONGLE_MAC"
+    exit 0
+fi
+
+# Skip if it resolved to hci0 (built-in, not USB)
+if [ "$DONGLE_HCI" = "hci0" ]; then
+    echo "SKIP: resolved dongle is hci0 (built-in)"
+    exit 0
+fi
 echo "Target dongle: $DONGLE_ID ($DONGLE_MAC, $DONGLE_HCI, phone=$DONGLE_PHONE)"
 
 # Record event baseline

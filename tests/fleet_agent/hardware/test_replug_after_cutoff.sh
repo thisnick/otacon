@@ -25,19 +25,48 @@ CONTAINER="otacon-otacon-1"
 
 echo "=== Test: replug after cutoff (non-reclaiming) ==="
 
-# --- Step 0: Find a dongle that is currently offline (from a prior loss test) ---
-DONGLES=$(curl -s "$REGISTRY_URL/api/v1/dongles")
-OFFLINE_DONGLE=$(echo "$DONGLES" | jq -r '[.[] | select(.status == "offline" and .hci_device != "hci0" and .hci_device != null)] | .[0] // empty')
-
-if [ -z "$OFFLINE_DONGLE" ] || [ "$OFFLINE_DONGLE" = "null" ]; then
-    echo "No offline USB dongle found from a prior permanent loss test."
-    echo "SKIP: run test_permanent_dongle_loss.sh first, or this test will be validated as part of that flow."
+# --- Step 0: Find the dongle that was lost (from test_permanent_dongle_loss) ---
+# The permanent loss test saves the USB path to /tmp/otacon_lost_dongle_usb_path.
+# We identify the dongle by finding which one has phone_id=null and no active hci
+# device, or by checking for a USB path file from the prior test.
+USB_DEV=""
+if [ -f /tmp/otacon_lost_dongle_usb_path ]; then
+    USB_DEV=$(cat /tmp/otacon_lost_dongle_usb_path)
+    echo "USB path from permanent loss test: $USB_DEV"
+else
+    echo "No USB path file found from permanent loss test."
+    echo "SKIP: run test_permanent_dongle_loss.sh first."
     exit 0
 fi
 
-DONGLE_ID=$(echo "$OFFLINE_DONGLE" | jq -r '.id')
-DONGLE_HCI=$(echo "$OFFLINE_DONGLE" | jq -r '.hci_device')
-OLD_PHONE=$(echo "$OFFLINE_DONGLE" | jq -r '.phone_id // empty')
+# Identify the lost dongle by finding which registry dongle's BT MAC
+# is NOT visible in live hciconfig output (USB unbound).
+DONGLES=$(curl -s "$REGISTRY_URL/api/v1/dongles")
+LIVE_MACS=$(ssh "$PI" "docker exec $CONTAINER hciconfig -a" 2>/dev/null \
+    | grep "BD Address:" | awk '{print toupper($3)}' | sort -u)
+
+LOST_DONGLE=""
+for row in $(echo "$DONGLES" | jq -c '.[]'); do
+    mac=$(echo "$row" | jq -r '.bt_mac' | tr 'a-f' 'A-F')
+
+    # Skip if this MAC is currently live in hciconfig
+    if echo "$LIVE_MACS" | grep -qw "$mac"; then continue; fi
+
+    # This dongle's MAC is not present in hciconfig — it's the lost one
+    LOST_DONGLE="$row"
+    echo "Found lost dongle by MAC: $mac not in hciconfig"
+    break
+done
+
+if [ -z "$LOST_DONGLE" ] || [ "$LOST_DONGLE" = "null" ]; then
+    echo "No lost/unbound dongle found (all MACs are live in hciconfig)."
+    echo "SKIP: run test_permanent_dongle_loss.sh first."
+    exit 0
+fi
+
+DONGLE_ID=$(echo "$LOST_DONGLE" | jq -r '.id')
+DONGLE_HCI=$(echo "$LOST_DONGLE" | jq -r '.hci_device // empty')
+OLD_PHONE=$(echo "$LOST_DONGLE" | jq -r '.phone_id // empty')
 echo "Returning dongle: $DONGLE_ID ($DONGLE_HCI)"
 echo "Was previously assigned to: ${OLD_PHONE:-none}"
 
@@ -52,9 +81,22 @@ EVENT_BASELINE=$(curl -s "$REGISTRY_URL/api/v1/events?limit=1" | jq '.[0].id // 
 
 # --- Step 1: Bring the old dongle back online ---
 echo ""
-echo "--- Powering on $DONGLE_HCI (simulating replug) ---"
-ssh "$PI" "docker exec $CONTAINER hciconfig $DONGLE_HCI up" 2>/dev/null || true
-echo "Adapter powered up."
+echo "--- Rebinding USB device (simulating replug) ---"
+# The permanent loss test saves the USB device path for us
+USB_DEV=""
+if [ -f /tmp/otacon_lost_dongle_usb_path ]; then
+    USB_DEV=$(cat /tmp/otacon_lost_dongle_usb_path)
+    echo "USB path from permanent loss test: $USB_DEV"
+fi
+
+if [ -n "$USB_DEV" ]; then
+    ssh "$PI" "docker exec $CONTAINER bash -c 'echo $USB_DEV > /sys/bus/usb/drivers/usb/bind'" 2>/dev/null || true
+    echo "USB device rebound."
+else
+    # Fallback: try hciconfig up (may not work if device was USB-unbound)
+    ssh "$PI" "docker exec $CONTAINER hciconfig $DONGLE_HCI up" 2>/dev/null || true
+    echo "Adapter powered up (hciconfig fallback)."
+fi
 
 # Wait for it to be detected
 sleep 30
