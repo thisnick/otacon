@@ -167,6 +167,7 @@ class PhoneAgent:
     def _get_checks(self) -> dict:
         """Return {name: check_fn} for all maintenance checks."""
         checks = {}
+        checks['bt_silent'] = lambda: health.check_bt_silent(self.adapter_mac)
         checks['bt_bonded'] = lambda: health.check_bt_bonded(
             self.adapter_mac, self.phone_bt_mac, serial=self.serial)
         checks['bt_connected'] = lambda: health.check_bt_connected(
@@ -201,7 +202,9 @@ class PhoneAgent:
 
         try:
             heal_ok = True
-            if name == 'bt_bonded':
+            if name == 'bt_silent':
+                heal_ok = heal.heal_bt_silent(self.adapter_mac)
+            elif name == 'bt_bonded':
                 result = heal.heal_bt_bonded(
                     self.serial, self.snapshot_url, report_error=self._report_error)
                 if result and any(result):

@@ -23,6 +23,28 @@ KIOSK_RESTRICTION_SET = frozenset({
 })
 
 
+def check_bt_silent(adapter_mac: str | None) -> bool:
+    """Adapter is Discoverable=false (not broadcasting).
+
+    Returns True (healthy) if the adapter is silent, or if no adapter is
+    assigned (nothing to check).
+    """
+    if not adapter_mac:
+        return True
+    try:
+        result = run_cmd(
+            ['bluetoothctl'],
+            input=f'select {adapter_mac}\nshow\n',
+            timeout=10,
+        )
+        stdout = result.stdout or ''
+        if 'Discoverable: yes' in stdout:
+            return False
+        return True
+    except Exception:
+        return True  # can't reach adapter — don't fail on that
+
+
 def check_bt_bonded(adapter_mac: str | None, phone_bt_mac: str | None,
                      serial: str | None = None) -> bool:
     """Bond exists in BlueZ (Pi-side) via D-Bus.

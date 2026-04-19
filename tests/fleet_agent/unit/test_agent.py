@@ -49,7 +49,7 @@ class TestGetChecks:
     def test_returns_all_expected_checks(self, phone_agent):
         checks = phone_agent._get_checks()
         expected = {
-            'bt_bonded', 'bt_connected', 'wifi', 'device_owner',
+            'bt_silent', 'bt_bonded', 'bt_connected', 'wifi', 'device_owner',
             'restrictions', 'snapshot_alive', 'port_forwards',
         }
         assert set(checks.keys()) == expected

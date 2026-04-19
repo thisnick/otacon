@@ -110,12 +110,27 @@ def _btctl(adapter_mac: str, *commands: str, timeout: int = 15) -> str:
         return ''
 
 
+def enable_discoverable(adapter_mac: str, timeout_seconds: int = 120):
+    """Make a specific adapter discoverable with a safety-net timeout."""
+    _btctl(adapter_mac, f'discoverable-timeout {timeout_seconds}', 'discoverable on')
+    log.info(f'Adapter {adapter_mac} set Discoverable=true (timeout={timeout_seconds}s)')
+
+
+def disable_discoverable(adapter_mac: str):
+    """Turn off discoverable on a specific adapter (idempotent)."""
+    _btctl(adapter_mac, 'discoverable off')
+    log.info(f'Adapter {adapter_mac} set Discoverable=false')
+
+
 def _run_bluez_pair(adapter_mac: str, adapter_hci: str, serial: str):
     """Pi-side BlueZ pairing flow (replaces bluetooth-pair.sh).
 
     Powers on the adapter, runs discovery to populate the BlueZ device
     cache, then pairs/trusts/connects.  Runs in a thread alongside the
     phone-side ContentProvider pair request.
+
+    Discoverable is enabled only for this adapter for the duration of
+    the pair attempt, and restored to false in a finally block.
     """
     try:
         # Wait for bluetoothd
@@ -127,77 +142,81 @@ def _run_bluez_pair(adapter_mac: str, adapter_hci: str, serial: str):
 
         _btctl(adapter_mac, 'power on')
         time.sleep(1)
-        _btctl(adapter_mac, 'discoverable on')
 
-        # Enable BT on phone via ADB
-        adb_shell(serial, 'cmd bluetooth_manager enable', timeout=5)
-        time.sleep(2)
+        # Enable discoverable only on THIS adapter, with safety-net timeout
+        enable_discoverable(adapter_mac, timeout_seconds=120)
 
-        # Get phone BT MAC
-        phone_bt_mac = adb_shell(serial, 'settings get secure bluetooth_address').strip()
-        if not phone_bt_mac or phone_bt_mac == 'null':
-            log.warning(f'[{serial}] BlueZ pair: could not get phone BT MAC')
-            return
-
-        # Check if already paired — test connection
-        info_out = _btctl(adapter_mac, f'info {phone_bt_mac}')
-        if 'Paired: yes' in info_out:
-            log.info(f'[{serial}] Already paired in BlueZ — testing connection')
-            _btctl(adapter_mac, f'trust {phone_bt_mac}')
-            connect_out = _btctl(adapter_mac, f'connect {phone_bt_mac}')
-            if 'successful' in connect_out.lower() or 'already connected' in connect_out.lower():
-                _btctl(adapter_mac, 'discoverable off')
-                log.info(f'[{serial}] BlueZ: connected (already paired)')
-                return
-            else:
-                log.warning(f'[{serial}] Stale BlueZ bond — removing and re-pairing')
-                _btctl(adapter_mac, f'remove {phone_bt_mac}')
-                time.sleep(1)
-
-        # Open BT settings on phone (makes it discoverable)
-        adb_shell(serial, 'am start -a android.settings.BLUETOOTH_SETTINGS', timeout=5)
-        time.sleep(3)
-
-        # D-Bus discovery to populate BlueZ device cache
-        adapter_path = f'/org/bluez/{adapter_hci}'
-        log.info(f'[{serial}] BlueZ: running discovery on {adapter_hci}')
         try:
-            run_cmd(
-                ['python3', '-c',
-                 'import dbus,sys,time\n'
-                 'bus=dbus.SystemBus()\n'
-                 f'a=dbus.Interface(bus.get_object("org.bluez","{adapter_path}"),"org.bluez.Adapter1")\n'
-                 'a.StartDiscovery()\n'
-                 'for _ in range(15):\n'
-                 ' time.sleep(1)\n'
-                 ' m=dbus.Interface(bus.get_object("org.bluez","/"),"org.freedesktop.DBus.ObjectManager")\n'
-                 ' for p,i in m.GetManagedObjects().items():\n'
-                 '  if "org.bluez.Device1" in i:\n'
-                 f'   if str(i["org.bluez.Device1"].get("Address","")).upper()=="{phone_bt_mac.upper()}":\n'
-                 '    a.StopDiscovery();sys.exit(0)\n'
-                 'a.StopDiscovery()\n'],
-                timeout=20,
-            )
-        except Exception as e:
-            log.warning(f'[{serial}] D-Bus discovery error: {e}')
+            # Enable BT on phone via ADB
+            adb_shell(serial, 'cmd bluetooth_manager enable', timeout=5)
+            time.sleep(2)
 
-        # Pair, trust, connect
-        log.info(f'[{serial}] BlueZ: pairing with {phone_bt_mac}')
-        pair_out = _btctl(adapter_mac, f'pair {phone_bt_mac}', timeout=30)
-        log.info(f'[{serial}] BlueZ pair result: {pair_out.strip()[-200:]}')
-        time.sleep(1)
-        trust_out = _btctl(adapter_mac, f'trust {phone_bt_mac}')
-        log.info(f'[{serial}] BlueZ trust result: {trust_out.strip()[-200:]}')
-        time.sleep(1)
-        connect_out = _btctl(adapter_mac, f'connect {phone_bt_mac}')
-        log.info(f'[{serial}] BlueZ connect result: {connect_out.strip()[-200:]}')
-        _btctl(adapter_mac, 'discoverable off')
+            # Get phone BT MAC
+            phone_bt_mac = adb_shell(serial, 'settings get secure bluetooth_address').strip()
+            if not phone_bt_mac or phone_bt_mac == 'null':
+                log.warning(f'[{serial}] BlueZ pair: could not get phone BT MAC')
+                return
 
-        # Verify bond actually formed
-        info_out = _btctl(adapter_mac, f'info {phone_bt_mac}')
-        paired = 'Paired: yes' in info_out
-        connected = 'Connected: yes' in info_out
-        log.info(f'[{serial}] BlueZ pair flow complete: paired={paired} connected={connected}')
+            # Check if already paired — test connection
+            info_out = _btctl(adapter_mac, f'info {phone_bt_mac}')
+            if 'Paired: yes' in info_out:
+                log.info(f'[{serial}] Already paired in BlueZ — testing connection')
+                _btctl(adapter_mac, f'trust {phone_bt_mac}')
+                connect_out = _btctl(adapter_mac, f'connect {phone_bt_mac}')
+                if 'successful' in connect_out.lower() or 'already connected' in connect_out.lower():
+                    log.info(f'[{serial}] BlueZ: connected (already paired)')
+                    return
+                else:
+                    log.warning(f'[{serial}] Stale BlueZ bond — removing and re-pairing')
+                    _btctl(adapter_mac, f'remove {phone_bt_mac}')
+                    time.sleep(1)
+
+            # Open BT settings on phone (makes it discoverable)
+            adb_shell(serial, 'am start -a android.settings.BLUETOOTH_SETTINGS', timeout=5)
+            time.sleep(3)
+
+            # D-Bus discovery to populate BlueZ device cache
+            adapter_path = f'/org/bluez/{adapter_hci}'
+            log.info(f'[{serial}] BlueZ: running discovery on {adapter_hci}')
+            try:
+                run_cmd(
+                    ['python3', '-c',
+                     'import dbus,sys,time\n'
+                     'bus=dbus.SystemBus()\n'
+                     f'a=dbus.Interface(bus.get_object("org.bluez","{adapter_path}"),"org.bluez.Adapter1")\n'
+                     'a.StartDiscovery()\n'
+                     'for _ in range(15):\n'
+                     ' time.sleep(1)\n'
+                     ' m=dbus.Interface(bus.get_object("org.bluez","/"),"org.freedesktop.DBus.ObjectManager")\n'
+                     ' for p,i in m.GetManagedObjects().items():\n'
+                     '  if "org.bluez.Device1" in i:\n'
+                     f'   if str(i["org.bluez.Device1"].get("Address","")).upper()=="{phone_bt_mac.upper()}":\n'
+                     '    a.StopDiscovery();sys.exit(0)\n'
+                     'a.StopDiscovery()\n'],
+                    timeout=20,
+                )
+            except Exception as e:
+                log.warning(f'[{serial}] D-Bus discovery error: {e}')
+
+            # Pair, trust, connect
+            log.info(f'[{serial}] BlueZ: pairing with {phone_bt_mac}')
+            pair_out = _btctl(adapter_mac, f'pair {phone_bt_mac}', timeout=30)
+            log.info(f'[{serial}] BlueZ pair result: {pair_out.strip()[-200:]}')
+            time.sleep(1)
+            trust_out = _btctl(adapter_mac, f'trust {phone_bt_mac}')
+            log.info(f'[{serial}] BlueZ trust result: {trust_out.strip()[-200:]}')
+            time.sleep(1)
+            connect_out = _btctl(adapter_mac, f'connect {phone_bt_mac}')
+            log.info(f'[{serial}] BlueZ connect result: {connect_out.strip()[-200:]}')
+
+            # Verify bond actually formed
+            info_out = _btctl(adapter_mac, f'info {phone_bt_mac}')
+            paired = 'Paired: yes' in info_out
+            connected = 'Connected: yes' in info_out
+            log.info(f'[{serial}] BlueZ pair flow complete: paired={paired} connected={connected}')
+
+        finally:
+            disable_discoverable(adapter_mac)
 
     except Exception as e:
         log.warning(f'[{serial}] BlueZ pair failed: {e}')

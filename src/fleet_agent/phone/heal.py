@@ -4,12 +4,21 @@ import logging
 import time
 
 from ..util.adb import run_cmd
-from ..bluetooth.pair import allocate_and_pair_bluetooth
+from ..bluetooth.pair import allocate_and_pair_bluetooth, disable_discoverable
 from ..steps.wifi import connect_wifi
 from ..steps.provisioning import provision_device_owner, apply_restrictions
 from ..steps.snapshot import start_snapshot_server, setup_port_forwards
 
 log = logging.getLogger('fleet-agent')
+
+
+def heal_bt_silent(adapter_mac: str | None) -> bool:
+    """Disable discoverable on the adapter."""
+    if not adapter_mac:
+        return True
+    log.info(f'Healing: bt_silent (disabling discoverable on {adapter_mac})')
+    disable_discoverable(adapter_mac)
+    return True
 
 
 def heal_bt_bonded(serial: str, snapshot_url: str,

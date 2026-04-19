@@ -1,7 +1,9 @@
 """BlueZ auto-accept pairing agent.
 
 Auto-accepts all pairing requests (KeyboardDisplay capability),
-trusts paired devices, keeps adapters discoverable and pairable.
+trusts paired devices, keeps adapters pairable.  All adapters
+default to Discoverable=false; only the specific adapter being
+paired is temporarily made discoverable during the pair flow.
 """
 
 import logging
@@ -83,7 +85,13 @@ def _on_properties_changed(interface, changed, invalidated, path=None):
         log.info(f"Device {state}: {path}")
 
 
-def set_adapter_discoverable():
+def silence_all_adapters():
+    """Set Discoverable=false on ALL adapters (including hci0).
+
+    Called at startup to ensure no adapter broadcasts its name.
+    Adapters remain Pairable so bonded devices can still reconnect
+    via known BD_ADDR.
+    """
     bus = dbus.SystemBus()
     manager = dbus.Interface(
         bus.get_object(BUS_NAME, "/"),
@@ -109,7 +117,7 @@ def set_adapter_discoverable():
         except Exception as e:
             log.warning(f"Adapter {path} alias set failed: {e}")
         for prop, val in [
-            ("Discoverable",        True),
+            ("Discoverable",        False),
             ("DiscoverableTimeout", dbus.UInt32(0)),
             ("Pairable",            True),
             ("PairableTimeout",     dbus.UInt32(0)),
@@ -120,7 +128,8 @@ def set_adapter_discoverable():
                 log.info(f"Adapter {path} {prop} set skipped: {e.get_dbus_name()}")
         try:
             alias = props.Get(ADAPTER_IFACE, "Alias")
-            log.info(f"Adapter {path} ({alias}) configured")
+            discoverable = bool(props.Get(ADAPTER_IFACE, "Discoverable"))
+            log.info(f"Adapter {path} ({alias}) silenced: Discoverable={discoverable}")
         except Exception:
             pass
         found = True
@@ -160,7 +169,7 @@ def register_agent():
     else:
         raise RuntimeError('BlueZ agent registration failed after 15 attempts')
 
-    set_adapter_discoverable()
+    silence_all_adapters()
 
     bus.add_signal_receiver(
         _on_properties_changed,
