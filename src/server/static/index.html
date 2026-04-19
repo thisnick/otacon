@@ -622,6 +622,126 @@
     text-align: center;
   }
 
+  /* --- Monitor panel --- */
+  .monitor-panel {
+    background: var(--surface);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-top: 20px;
+  }
+  .monitor-header {
+    padding: 12px 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .monitor-header .label {
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-dim);
+  }
+  .monitor-header .meta {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+  .monitor-body { padding: 14px 18px; }
+  .monitor-body.collapsed { display: none; }
+  .monitor-section-title {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin: 12px 0 6px 0;
+  }
+  .monitor-section-title:first-child { margin-top: 0; }
+  .health-grid {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .health-dot {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    cursor: default;
+  }
+  .health-dot .dot-circle {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .health-dot .dot-circle.green { background: var(--green); }
+  .health-dot .dot-circle.red { background: var(--red); }
+  .health-dot .dot-circle.gray { background: var(--text-muted); }
+  .setup-list {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .setup-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .setup-row .icon { width: 16px; text-align: center; flex-shrink: 0; }
+  .setup-row .err {
+    color: var(--red);
+    font-size: 10px;
+    margin-left: 8px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 400px;
+  }
+  .heals-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+  }
+  .heals-table th {
+    text-align: left;
+    padding: 4px 8px 4px 0;
+    color: var(--text-muted);
+    font-weight: 500;
+    border-bottom: 1px solid var(--border);
+  }
+  .heals-table td {
+    padding: 3px 8px 3px 0;
+    color: var(--text-dim);
+    border-bottom: 1px solid var(--border);
+  }
+  .heal-badge {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 500;
+  }
+  .heal-badge.ok { background: var(--green-dim); color: var(--green); }
+  .heal-badge.failed { background: rgba(212,84,84,0.15); color: var(--red); }
+  .heal-badge.in_progress { background: rgba(212,160,84,0.15); color: var(--amber); }
+  .collapsible-toggle {
+    font-size: 10px;
+    color: var(--text-muted);
+    cursor: pointer;
+    user-select: none;
+    margin-left: 6px;
+  }
+  .collapsible-toggle:hover { color: var(--text-dim); }
+
   @media (max-width: 800px) {
     .main-panel { flex-direction: column; }
     .screen-col { width: 100%; }
@@ -734,6 +854,21 @@
         <input type="text" id="simActivationCode" placeholder="LPA:1$server$code" style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:4px;font-family:'JetBrains Mono',monospace;font-size:11px">
         <button class="pill" onclick="simInstall()">Install</button>
       </div>
+    </div>
+  </div>
+
+  <div class="monitor-panel" id="monitorPanel" style="display:none">
+    <div class="monitor-header" onclick="toggleMonitorPanel()">
+      <span class="label">Monitor</span>
+      <span class="meta" id="monitorMeta"></span>
+    </div>
+    <div class="monitor-body" id="monitorBody">
+      <div class="monitor-section-title">Health</div>
+      <div class="health-grid" id="monitorHealth"></div>
+      <div class="monitor-section-title">Setup <span class="collapsible-toggle" id="setupToggle" onclick="event.stopPropagation();toggleSetupSection()">[show]</span></div>
+      <div class="setup-list collapsed" id="monitorSetup" style="display:none"></div>
+      <div class="monitor-section-title">Recent Heals <span class="collapsible-toggle" id="healsToggle" onclick="event.stopPropagation();toggleHealsSection()">[show]</span></div>
+      <div id="monitorHeals" style="display:none"></div>
     </div>
   </div>
 
@@ -1323,7 +1458,113 @@ async function refreshInfo() {
       ${memHtml}
       ${battHtml}
     `;
+    // Render monitor panel
+    renderMonitor(info.monitor || null);
   } catch(_) {}
+}
+
+// --- Monitor panel ---
+let monitorExpanded = true;
+let setupExpanded = false;
+let healsExpanded = false;
+
+function toggleMonitorPanel() {
+  monitorExpanded = !monitorExpanded;
+  document.getElementById('monitorBody').className = 'monitor-body' + (monitorExpanded ? '' : ' collapsed');
+}
+
+function toggleSetupSection() {
+  setupExpanded = !setupExpanded;
+  document.getElementById('monitorSetup').style.display = setupExpanded ? '' : 'none';
+  document.getElementById('setupToggle').textContent = setupExpanded ? '[hide]' : '[show]';
+}
+
+function toggleHealsSection() {
+  healsExpanded = !healsExpanded;
+  document.getElementById('monitorHeals').style.display = healsExpanded ? '' : 'none';
+  document.getElementById('healsToggle').textContent = healsExpanded ? '[hide]' : '[show]';
+}
+
+function relativeTime(iso) {
+  if (!iso) return '—';
+  const diff = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (diff < 0) return 'just now';
+  if (diff < 60) return Math.round(diff) + 's ago';
+  if (diff < 3600) return Math.round(diff / 60) + 'm ago';
+  if (diff < 86400) return Math.round(diff / 3600) + 'h ago';
+  return Math.round(diff / 86400) + 'd ago';
+}
+
+function renderMonitor(monitor) {
+  const panel = document.getElementById('monitorPanel');
+  if (!monitor) { panel.style.display = 'none'; return; }
+  panel.style.display = '';
+
+  // Header meta line
+  const meta = document.getElementById('monitorMeta');
+  const phase = monitor.phase || '—';
+  const loop = monitor.loop_iteration != null ? monitor.loop_iteration : '—';
+  const lastCheck = relativeTime(monitor.last_check_at);
+  meta.textContent = `${phase} · loop ${loop} · ${lastCheck}`;
+
+  // Health grid
+  const healthEl = document.getElementById('monitorHealth');
+  const h = monitor.health || {};
+  const healthKeys = ['bt_silent', 'bt_bonded', 'bt_connected', 'wifi', 'device_owner', 'restrictions', 'snapshot_alive', 'port_forwards'];
+  healthEl.innerHTML = healthKeys.map(k => {
+    const val = h[k];
+    const cls = val === true ? 'green' : val === false ? 'red' : 'gray';
+    const label = k.replace(/_/g, '_');
+    return `<div class="health-dot" title="${k}: ${val}"><div class="dot-circle ${cls}"></div>${label}</div>`;
+  }).join('');
+
+  // Auto-expand heals if any recent failure
+  const heals = monitor.heals || {};
+  const hasRecentFail = Object.values(heals).some(hs => hs.last_result === 'failed');
+  if (hasRecentFail && !healsExpanded) {
+    healsExpanded = true;
+    document.getElementById('monitorHeals').style.display = '';
+    document.getElementById('healsToggle').textContent = '[hide]';
+  }
+
+  // Setup checklist
+  const setupEl = document.getElementById('monitorSetup');
+  const setup = monitor.setup || {};
+  const setupKeys = Object.keys(setup);
+  if (setupKeys.length === 0) {
+    setupEl.innerHTML = '<span style="color:var(--text-muted);font-size:11px">no setup data</span>';
+  } else {
+    setupEl.innerHTML = setupKeys.map(k => {
+      const s = setup[k];
+      let icon, iconColor;
+      if (s.succeeded) { icon = '\u2713'; iconColor = 'var(--green)'; }
+      else if (s.attempted && !s.succeeded) { icon = '\u2717'; iconColor = 'var(--red)'; }
+      else { icon = '\u23F3'; iconColor = 'var(--text-muted)'; }
+      const err = (s.error && !s.succeeded) ? `<span class="err" title="${escHtml(s.error)}">${escHtml(s.error)}</span>` : '';
+      return `<div class="setup-row"><span class="icon" style="color:${iconColor}">${icon}</span>${k}${err}</div>`;
+    }).join('');
+  }
+
+  // Heals table
+  const healsEl = document.getElementById('monitorHeals');
+  const healKeys = Object.keys(heals);
+  if (healKeys.length === 0) {
+    healsEl.innerHTML = '<span style="color:var(--text-muted);font-size:11px">no heals recorded</span>';
+  } else {
+    const sorted = healKeys.sort((a, b) => {
+      const ta = heals[a].last_at || '';
+      const tb = heals[b].last_at || '';
+      return tb.localeCompare(ta);
+    });
+    healsEl.innerHTML = `<table class="heals-table"><thead><tr><th>check</th><th>last</th><th>result</th><th>today</th><th>error</th></tr></thead><tbody>` +
+      sorted.map(k => {
+        const hs = heals[k];
+        const badge = hs.last_result ? `<span class="heal-badge ${hs.last_result}">${hs.last_result}</span>` : '—';
+        const err = hs.last_error ? `<span title="${escHtml(hs.last_error)}" style="color:var(--red)">${escHtml(hs.last_error.slice(0, 60))}</span>` : '—';
+        return `<tr><td>${k}</td><td>${relativeTime(hs.last_at)}</td><td>${badge}</td><td>${hs.count_today || 0}</td><td>${err}</td></tr>`;
+      }).join('') +
+      `</tbody></table>`;
+  }
 }
 
 // --- Device controls (power, unlock, home, back) ---
@@ -1660,6 +1901,8 @@ async function confirmFactoryReset() {
   refreshAll();
   pollCallStatus();
   refreshSmsThreads();
+  // Poll info (includes monitor data) every 10s
+  setInterval(refreshInfo, 10000);
 })();
 </script>
 </body>
