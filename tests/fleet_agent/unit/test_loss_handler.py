@@ -37,10 +37,12 @@ class TestLossTimeout:
 
 
 class TestHandlePhoneLost:
+    @patch('fleet_agent.loss_handler.update_registry_dongle')
     @patch('fleet_agent.loss_handler.load_dongle_assignments',
            return_value={'SER001': 'AA:BB:CC:DD:EE:01'})
     @patch('fleet_agent.loss_handler.emit_event')
-    def test_frees_dongle_when_agent_already_gone(self, mock_emit, mock_assign):
+    def test_frees_dongle_when_agent_already_gone(self, mock_emit, mock_assign,
+                                                   mock_update_reg):
         """Normal case: agent removed at T+6s, loss fires at T+300s.
         Dongle assignment looked up from cache, not from agent."""
         fa = _make_fleet_agent({})  # agent already gone
@@ -48,16 +50,19 @@ class TestHandlePhoneLost:
         handle_phone_lost('SER001', fa)
 
         fa.port_allocator.release_dongle.assert_called_once_with('AA:BB:CC:DD:EE:01')
+        mock_update_reg.assert_called_once_with('AA:BB:CC:DD:EE:01', None)
         mock_emit.assert_called_once_with('phone.lost', {
             'serial': 'SER001',
             'phone_id': None,
             'adapter_mac': 'AA:BB:CC:DD:EE:01',
         })
 
+    @patch('fleet_agent.loss_handler.update_registry_dongle')
     @patch('fleet_agent.loss_handler.load_dongle_assignments',
            return_value={'SER001': 'AA:BB:CC:DD:EE:01'})
     @patch('fleet_agent.loss_handler.emit_event')
-    def test_stops_agent_if_still_present(self, mock_emit, mock_assign):
+    def test_stops_agent_if_still_present(self, mock_emit, mock_assign,
+                                          mock_update_reg):
         """Edge case: agent still present when loss fires."""
         agent = _make_agent()
         thread = MagicMock()
@@ -68,39 +73,47 @@ class TestHandlePhoneLost:
         agent.stop.assert_called_once()
         fa.port_allocator.release.assert_called_once_with(9091)
         fa.port_allocator.release_dongle.assert_called_once_with('AA:BB:CC:DD:EE:01')
+        mock_update_reg.assert_called_once_with('AA:BB:CC:DD:EE:01', None)
         assert 'SER001' not in fa.agents
 
+    @patch('fleet_agent.loss_handler.update_registry_dongle')
     @patch('fleet_agent.loss_handler.load_dongle_assignments',
            return_value={})
     @patch('fleet_agent.loss_handler.emit_event')
-    def test_emits_event_even_without_dongle(self, mock_emit, mock_assign):
+    def test_emits_event_even_without_dongle(self, mock_emit, mock_assign,
+                                              mock_update_reg):
         """Phone lost but no dongle assignment found."""
         fa = _make_fleet_agent({})
 
         handle_phone_lost('SER_GONE', fa)
 
         fa.port_allocator.release_dongle.assert_not_called()
+        mock_update_reg.assert_not_called()
         mock_emit.assert_called_once_with('phone.lost', {
             'serial': 'SER_GONE',
             'phone_id': None,
             'adapter_mac': None,
         })
 
+    @patch('fleet_agent.loss_handler.update_registry_dongle')
     @patch('fleet_agent.loss_handler.load_dongle_assignments',
            return_value={'SER001': None})
     @patch('fleet_agent.loss_handler.emit_event')
-    def test_skips_dongle_release_when_no_adapter(self, mock_emit, mock_assign):
+    def test_skips_dongle_release_when_no_adapter(self, mock_emit, mock_assign,
+                                                   mock_update_reg):
         fa = _make_fleet_agent({})
 
         handle_phone_lost('SER001', fa)
 
         fa.port_allocator.release_dongle.assert_not_called()
+        mock_update_reg.assert_not_called()
 
 
 class TestHandleDongleLost:
+    @patch('fleet_agent.loss_handler.update_registry_dongle')
     @patch('fleet_agent.loss_handler.save_dongle_assignment')
     @patch('fleet_agent.loss_handler.emit_event')
-    def test_reassigns_orphan_to_spare(self, mock_emit, mock_save):
+    def test_reassigns_orphan_to_spare(self, mock_emit, mock_save, mock_update_reg):
         agent = _make_agent(serial='SER001', adapter_mac='AA:BB:CC:DD:EE:01')
         thread = MagicMock()
         fa = _make_fleet_agent({'SER001': (agent, thread)})
@@ -113,10 +126,17 @@ class TestHandleDongleLost:
         assert agent.phone_bt_mac is None  # cleared for re-pair
         mock_save.assert_called_once_with('SER001', 'FF:FF:FF:FF:FF:01')
         agent._run_heal.assert_called_once_with('bt_bonded')
+        # Registry: old dongle cleared, new dongle gets phone_id
+        assert mock_update_reg.call_args_list == [
+            call('AA:BB:CC:DD:EE:01', None),
+            call('FF:FF:FF:FF:FF:01', 'phone-1'),
+        ]
 
+    @patch('fleet_agent.loss_handler.update_registry_dongle')
     @patch('fleet_agent.loss_handler.save_dongle_assignment')
     @patch('fleet_agent.loss_handler.emit_event')
-    def test_emits_dongle_lost_and_reassigned_events(self, mock_emit, mock_save):
+    def test_emits_dongle_lost_and_reassigned_events(self, mock_emit, mock_save,
+                                                      mock_update_reg):
         agent = _make_agent(serial='SER001', adapter_mac='AA:BB:CC:DD:EE:01')
         thread = MagicMock()
         fa = _make_fleet_agent({'SER001': (agent, thread)})
@@ -138,8 +158,9 @@ class TestHandleDongleLost:
             'new_adapter_mac': 'FF:FF:FF:FF:FF:01',
         })
 
+    @patch('fleet_agent.loss_handler.update_registry_dongle')
     @patch('fleet_agent.loss_handler.emit_event')
-    def test_no_spare_available(self, mock_emit):
+    def test_no_spare_available(self, mock_emit, mock_update_reg):
         agent = _make_agent(serial='SER001', adapter_mac='AA:BB:CC:DD:EE:01')
         thread = MagicMock()
         fa = _make_fleet_agent({'SER001': (agent, thread)})
@@ -150,9 +171,11 @@ class TestHandleDongleLost:
         # Agent should still have old MAC (no reassignment happened)
         assert agent.adapter_mac == 'AA:BB:CC:DD:EE:01'
         agent._run_heal.assert_not_called()
+        mock_update_reg.assert_not_called()
 
+    @patch('fleet_agent.loss_handler.update_registry_dongle')
     @patch('fleet_agent.loss_handler.emit_event')
-    def test_no_phone_using_dongle(self, mock_emit):
+    def test_no_phone_using_dongle(self, mock_emit, mock_update_reg):
         fa = _make_fleet_agent({})
 
         handle_dongle_lost('AA:BB:CC:DD:EE:99', fa)
@@ -161,3 +184,4 @@ class TestHandleDongleLost:
             'adapter_mac': 'AA:BB:CC:DD:EE:99',
             'orphan_serial': None,
         })
+        mock_update_reg.assert_not_called()

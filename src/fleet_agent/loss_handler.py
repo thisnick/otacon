@@ -8,7 +8,7 @@ it joins the spare pool as new — it does NOT reclaim its old slot.
 import logging
 import threading
 
-from .registry.client import emit_event
+from .registry.client import emit_event, update_registry_dongle
 from .bluetooth.dongle import save_dongle_assignment, load_dongle_assignments
 
 log = logging.getLogger('fleet-agent')
@@ -48,6 +48,7 @@ def handle_phone_lost(serial: str, fleet_agent) -> None:
     # Free the dongle back to spare pool
     if adapter_mac:
         fleet_agent.port_allocator.release_dongle(adapter_mac)
+        update_registry_dongle(adapter_mac, None)
         log.info(f'Released dongle {adapter_mac} (was assigned to lost phone {serial})')
 
     emit_event('phone.lost', {
@@ -107,6 +108,10 @@ def handle_dongle_lost(adapter_mac: str, fleet_agent) -> None:
 
     # Persist the new assignment
     save_dongle_assignment(orphan_serial, new_mac)
+
+    # Update registry: clear old dongle's phone_id, set new dongle's phone_id
+    update_registry_dongle(old_mac, None)
+    update_registry_dongle(new_mac, phone_id)
 
     # Trigger re-pair on the new dongle by running the bt_bonded heal
     log.info(f'Reassigning phone {orphan_serial} from dongle {old_mac} to {new_mac}')

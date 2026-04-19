@@ -65,6 +65,26 @@ def report_error(category: str, message: str, phone_id: str | None = None,
     log.error(f'[{category}] {message}')
 
 
+def update_registry_dongle(adapter_mac: str, phone_id: str | None) -> None:
+    """Update a dongle's phone_id in the registry.
+
+    Used to clear phone_id when a phone is lost, or update it when
+    a phone is reassigned to a different dongle.
+    """
+    registry_url = os.environ.get('REGISTRY_URL')
+    if not registry_url:
+        return
+    host_id = os.environ.get('HOST_ID', '')
+    http_post(f'{registry_url}/api/v1/dongles/register', {
+        'host_id': host_id,
+        'dongles': [{
+            'bt_mac': adapter_mac,
+            'phone_id': phone_id,
+        }],
+    })
+    log.info(f'Updated registry dongle {adapter_mac} -> phone_id={phone_id}')
+
+
 def emit_event(event_type: str, data: dict | None = None) -> None:
     """Emit a fleet event to the registry (fire and forget).
 

@@ -1,8 +1,8 @@
-"""Unit tests for registry/client.py — emit_event."""
+"""Unit tests for registry/client.py — emit_event and update_registry_dongle."""
 
 from unittest.mock import patch, call
 
-from fleet_agent.registry.client import emit_event
+from fleet_agent.registry.client import emit_event, update_registry_dongle
 
 
 class TestEmitEvent:
@@ -40,3 +40,45 @@ class TestEmitEvent:
         payload = mock_post.call_args[0][1]
         assert payload['phone_id'] is None
         assert 'data' not in payload
+
+
+class TestUpdateRegistryDongle:
+    @patch('fleet_agent.registry.client.http_post')
+    @patch.dict('os.environ', {'REGISTRY_URL': 'http://registry:8080',
+                                'HOST_ID': 'pi-01'})
+    def test_clears_phone_id(self, mock_post):
+        update_registry_dongle('AA:BB:CC:DD:EE:01', None)
+
+        mock_post.assert_called_once_with(
+            'http://registry:8080/api/v1/dongles/register',
+            {
+                'host_id': 'pi-01',
+                'dongles': [{
+                    'bt_mac': 'AA:BB:CC:DD:EE:01',
+                    'phone_id': None,
+                }],
+            },
+        )
+
+    @patch('fleet_agent.registry.client.http_post')
+    @patch.dict('os.environ', {'REGISTRY_URL': 'http://registry:8080',
+                                'HOST_ID': 'pi-01'})
+    def test_sets_phone_id(self, mock_post):
+        update_registry_dongle('FF:FF:FF:FF:FF:01', 'phone-42')
+
+        mock_post.assert_called_once_with(
+            'http://registry:8080/api/v1/dongles/register',
+            {
+                'host_id': 'pi-01',
+                'dongles': [{
+                    'bt_mac': 'FF:FF:FF:FF:FF:01',
+                    'phone_id': 'phone-42',
+                }],
+            },
+        )
+
+    @patch('fleet_agent.registry.client.http_post')
+    @patch.dict('os.environ', {}, clear=True)
+    def test_no_registry_url_skips(self, mock_post):
+        update_registry_dongle('AA:BB:CC:DD:EE:01', None)
+        mock_post.assert_not_called()
