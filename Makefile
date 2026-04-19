@@ -4,7 +4,8 @@
        restart-monitor bluetooth-connect bluetooth-status bluetooth-watch \
        clear-restrictions apply-restrictions \
        generate generate-api generate-types validate-api \
-       registry-build registry-deploy registry-logs registry-restart
+       registry-build registry-deploy registry-logs registry-restart \
+       admin-logs admin-restart admin-token
 
 PI_HOST ?= otacon-pi
 PI_USER ?= nick
@@ -139,4 +140,14 @@ registry-logs:
 	ssh $(REGISTRY_SSH) 'cd ~/otacon-registry && docker compose logs -f --tail=50'
 
 registry-restart:
-	ssh $(REGISTRY_SSH) 'cd ~/otacon-registry && docker compose restart'
+	ssh $(REGISTRY_SSH) 'cd ~/otacon-registry && docker compose restart otacon-registry'
+
+# Admin (human-facing, shares lifecycle with registry)
+admin-logs:
+	ssh $(REGISTRY_SSH) 'cd ~/otacon-registry && docker compose logs -f --tail=50 otacon-admin'
+
+admin-restart:
+	ssh $(REGISTRY_SSH) 'cd ~/otacon-registry && docker compose restart otacon-admin'
+
+admin-token:
+	@ssh $(REGISTRY_SSH) 'cd ~/otacon-registry && docker compose logs otacon-admin 2>&1 | grep -A3 "BOOTSTRAP"'

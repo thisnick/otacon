@@ -11,6 +11,7 @@ use serde::Deserialize;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
+use crate::api::AppState;
 use crate::store::RegistryStore;
 
 // ── /ws/host/config ──────────────────────────────────────────────────
@@ -23,12 +24,12 @@ pub struct HostConfigQuery {
 /// GET /ws/host/config?host_id=<id> — WebSocket upgrade for host config push
 pub async fn host_config_ws(
     ws: WebSocketUpgrade,
-    State(store): State<Arc<RegistryStore>>,
+    State(state): State<AppState>,
     Query(query): Query<HostConfigQuery>,
 ) -> Response {
     let host_id = query.host_id;
     eprintln!("[ws] Host config connection from '{host_id}'");
-    ws.on_upgrade(move |socket| handle_host_config(socket, store, host_id))
+    ws.on_upgrade(move |socket| handle_host_config(socket, state.store, host_id))
 }
 
 async fn handle_host_config(socket: WebSocket, store: Arc<RegistryStore>, host_id: String) {
@@ -87,10 +88,10 @@ async fn handle_host_config(socket: WebSocket, store: Arc<RegistryStore>, host_i
 /// GET /ws/fleet/events — WebSocket upgrade for fleet event broadcast
 pub async fn fleet_events_ws(
     ws: WebSocketUpgrade,
-    State(store): State<Arc<RegistryStore>>,
+    State(state): State<AppState>,
 ) -> Response {
     eprintln!("[ws] Fleet events subscriber connected");
-    ws.on_upgrade(move |socket| handle_fleet_events(socket, store))
+    ws.on_upgrade(move |socket| handle_fleet_events(socket, state.store))
 }
 
 async fn handle_fleet_events(socket: WebSocket, store: Arc<RegistryStore>) {

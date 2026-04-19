@@ -2,9 +2,9 @@ use axum::extract::{Path, State};
 use axum::Json;
 use chrono::Utc;
 use serde::Deserialize;
-use std::sync::Arc;
 
-use crate::store::{Phone, PhoneConfig, RegistryStore};
+use super::AppState;
+use crate::store::{Phone, PhoneConfig};
 
 #[derive(Deserialize)]
 pub struct RegisterPhoneBody {
@@ -32,9 +32,10 @@ pub struct UpdatePhoneBody {
 }
 
 pub async fn register(
-    State(store): State<Arc<RegistryStore>>,
+    State(state): State<AppState>,
     Json(body): Json<RegisterPhoneBody>,
 ) -> Json<serde_json::Value> {
+    let store = &state.store;
     let now = Utc::now();
     let mut phones = store.phones.write().await;
 
@@ -68,7 +69,6 @@ pub async fn register(
         let config = phone.config.clone();
         let phone_id = id.clone();
 
-        // Update dongle assignment in registry
         let adapter_mac_for_dongle = phone.adapter_mac.clone();
         drop(phones);
         if let Some(ref mac) = adapter_mac_for_dongle {
@@ -83,7 +83,6 @@ pub async fn register(
         }
         store.save_phones().await;
 
-        // Check if phone moved to a different host
         if old_host.as_deref() != Some(&body.host_id) {
             store.add_event("phone.moved", Some(phone_id.clone()),
                 Some(serde_json::json!({
@@ -99,7 +98,6 @@ pub async fn register(
             "config": config,
         }))
     } else {
-        // New phone — generate ID
         let phone_id = generate_phone_id(&body, &phones);
         let config = PhoneConfig::default();
 
@@ -141,9 +139,10 @@ pub async fn register(
 }
 
 pub async fn deregister(
-    State(store): State<Arc<RegistryStore>>,
+    State(state): State<AppState>,
     Json(body): Json<DeregisterPhoneBody>,
 ) -> Json<serde_json::Value> {
+    let store = &state.store;
     let mut phones = store.phones.write().await;
     if let Some(phone) = phones.get_mut(&body.phone_id) {
         phone.host_id = None;
@@ -157,19 +156,19 @@ pub async fn deregister(
 }
 
 pub async fn list(
-    State(store): State<Arc<RegistryStore>>,
+    State(state): State<AppState>,
 ) -> Json<Vec<Phone>> {
-    let phones = store.phones.read().await;
+    let phones = state.store.phones.read().await;
     let mut result: Vec<Phone> = phones.values().cloned().collect();
     result.sort_by(|a, b| a.id.cmp(&b.id));
     Json(result)
 }
 
 pub async fn get(
-    State(store): State<Arc<RegistryStore>>,
+    State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Phone>, axum::http::StatusCode> {
-    let phones = store.phones.read().await;
+    let phones = state.store.phones.read().await;
     phones.get(&id)
         .cloned()
         .map(Json)
@@ -177,9 +176,10 @@ pub async fn get(
 }
 
 pub async fn location(
-    State(store): State<Arc<RegistryStore>>,
+    State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
+    let store = &state.store;
     let phones = store.phones.read().await;
     let phone = phones.get(&id).ok_or(axum::http::StatusCode::NOT_FOUND)?;
     let host_id = phone.host_id.clone();
@@ -199,15 +199,15 @@ pub async fn location(
 }
 
 pub async fn update(
-    State(store): State<Arc<RegistryStore>>,
+    State(state): State<AppState>,
     Path(id): Path<String>,
     Json(body): Json<UpdatePhoneBody>,
 ) -> Result<Json<Phone>, axum::http::StatusCode> {
+    let store = &state.store;
     let mut phones = store.phones.write().await;
     let phone = phones.get_mut(&id).ok_or(axum::http::StatusCode::NOT_FOUND)?;
 
     if let Some(new_id) = body.id {
-        // Rename: remove old key, insert with new
         let mut p = phone.clone();
         p.id = new_id.clone();
         p.updated_at = Utc::now();
@@ -230,20 +230,21 @@ pub async fn update(
 }
 
 pub async fn get_config(
-    State(store): State<Arc<RegistryStore>>,
+    State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<PhoneConfig>, axum::http::StatusCode> {
-    let phones = store.phones.read().await;
+    let phones = state.store.phones.read().await;
     phones.get(&id)
         .map(|p| Json(p.config.clone()))
         .ok_or(axum::http::StatusCode::NOT_FOUND)
 }
 
 pub async fn set_config(
-    State(store): State<Arc<RegistryStore>>,
+    State(state): State<AppState>,
     Path(id): Path<String>,
     Json(config): Json<PhoneConfig>,
 ) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
+    let store = &state.store;
     let mut phones = store.phones.write().await;
     let phone = phones.get_mut(&id).ok_or(axum::http::StatusCode::NOT_FOUND)?;
     phone.config = config.clone();
@@ -252,7 +253,6 @@ pub async fn set_config(
     drop(phones);
     store.save_phones().await;
 
-    // Push config change to the host via WebSocket
     let pushed = if let Some(ref host_id) = host_id {
         store.push_config(host_id, &id, &config).await
     } else {
@@ -269,7 +269,6 @@ pub async fn set_config(
 }
 
 fn generate_phone_id(body: &RegisterPhoneBody, phones: &std::collections::HashMap<String, Phone>) -> String {
-    // Try model-based name first
     if let Some(ref model) = body.model {
         let slug: String = model.chars()
             .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
@@ -283,7 +282,6 @@ fn generate_phone_id(body: &RegisterPhoneBody, phones: &std::collections::HashMa
         }
     }
 
-    // Fallback: phone-N
     for i in 1.. {
         let candidate = format!("phone-{i}");
         if !phones.contains_key(&candidate) {

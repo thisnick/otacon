@@ -1,9 +1,9 @@
 use axum::extract::{Query, State};
 use axum::Json;
 use serde::Deserialize;
-use std::sync::Arc;
 
-use crate::store::{Event, RegistryStore};
+use super::AppState;
+use crate::store::Event;
 
 #[derive(Deserialize)]
 pub struct EventQuery {
@@ -20,10 +20,10 @@ fn default_limit() -> usize { 100 }
 
 /// GET /api/v1/events — query event log
 pub async fn list(
-    State(store): State<Arc<RegistryStore>>,
+    State(state): State<AppState>,
     Query(query): Query<EventQuery>,
 ) -> Json<Vec<Event>> {
-    let events = store.events.read().await;
+    let events = state.store.events.read().await;
     let filtered: Vec<Event> = events.iter()
         .rev()
         .filter(|e| {
@@ -33,7 +33,6 @@ pub async fn list(
             if let Some(ref eid) = query.entity_id {
                 if e.entity_id.as_deref() != Some(eid) { return false; }
             }
-            // Filter by phone_id (check entity_id or data.phone_id)
             if let Some(ref pid) = query.phone_id {
                 let matches = e.entity_id.as_deref() == Some(pid)
                     || e.data.as_ref()
@@ -42,14 +41,12 @@ pub async fn list(
                         == Some(pid);
                 if !matches { return false; }
             }
-            // Filter by severity in data
             if let Some(ref sev) = query.severity {
                 let data_sev = e.data.as_ref()
                     .and_then(|d| d.get("severity"))
                     .and_then(|v| v.as_str());
                 if data_sev != Some(sev) { return false; }
             }
-            // Filter by category in data
             if let Some(ref cat) = query.category {
                 let data_cat = e.data.as_ref()
                     .and_then(|d| d.get("category"))
@@ -76,9 +73,10 @@ pub struct ReportEventBody {
 
 /// POST /api/v1/events — report an error/info event from a Pi
 pub async fn report(
-    State(store): State<Arc<RegistryStore>>,
+    State(state): State<AppState>,
     Json(body): Json<ReportEventBody>,
 ) -> Json<serde_json::Value> {
+    let store = &state.store;
     let event_type = format!("{}.{}", body.severity, body.category);
 
     let mut event_data = serde_json::json!({

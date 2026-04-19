@@ -2,9 +2,9 @@ use axum::extract::{Path, State};
 use axum::Json;
 use chrono::Utc;
 use serde::Deserialize;
-use std::sync::Arc;
 
-use crate::store::{Host, RegistryStore};
+use super::AppState;
+use crate::store::Host;
 
 #[derive(Deserialize)]
 pub struct RegisterHostBody {
@@ -25,9 +25,10 @@ pub struct HeartbeatBody {
 }
 
 pub async fn register(
-    State(store): State<Arc<RegistryStore>>,
+    State(state): State<AppState>,
     Json(body): Json<RegisterHostBody>,
 ) -> Json<serde_json::Value> {
+    let store = &state.store;
     let now = Utc::now();
     let mut hosts = store.hosts.write().await;
     let host = hosts.entry(body.id.clone()).or_insert_with(|| Host {
@@ -55,9 +56,10 @@ pub async fn register(
 }
 
 pub async fn heartbeat(
-    State(store): State<Arc<RegistryStore>>,
+    State(state): State<AppState>,
     Json(body): Json<HeartbeatBody>,
 ) -> Json<serde_json::Value> {
+    let store = &state.store;
     let mut hosts = store.hosts.write().await;
     if let Some(host) = hosts.get_mut(&body.host_id) {
         host.last_heartbeat = Some(Utc::now());
@@ -96,19 +98,19 @@ pub async fn heartbeat(
 }
 
 pub async fn list(
-    State(store): State<Arc<RegistryStore>>,
+    State(state): State<AppState>,
 ) -> Json<Vec<Host>> {
-    let hosts = store.hosts.read().await;
+    let hosts = state.store.hosts.read().await;
     let mut result: Vec<Host> = hosts.values().cloned().collect();
     result.sort_by(|a, b| a.id.cmp(&b.id));
     Json(result)
 }
 
 pub async fn get(
-    State(store): State<Arc<RegistryStore>>,
+    State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<Host>, axum::http::StatusCode> {
-    let hosts = store.hosts.read().await;
+    let hosts = state.store.hosts.read().await;
     hosts.get(&id)
         .cloned()
         .map(Json)

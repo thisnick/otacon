@@ -2,9 +2,9 @@ use axum::extract::State;
 use axum::Json;
 use chrono::Utc;
 use serde::Deserialize;
-use std::sync::Arc;
 
-use crate::store::{Dongle, RegistryStore};
+use super::AppState;
+use crate::store::Dongle;
 
 #[derive(Deserialize)]
 pub struct RegisterDonglesBody {
@@ -21,9 +21,9 @@ pub struct DongleEntry {
 
 /// GET /api/v1/dongles — list all dongles
 pub async fn list(
-    State(store): State<Arc<RegistryStore>>,
+    State(state): State<AppState>,
 ) -> Json<Vec<Dongle>> {
-    let dongles = store.dongles.read().await;
+    let dongles = state.store.dongles.read().await;
     let mut result: Vec<Dongle> = dongles.values().cloned().collect();
     result.sort_by(|a, b| a.id.cmp(&b.id));
     Json(result)
@@ -31,9 +31,10 @@ pub async fn list(
 
 /// POST /api/v1/dongles/register — Pi reports its dongles on boot
 pub async fn register(
-    State(store): State<Arc<RegistryStore>>,
+    State(state): State<AppState>,
     Json(body): Json<RegisterDonglesBody>,
 ) -> Json<serde_json::Value> {
+    let store = &state.store;
     let now = Utc::now();
     let mut dongles = store.dongles.write().await;
 

@@ -2,9 +2,9 @@ use axum::extract::{Path, Query, State};
 use axum::Json;
 use chrono::Utc;
 use serde::Deserialize;
-use std::sync::Arc;
 
-use crate::store::{RegistryStore, SimCard};
+use super::AppState;
+use crate::store::SimCard;
 
 #[derive(Deserialize)]
 pub struct SimQuery {
@@ -29,10 +29,10 @@ pub struct SimEntry {
 
 /// GET /api/v1/sims — list all SIMs, optionally filtered by phone_number
 pub async fn list(
-    State(store): State<Arc<RegistryStore>>,
+    State(state): State<AppState>,
     Query(query): Query<SimQuery>,
 ) -> Json<Vec<SimCard>> {
-    let sims = store.sims.read().await;
+    let sims = state.store.sims.read().await;
     let mut result: Vec<SimCard> = if let Some(ref number) = query.phone_number {
         sims.values()
             .filter(|s| s.phone_number.as_deref() == Some(number))
@@ -47,10 +47,10 @@ pub async fn list(
 
 /// GET /api/v1/phones/:id/sims — SIMs on a specific phone
 pub async fn list_for_phone(
-    State(store): State<Arc<RegistryStore>>,
+    State(state): State<AppState>,
     Path(phone_id): Path<String>,
 ) -> Json<Vec<SimCard>> {
-    let sims = store.sims.read().await;
+    let sims = state.store.sims.read().await;
     let mut result: Vec<SimCard> = sims.values()
         .filter(|s| s.phone_id == phone_id)
         .cloned()
@@ -61,10 +61,11 @@ pub async fn list_for_phone(
 
 /// POST /api/v1/phones/:id/sims — Pi reports SIM inventory
 pub async fn report(
-    State(store): State<Arc<RegistryStore>>,
+    State(state): State<AppState>,
     Path(phone_id): Path<String>,
     Json(body): Json<ReportSimsBody>,
 ) -> Json<serde_json::Value> {
+    let store = &state.store;
     let now = Utc::now();
     let mut sims = store.sims.write().await;
 

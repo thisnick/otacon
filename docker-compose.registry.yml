@@ -1,17 +1,70 @@
 services:
-  registry:
+  # ── Registry (node-facing) ─────────────────────────────────────────
+  tailscale-registry:
+    image: tailscale/tailscale:latest
+    hostname: otacon-registry
+    cap_add: [NET_ADMIN, NET_RAW]
+    devices: [/dev/net/tun]
+    restart: unless-stopped
+    environment:
+      - TS_AUTHKEY=${TS_AUTH_KEY_REGISTRY}
+      - TS_HOSTNAME=otacon-registry
+      - TS_EXTRA_ARGS=--advertise-tags=tag:registry
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=false
+    volumes:
+      - tailscale-registry-state:/var/lib/tailscale
+
+  otacon-registry:
     build:
       context: .
       dockerfile: Dockerfile.registry
     image: ghcr.io/thisnick/${OTACON_REPO:-otacon-dev}/registry:latest
     restart: unless-stopped
-    network_mode: host
+    network_mode: service:tailscale-registry
+    depends_on: [tailscale-registry]
     environment:
+      - OTACON_SERVICE_MODE=registry
+      - OTACON_REGISTRY_PORT=9080
       - OTACON_REGISTRY_DATA=/data/registry
-      - OTACON_REGISTRY_PORT=${REGISTRY_HOST_PORT:-9080}
+      - RUST_LOG=${RUST_LOG:-info}
+    volumes:
+      - registry-data:/data/registry
+
+  # ── Admin (human-facing) ───────────────────────────────────────────
+  tailscale-admin:
+    image: tailscale/tailscale:latest
+    hostname: otacon-admin
+    cap_add: [NET_ADMIN, NET_RAW]
+    devices: [/dev/net/tun]
+    restart: unless-stopped
+    environment:
+      - TS_AUTHKEY=${TS_AUTH_KEY_ADMIN}
+      - TS_HOSTNAME=otacon-admin
+      - TS_EXTRA_ARGS=--advertise-tags=tag:admin
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=false
+    volumes:
+      - tailscale-admin-state:/var/lib/tailscale
+
+  otacon-admin:
+    build:
+      context: .
+      dockerfile: Dockerfile.registry
+    image: ghcr.io/thisnick/${OTACON_REPO:-otacon-dev}/registry:latest
+    restart: unless-stopped
+    network_mode: service:tailscale-admin
+    depends_on: [tailscale-admin]
+    environment:
+      - OTACON_SERVICE_MODE=admin
+      - OTACON_REGISTRY_PORT=9090
+      - OTACON_REGISTRY_DATA=/data/registry
+      - OTACON_ADMIN_USERS=${OTACON_ADMIN_USERS:-}
       - RUST_LOG=${RUST_LOG:-info}
     volumes:
       - registry-data:/data/registry
 
 volumes:
+  tailscale-registry-state:
+  tailscale-admin-state:
   registry-data:
