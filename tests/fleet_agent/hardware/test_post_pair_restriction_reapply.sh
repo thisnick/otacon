@@ -20,7 +20,7 @@
 set -euo pipefail
 
 PI="nick@otacon-pi"
-PI_URL="https://otacon-pi:8080"
+PI_URL="https://otacon-pi.tail0437b8.ts.net:8080"
 PHONE_ID="${1:-phone-r92x1022}"
 SERIAL="${2:-R92X1022S7K}"
 MAX_PAIR_WAIT=480  # seconds for BT heal to complete

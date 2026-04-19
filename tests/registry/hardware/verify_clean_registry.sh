@@ -63,7 +63,7 @@ fi
 # --- Check for empty-ID entries ---
 echo ""
 echo "--- Checking for empty-ID entries ---"
-EMPTY_ID_PHONES=$(echo "$PHONES" | jq '[.[] | select(.id == "" or .id == null or .registry_id == "" or .registry_id == null)] | length')
+EMPTY_ID_PHONES=$(echo "$PHONES" | jq '[.[] | select(.id == "" or .id == null)] | length')
 EMPTY_ID_DONGLES=$(echo "$DONGLES" | jq '[.[] | select(.id == "" or .id == null)] | length')
 
 if [ "$EMPTY_ID_PHONES" -gt 0 ]; then

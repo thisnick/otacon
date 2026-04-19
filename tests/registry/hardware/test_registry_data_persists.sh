@@ -38,10 +38,10 @@ fi
 # --- Step 2: Restart registry container ---
 echo ""
 echo "--- Restarting registry container ---"
-ssh "$PI" "cd $COMPOSE_DIR && docker compose -f docker-compose.registry.yml down" 2>/dev/null
+ssh "$PI" "cd $COMPOSE_DIR && docker compose down" 2>/dev/null
 echo "Container stopped."
 
-ssh "$PI" "cd $COMPOSE_DIR && docker compose -f docker-compose.registry.yml up -d" 2>/dev/null
+ssh "$PI" "cd $COMPOSE_DIR && docker compose up -d" 2>/dev/null
 echo "Container started."
 
 # --- Step 3: Wait for restart ---

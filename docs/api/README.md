@@ -6,18 +6,18 @@ Otacon exposes a REST API and WebSocket endpoints for controlling an Android pho
 
 ```bash
 # Screenshot
-curl -k https://otacon-pi:8080/api/screenshot -o screen.png
+curl -k https://otacon-pi.tail0437b8.ts.net:8080/api/screenshot -o screen.png
 
 # Accessibility tree
-curl -k https://otacon-pi:8080/api/snapshot
+curl -k https://otacon-pi.tail0437b8.ts.net:8080/api/snapshot
 
 # Tap an element
 curl -k -X POST -H 'Content-Type: application/json' \
   -d '{"action":"tap","ref":"e5"}' \
-  https://otacon-pi:8080/api/action
+  https://otacon-pi.tail0437b8.ts.net:8080/api/action
 
 # Device info
-curl -k https://otacon-pi:8080/api/info
+curl -k https://otacon-pi.tail0437b8.ts.net:8080/api/info
 ```
 
 ## Specs

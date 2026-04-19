@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /src/registry
 COPY src/registry/Cargo.toml src/registry/Cargo.lock ./
 COPY src/registry/src/ ./src/
+COPY src/registry/static/ ./static/
 
 RUN cargo build --release
 

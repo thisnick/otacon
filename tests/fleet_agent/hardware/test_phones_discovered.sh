@@ -2,11 +2,11 @@
 # Hardware test 3: All 3 phones discovered and registered
 #
 # Usage: ./test_phones_discovered.sh
-# Requires: curl, jq, access to otacon-pi:8080
+# Requires: curl, jq, access to otacon-pi.tail0437b8.ts.net:8080
 
 set -euo pipefail
 
-PI_URL="https://otacon-pi:8080"
+PI_URL="https://otacon-pi.tail0437b8.ts.net:8080"
 EXPECTED_IDS="phone-r92x1022 phone-r5ct60sd phone-14151jec"
 
 echo "=== Test 3: Phones discovered + registered ==="

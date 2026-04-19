@@ -2,11 +2,11 @@
 # Hardware test 10: No regressions on the 3 phones
 #
 # Usage: ./test_no_regressions.sh
-# Requires: curl, jq, access to otacon-pi:8080
+# Requires: curl, jq, access to otacon-pi.tail0437b8.ts.net:8080
 
 set -euo pipefail
 
-PI_URL="https://otacon-pi:8080"
+PI_URL="https://otacon-pi.tail0437b8.ts.net:8080"
 PHONES="phone-14151jec phone-r92x1022 phone-r5ct60sd"
 
 echo "=== Test 10: No regressions ==="

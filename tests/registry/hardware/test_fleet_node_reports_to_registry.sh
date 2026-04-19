@@ -29,10 +29,10 @@ if [ "$HOST_COUNT" -eq 0 ]; then
 fi
 
 # Find otacon-pi entry
-PI_ENTRY=$(echo "$HOSTS" | jq '[.[] | select(.hostname == "otacon-pi" or .name == "otacon-pi")] | .[0] // empty')
+PI_ENTRY=$(echo "$HOSTS" | jq '[.[] | select(.id == "otacon-pi")] | .[0] // empty')
 if [ -z "$PI_ENTRY" ] || [ "$PI_ENTRY" = "null" ]; then
     echo "FAIL: no host entry for otacon-pi"
-    echo "  Available hosts: $(echo "$HOSTS" | jq -c '[.[].hostname // .[].name]')"
+    echo "  Available hosts: $(echo "$HOSTS" | jq -c '[.[].id]')"
     exit 1
 fi
 
@@ -95,7 +95,7 @@ echo "--- Waiting ${HEARTBEAT_WAIT}s for heartbeat to advance ---"
 sleep "$HEARTBEAT_WAIT"
 
 HOSTS2=$(curl -sf "$REGISTRY_URL/api/v1/hosts" || echo "[]")
-PI_ENTRY2=$(echo "$HOSTS2" | jq '[.[] | select(.hostname == "otacon-pi" or .name == "otacon-pi")] | .[0] // empty')
+PI_ENTRY2=$(echo "$HOSTS2" | jq '[.[] | select(.id == "otacon-pi")] | .[0] // empty')
 HB2=$(echo "$PI_ENTRY2" | jq -r '.last_heartbeat // empty')
 echo "Updated heartbeat: $HB2"
 

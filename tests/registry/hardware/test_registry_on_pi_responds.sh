@@ -31,31 +31,34 @@ if ! echo "$HOSTS" | jq -e 'type == "array"' >/dev/null 2>&1; then
 fi
 echo "PASS: /api/v1/hosts returns valid JSON array"
 
-# Check for otacon-pi host entry
-PI_HOST=$(echo "$HOSTS" | jq -r '[.[] | select(.hostname == "otacon-pi" or .name == "otacon-pi")] | length')
+# Check for otacon-pi host entry (host uses "id" field)
+PI_HOST=$(echo "$HOSTS" | jq -r '[.[] | select(.id == "otacon-pi")] | length')
 if [ "$PI_HOST" -lt 1 ]; then
-    echo "WARN: no host entry with hostname 'otacon-pi' found yet (may appear after first heartbeat)"
-    echo "  Hosts returned: $(echo "$HOSTS" | jq -c '[.[].hostname // .[].name]')"
-else
-    echo "PASS: otacon-pi host entry found"
+    echo "FAIL: no host entry with id 'otacon-pi' found"
+    echo "  Hosts returned: $(echo "$HOSTS" | jq -c '[.[].id]')"
+    exit 1
 fi
+echo "PASS: otacon-pi host entry found"
 
 # --- Step 2: Check container status ---
 echo ""
 echo "--- Checking registry container status ---"
-COMPOSE_PS=$(ssh "$PI" "docker compose -f /home/nick/otacon-registry/docker-compose.registry.yml ps --format json" 2>/dev/null) || {
-    echo "FAIL: could not run docker compose ps on Pi"
+CONTAINER_STATUS=$(ssh "$PI" "docker ps --filter name=registry --format '{{.Names}} {{.Status}}'" 2>/dev/null) || {
+    echo "FAIL: could not check container status on Pi"
     exit 1
 }
 
-# Look for registry container with "running" state
-RUNNING=$(echo "$COMPOSE_PS" | jq -r 'select(.State == "running") | .Name' 2>/dev/null || true)
-if [ -z "$RUNNING" ]; then
+if [ -z "$CONTAINER_STATUS" ]; then
     echo "FAIL: no running registry container found"
-    echo "  docker compose ps output: $COMPOSE_PS"
     exit 1
 fi
-echo "PASS: registry container running: $RUNNING"
+
+if ! echo "$CONTAINER_STATUS" | grep -q "Up"; then
+    echo "FAIL: registry container is not running"
+    echo "  Status: $CONTAINER_STATUS"
+    exit 1
+fi
+echo "PASS: registry container running: $CONTAINER_STATUS"
 
 echo ""
 echo "=== Test: registry on Pi responds PASSED ==="

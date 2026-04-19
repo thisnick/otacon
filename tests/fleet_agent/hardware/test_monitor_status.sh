@@ -2,11 +2,11 @@
 # Hardware test 4+5+6: Monitor status surfaced, setup steps tracked, health checks running
 #
 # Usage: ./test_monitor_status.sh [PHONE_ID]
-# Requires: curl, jq, access to otacon-pi:8080
+# Requires: curl, jq, access to otacon-pi.tail0437b8.ts.net:8080
 
 set -euo pipefail
 
-PI_URL="https://otacon-pi:8080"
+PI_URL="https://otacon-pi.tail0437b8.ts.net:8080"
 PHONE_ID="${1:-phone-14151jec}"
 
 echo "=== Test 4: Monitor status surfaced in /api/info ==="

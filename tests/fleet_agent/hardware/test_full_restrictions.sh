@@ -23,7 +23,7 @@
 set -euo pipefail
 
 PI="nick@otacon-pi"
-PI_URL="https://otacon-pi:8080"
+PI_URL="https://otacon-pi.tail0437b8.ts.net:8080"
 MAX_WAIT=120  # seconds
 
 # All 3 phones in the fleet

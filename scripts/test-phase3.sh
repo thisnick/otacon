@@ -4,7 +4,7 @@
 #
 # Usage:
 #   ./scripts/test-phase3.sh                                     # test against Pi via Tailscale
-#   ./scripts/test-phase3.sh --host otacon-pi:8080               # custom host
+#   ./scripts/test-phase3.sh --host otacon-pi.tail0437b8.ts.net:8080               # custom host
 #   ./scripts/test-phase3.sh --registry localhost:8090            # include registry tests
 #   ./scripts/test-phase3.sh --all                               # Pi + registry
 #   ./scripts/test-phase3.sh --section lazy                      # run only one section

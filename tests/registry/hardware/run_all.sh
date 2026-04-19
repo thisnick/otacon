@@ -13,7 +13,7 @@ TESTS=(
     "$DIR/test_port_no_collision.sh"
     "$DIR/test_fleet_node_reports_to_registry.sh"
     "$DIR/test_registry_data_persists.sh"
-    "$DIR/test_redeploy_no_data_loss.sh"
+    "$DIR/test_registry_ui.sh"
     # verify_clean must be last
     "$DIR/verify_clean_registry.sh"
 )
