@@ -126,6 +126,114 @@ def disable_discoverable(adapter_mac: str):
     log.info(f'Adapter {adapter_mac} set Discoverable+Pairable=false')
 
 
+def _dbus_discover_and_pair(adapter_hci: str, phone_bt_mac: str,
+                            serial: str, discovery_timeout: int = 20,
+                            ) -> tuple[bool, bool]:
+    """Discover, pair, trust and connect a phone via D-Bus.
+
+    Using D-Bus directly instead of bluetoothctl avoids agent conflicts:
+    bluetoothctl registers its own agent on startup which displaces the
+    fleet agent's AutoAcceptAgent, causing pair confirmations to be
+    silently dropped in non-interactive (piped) mode.
+
+    Returns (paired, connected) booleans.
+    """
+    import dbus
+
+    bus = dbus.SystemBus()
+    adapter_path = f'/org/bluez/{adapter_hci}'
+    phone_mac_upper = phone_bt_mac.upper()
+    device_path = None
+
+    # Discovery
+    log.info(f'[{serial}] BlueZ: running discovery on {adapter_hci}')
+    adapter = dbus.Interface(
+        bus.get_object('org.bluez', adapter_path), 'org.bluez.Adapter1',
+    )
+    try:
+        adapter.StartDiscovery()
+    except dbus.DBusException as e:
+        log.warning(f'[{serial}] D-Bus StartDiscovery error: {e}')
+        return False, False
+
+    try:
+        for tick in range(discovery_timeout):
+            time.sleep(1)
+            mgr = dbus.Interface(
+                bus.get_object('org.bluez', '/'),
+                'org.freedesktop.DBus.ObjectManager',
+            )
+            for path, ifaces in mgr.GetManagedObjects().items():
+                if 'org.bluez.Device1' not in ifaces:
+                    continue
+                if f'/{adapter_hci}/' not in path:
+                    continue
+                addr = str(ifaces['org.bluez.Device1'].get('Address', ''))
+                if addr.upper() == phone_mac_upper:
+                    device_path = path
+                    break
+            if device_path:
+                break
+    finally:
+        try:
+            adapter.StopDiscovery()
+        except dbus.DBusException:
+            pass
+
+    if not device_path:
+        log.warning(f'[{serial}] BlueZ: {phone_bt_mac} not found after '
+                    f'{discovery_timeout}s discovery on {adapter_hci}')
+        return False, False
+
+    log.info(f'[{serial}] BlueZ: found {phone_bt_mac} at {device_path}')
+
+    # Pair
+    dev = dbus.Interface(
+        bus.get_object('org.bluez', device_path), 'org.bluez.Device1',
+    )
+    props = dbus.Interface(
+        bus.get_object('org.bluez', device_path),
+        'org.freedesktop.DBus.Properties',
+    )
+
+    log.info(f'[{serial}] BlueZ: pairing with {phone_bt_mac}')
+    try:
+        dev.Pair()
+    except dbus.DBusException as e:
+        err_name = e.get_dbus_name()
+        if err_name == 'org.bluez.Error.AlreadyExists':
+            log.info(f'[{serial}] BlueZ: already paired')
+        else:
+            log.warning(f'[{serial}] BlueZ Pair() error: {e}')
+            return False, False
+    time.sleep(1)
+
+    # Trust
+    try:
+        props.Set('org.bluez.Device1', 'Trusted', True)
+        log.info(f'[{serial}] BlueZ: trusted {phone_bt_mac}')
+    except dbus.DBusException as e:
+        log.warning(f'[{serial}] BlueZ trust error: {e}')
+
+    # Connect (if not already)
+    try:
+        is_connected = bool(props.Get('org.bluez.Device1', 'Connected'))
+        if not is_connected:
+            dev.Connect()
+            time.sleep(2)
+    except dbus.DBusException as e:
+        log.warning(f'[{serial}] BlueZ connect error: {e}')
+
+    # Verify
+    try:
+        paired = bool(props.Get('org.bluez.Device1', 'Paired'))
+        connected = bool(props.Get('org.bluez.Device1', 'Connected'))
+    except dbus.DBusException:
+        paired, connected = False, False
+
+    return paired, connected
+
+
 def _run_bluez_pair(adapter_mac: str, adapter_hci: str, serial: str):
     """Pi-side BlueZ pairing flow (replaces bluetooth-pair.sh).
 
@@ -175,48 +283,22 @@ def _run_bluez_pair(adapter_mac: str, adapter_hci: str, serial: str):
                     _btctl(adapter_mac, f'remove {phone_bt_mac}')
                     time.sleep(1)
 
-            # Open BT settings on phone (makes it discoverable)
-            adb_shell(serial, 'am start -a android.settings.BLUETOOTH_SETTINGS', timeout=5)
+            # Make phone discoverable (REQUEST_DISCOVERABLE is more
+            # reliable than just opening BT settings, which may not
+            # broadcast on some devices with restrictions active)
+            adb_shell(serial,
+                      'am start -a android.bluetooth.adapter.action.REQUEST_DISCOVERABLE '
+                      '--ei android.bluetooth.adapter.extra.DISCOVERABLE_DURATION 120',
+                      timeout=5)
             time.sleep(3)
 
-            # D-Bus discovery to populate BlueZ device cache
-            adapter_path = f'/org/bluez/{adapter_hci}'
-            log.info(f'[{serial}] BlueZ: running discovery on {adapter_hci}')
-            try:
-                run_cmd(
-                    ['python3', '-c',
-                     'import dbus,sys,time\n'
-                     'bus=dbus.SystemBus()\n'
-                     f'a=dbus.Interface(bus.get_object("org.bluez","{adapter_path}"),"org.bluez.Adapter1")\n'
-                     'a.StartDiscovery()\n'
-                     'for _ in range(15):\n'
-                     ' time.sleep(1)\n'
-                     ' m=dbus.Interface(bus.get_object("org.bluez","/"),"org.freedesktop.DBus.ObjectManager")\n'
-                     ' for p,i in m.GetManagedObjects().items():\n'
-                     '  if "org.bluez.Device1" in i:\n'
-                     f'   if str(i["org.bluez.Device1"].get("Address","")).upper()=="{phone_bt_mac.upper()}":\n'
-                     '    a.StopDiscovery();sys.exit(0)\n'
-                     'a.StopDiscovery()\n'],
-                    timeout=20,
-                )
-            except Exception as e:
-                log.warning(f'[{serial}] D-Bus discovery error: {e}')
-
-            # Pair, trust, connect
-            log.info(f'[{serial}] BlueZ: pairing with {phone_bt_mac}')
-            pair_out = _btctl(adapter_mac, f'pair {phone_bt_mac}', timeout=30)
-            log.info(f'[{serial}] BlueZ pair result: {pair_out.strip()[-200:]}')
-            time.sleep(1)
-            trust_out = _btctl(adapter_mac, f'trust {phone_bt_mac}')
-            log.info(f'[{serial}] BlueZ trust result: {trust_out.strip()[-200:]}')
-            time.sleep(1)
-            connect_out = _btctl(adapter_mac, f'connect {phone_bt_mac}')
-            log.info(f'[{serial}] BlueZ connect result: {connect_out.strip()[-200:]}')
-
-            # Verify bond actually formed
-            info_out = _btctl(adapter_mac, f'info {phone_bt_mac}')
-            paired = 'Paired: yes' in info_out
-            connected = 'Connected: yes' in info_out
+            # D-Bus discovery + pair + trust + connect
+            # Using D-Bus directly avoids bluetoothctl agent conflicts
+            # (bluetoothctl registers its own agent which displaces our
+            # AutoAcceptAgent, causing pair confirmations to be dropped).
+            paired, connected = _dbus_discover_and_pair(
+                adapter_hci, phone_bt_mac, serial,
+            )
             log.info(f'[{serial}] BlueZ pair flow complete: paired={paired} connected={connected}')
 
         finally:
