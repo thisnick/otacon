@@ -11,7 +11,8 @@
 set -euo pipefail
 
 PI="nick@otacon-pi"
-REGISTRY_URL="http://otacon-pi:9080"
+PI_FQDN=$(tailscale status --json | jq -r '.Peer[] | select(.HostName == "otacon-pi") | .DNSName | rtrimstr(".")')
+REGISTRY_URL="http://${PI_FQDN}:9080"
 
 echo "=== Test: registry on Pi responds ==="
 

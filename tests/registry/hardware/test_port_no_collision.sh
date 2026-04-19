@@ -13,8 +13,9 @@
 set -euo pipefail
 
 PI="nick@otacon-pi"
-FLEET_URL="https://otacon-pi:8080"
-REGISTRY_URL="http://otacon-pi:9080"
+PI_FQDN=$(tailscale status --json | jq -r '.Peer[] | select(.HostName == "otacon-pi") | .DNSName | rtrimstr(".")')
+FLEET_URL="https://${PI_FQDN}:8080"
+REGISTRY_URL="http://${PI_FQDN}:9080"
 
 echo "=== Test: port no collision (8080 vs 9080) ==="
 

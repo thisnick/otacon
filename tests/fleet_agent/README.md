@@ -34,7 +34,7 @@ NOT for CI -- requires SSH access to `otacon-pi` and the registry at `localhost:
 ### Prerequisites
 
 - SSH access: `ssh nick@otacon-pi` (Tailscale)
-- Pi server: `https://otacon-pi:8080` (TLS self-signed)
+- Pi server: `https://<pi-fqdn>:8080` (TLS — get FQDN via `tailscale status`)
 - Registry: `http://localhost:8080` (running on Mac)
 - Container running with fleet-agent deployed
 - 3 phones connected (Pixel, S22, third device)

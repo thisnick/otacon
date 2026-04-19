@@ -4,13 +4,27 @@ process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
 import { program } from "commander";
 import { readFileSync, writeFileSync } from "fs";
+import { execSync } from "child_process";
 import { OtaconClient, type Action } from "./client.js";
 
-const DEFAULT_HOST = "https://otacon-pi:8080";
+function resolvePiHost(): string {
+  try {
+    const json = execSync("tailscale status --json", { encoding: "utf8", timeout: 5000 });
+    const status = JSON.parse(json);
+    const peer = Object.values(status.Peer as Record<string, any>).find(
+      (p: any) => p.HostName === "otacon-pi"
+    );
+    if (peer) {
+      const fqdn = (peer as any).DNSName.replace(/\.$/, "");
+      return `https://${fqdn}:8080`;
+    }
+  } catch {}
+  return "https://otacon-pi:8080";
+}
 
 function getClient(opts: { host?: string }): OtaconClient {
   const baseUrl =
-    opts.host || process.env.OTACON_HOST || DEFAULT_HOST;
+    opts.host || process.env.OTACON_HOST || resolvePiHost();
   return new OtaconClient(baseUrl);
 }
 

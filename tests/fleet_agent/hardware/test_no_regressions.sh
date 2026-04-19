@@ -6,7 +6,8 @@
 
 set -euo pipefail
 
-PI_URL="https://otacon-pi:8080"
+PI_FQDN=$(tailscale status --json | jq -r '.Peer[] | select(.HostName == "otacon-pi") | .DNSName | rtrimstr(".")')
+PI_URL="https://${PI_FQDN}:8080"
 PHONES="phone-14151jec phone-r92x1022 phone-r5ct60sd"
 
 echo "=== Test 10: No regressions ==="

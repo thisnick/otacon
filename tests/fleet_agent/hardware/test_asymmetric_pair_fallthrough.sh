@@ -18,7 +18,8 @@
 set -euo pipefail
 
 PI="nick@otacon-pi"
-PI_URL="https://otacon-pi:8080"
+PI_FQDN=$(tailscale status --json | jq -r '.Peer[] | select(.HostName == "otacon-pi") | .DNSName | rtrimstr(".")')
+PI_URL="https://${PI_FQDN}:8080"
 PHONE_ID="${1:-phone-r5ct60sd}"
 SERIAL="${2:-R5CT60SDGKD}"
 MAX_WAIT=600  # 10 minutes — heal_bt_connected retries + cooldown + re-pair

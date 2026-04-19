@@ -16,7 +16,8 @@
 set -euo pipefail
 
 PI="nick@otacon-pi"
-PI_URL="https://otacon-pi:8080"
+PI_FQDN=$(tailscale status --json | jq -r '.Peer[] | select(.HostName == "otacon-pi") | .DNSName | rtrimstr(".")')
+PI_URL="https://${PI_FQDN}:8080"
 REGISTRY_URL="http://localhost:8080"
 CONTAINER="otacon-otacon-1"
 CANARY_SERIAL="R92X1022S7K"

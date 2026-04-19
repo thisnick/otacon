@@ -6,7 +6,8 @@
 
 set -euo pipefail
 
-PI_URL="https://otacon-pi:8080"
+PI_FQDN=$(tailscale status --json | jq -r '.Peer[] | select(.HostName == "otacon-pi") | .DNSName | rtrimstr(".")')
+PI_URL="https://${PI_FQDN}:8080"
 PHONE_ID="${1:-phone-14151jec}"
 
 echo "=== Test 4: Monitor status surfaced in /api/info ==="

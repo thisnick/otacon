@@ -12,7 +12,8 @@
 
 set -euo pipefail
 
-REGISTRY_URL="http://otacon-pi:9080"
+PI_FQDN=$(tailscale status --json | jq -r '.Peer[] | select(.HostName == "otacon-pi") | .DNSName | rtrimstr(".")')
+REGISTRY_URL="http://${PI_FQDN}:9080"
 HEARTBEAT_WAIT=90
 
 echo "=== Test: fleet-node reports to Pi-hosted registry ==="
