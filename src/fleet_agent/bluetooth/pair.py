@@ -268,21 +268,23 @@ def run_pair_dialog_watcher(serial: str, snapshot_url: str,
 
 
 def allocate_and_pair_bluetooth(serial: str, snapshot_url: str,
-                                 report_error=None) -> tuple[str | None, str | None, str | None]:
+                                 report_error=None) -> tuple[str | None, str | None, str | None, str | None]:
     """Allocate a BT dongle and pair the phone with it.
 
-    Returns (adapter_mac, adapter_hci, phone_bt_mac).
+    Returns (adapter_mac, adapter_hci, phone_bt_mac, replaced_mac).
+    replaced_mac is the old dongle MAC that was saved but missing at startup,
+    or None if no reassignment occurred.
     """
     if os.environ.get('AUDIO_BACKEND') != 'bluetooth':
-        return (None, None, None)
+        return (None, None, None, None)
 
     result = allocate_dongle(serial)
     if not result:
         if report_error:
             report_error('bluetooth.no_free_dongle',
                          f'No free BT dongle available for {serial}')
-        return (None, None, None)
-    adapter_mac, adapter_hci = result
+        return (None, None, None, None)
+    adapter_mac, adapter_hci, replaced_mac = result
 
     # Get phone's BT MAC
     phone_bt_mac = adb_shell(serial, 'settings get secure bluetooth_address').strip()
@@ -396,4 +398,4 @@ def allocate_and_pair_bluetooth(serial: str, snapshot_url: str,
         log.info(f'[{serial}] Re-applying restrictions after successful pair')
         apply_restrictions(serial)
 
-    return (adapter_mac, adapter_hci, phone_bt_mac)
+    return (adapter_mac, adapter_hci, phone_bt_mac, replaced_mac)

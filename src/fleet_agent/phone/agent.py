@@ -12,7 +12,8 @@ from . import health, heal
 from ..steps import screen, provisioning, snapshot, passcode, wifi
 from ..bluetooth.pair import allocate_and_pair_bluetooth, run_pair_dialog_watcher
 from ..registry.identity import gather_identity
-from ..registry.client import register_with_registry, deregister_from_registry, report_error
+from ..registry.client import (register_with_registry, deregister_from_registry,
+                                report_error, emit_event, update_registry_dongle)
 from ..registry.server import register_with_server, deregister_from_server
 
 log = logging.getLogger('fleet-agent')
@@ -99,17 +100,23 @@ class PhoneAgent:
                         self.serial, self._report_error)
         self._run_step('connect_wifi', wifi.connect_wifi, self.serial)
 
+        replaced_mac = None
         result = self._run_step('allocate_and_pair_bluetooth',
                                  allocate_and_pair_bluetooth,
                                  self.serial, self.snapshot_url, self._report_error)
         if result:
-            self.adapter_mac, self.adapter_hci, self.phone_bt_mac = result
+            self.adapter_mac, self.adapter_hci, self.phone_bt_mac, replaced_mac = result
 
         self._run_step('apply_restrictions', provisioning.apply_restrictions, self.serial)
 
         # Gather identity and register
         identity = gather_identity(self.serial)
         self._run_step('register', self._register, identity)
+
+        # If a startup dongle reassignment happened, emit events and sync
+        # registry now that registry_id is available
+        if replaced_mac and self.adapter_mac:
+            self._emit_startup_dongle_reassignment(replaced_mac)
 
         self.log.info('Setup complete')
 
@@ -134,6 +141,29 @@ class PhoneAgent:
             adapter_mac=self.adapter_mac, phone_bt_mac=self.phone_bt_mac)
         if phone_id:
             self.phone_id = phone_id
+
+    def _emit_startup_dongle_reassignment(self, replaced_mac: str):
+        """Emit events and update registry after startup dongle reassignment.
+
+        Called when allocate_dongle found that the saved dongle was missing
+        and assigned a new one. By this point _register has run, so
+        registry_id is available.
+        """
+        phone_id = self.registry_id or self.phone_id
+        emit_event('dongle.lost', {
+            'adapter_mac': replaced_mac,
+            'orphan_serial': self.serial,
+            'phone_id': phone_id,
+        })
+        update_registry_dongle(replaced_mac, None)
+        update_registry_dongle(self.adapter_mac, phone_id)
+        emit_event('phone.reassigned', {
+            'serial': self.serial,
+            'phone_id': phone_id,
+            'old_adapter_mac': replaced_mac,
+            'new_adapter_mac': self.adapter_mac,
+        })
+        self.log.info(f'Startup dongle reassignment: {replaced_mac} -> {self.adapter_mac}')
 
     def _apply_config(self, config: dict):
         if not config:
@@ -218,12 +248,16 @@ class PhoneAgent:
             elif name == 'bt_bonded':
                 result = heal.heal_bt_bonded(
                     self.serial, self.snapshot_url, report_error=self._report_error)
-                if result and any(result):
-                    self.adapter_mac, self.adapter_hci, self.phone_bt_mac = result
+                if result and any(result[:3]):
+                    old_mac = self.adapter_mac
+                    self.adapter_mac, self.adapter_hci, self.phone_bt_mac, replaced_mac = result
                     # Re-register with server so it gets updated MACs
                     register_with_server(
                         self.serial, self.snapshot_port, self.internal_port,
                         adapter_mac=self.adapter_mac, phone_bt_mac=self.phone_bt_mac)
+                    # Emit events if dongle was reassigned during heal
+                    if replaced_mac:
+                        self._emit_startup_dongle_reassignment(replaced_mac)
                     # Verify the bond actually formed
                     detail = health.check_bt_bonded(
                         self.adapter_mac, self.phone_bt_mac, serial=self.serial)

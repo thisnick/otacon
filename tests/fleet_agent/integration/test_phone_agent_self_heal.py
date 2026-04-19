@@ -45,7 +45,7 @@ class TestSelfHealBtBonded:
         set_runner(SubprocessRunner())
 
     @patch('fleet_agent.phone.heal.allocate_and_pair_bluetooth',
-           return_value=('AA:BB:CC:DD:EE:01', 'hci0', '11:22:33:44:55:66'))
+           return_value=('AA:BB:CC:DD:EE:01', 'hci0', '11:22:33:44:55:66', None))
     @patch('fleet_agent.registry.server.http_post', return_value={'id': 'phone-test'})
     def test_bt_bonded_false_triggers_heal(self, mock_register, mock_pair):
         """When bt_bonded check returns False, heal_bt_bonded should be called."""
@@ -82,7 +82,7 @@ class TestSelfHealBtBonded:
         mock_pair.assert_called_once()
 
     @patch('fleet_agent.phone.heal.allocate_and_pair_bluetooth',
-           return_value=('AA:BB:CC:DD:EE:01', 'hci0', '11:22:33:44:55:66'))
+           return_value=('AA:BB:CC:DD:EE:01', 'hci0', '11:22:33:44:55:66', None))
     @patch('fleet_agent.registry.server.http_post', return_value={'id': 'phone-test'})
     def test_bt_bonded_true_skips_heal(self, mock_register, mock_pair):
         """When bt_bonded check returns True, no heal should be triggered."""

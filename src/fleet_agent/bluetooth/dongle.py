@@ -137,8 +137,13 @@ def get_cached_bt_mac(serial: str) -> str | None:
     return _bt_mac_cache.get(serial)
 
 
-def allocate_dongle(serial: str) -> tuple[str, str] | None:
-    """Allocate a BT dongle for a phone. Returns (adapter_mac, hci_name) or None."""
+def allocate_dongle(serial: str) -> tuple[str, str, str | None] | None:
+    """Allocate a BT dongle for a phone.
+
+    Returns (adapter_mac, hci_name, replaced_mac) or None.
+    replaced_mac is the old dongle MAC that was saved but no longer present
+    (startup reassignment), or None if no reassignment occurred.
+    """
     dongles = {}
     for attempt in range(10):
         dongles = enum_dongles()
@@ -159,17 +164,19 @@ def allocate_dongle(serial: str) -> tuple[str, str] | None:
         if saved_mac and saved_mac.upper() in dongles:
             hci = dongles[saved_mac.upper()]
             log.info(f'Reusing saved dongle {saved_mac} ({hci}) for {serial}')
-            return (saved_mac.upper(), hci)
+            return (saved_mac.upper(), hci, None)
 
+        replaced_mac = None
         if saved_mac:
             log.warning(f'Saved dongle {saved_mac} not present, reassigning...')
+            replaced_mac = saved_mac.upper()
 
         for mac, hci in dongles.items():
             if mac not in used_macs:
                 log.info(f'Assigning free dongle {mac} ({hci}) to {serial}')
                 _dongle_cache[serial] = mac
                 save_dongle_assignment(serial, mac)
-                return (mac, hci)
+                return (mac, hci, replaced_mac)
 
         log.error(f'No free BT dongle for {serial}')
         return None

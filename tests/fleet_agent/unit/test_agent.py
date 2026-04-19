@@ -109,7 +109,7 @@ class TestRunMaintenanceTick:
     @patch('fleet_agent.phone.health.check_snapshot_alive', return_value=True)
     @patch('fleet_agent.phone.health.check_port_forwards', return_value=True)
     @patch('fleet_agent.phone.heal.heal_bt_bonded',
-           return_value=('AA:BB:CC:DD:EE:01', 'hci1', '11:22:33:44:55:66'))
+           return_value=('AA:BB:CC:DD:EE:01', 'hci1', '11:22:33:44:55:66', None))
     def test_asymmetric_bond_triggers_heal(self, mock_heal, *mocks):
         """Pi bonded but phone not — bt_bonded=false, splits visible."""
         agent = PhoneAgent('TEST', 9091, 8081, 50, 5900)
@@ -151,6 +151,46 @@ class TestRunSingleStep:
         import pytest
         with pytest.raises(ValueError, match='Unknown step'):
             phone_agent.run_single_step('nonexistent')
+
+
+class TestStartupDongleReassignment:
+    @patch('fleet_agent.phone.agent.update_registry_dongle')
+    @patch('fleet_agent.phone.agent.emit_event')
+    def test_emits_events_on_startup_reassignment(self, mock_emit, mock_update_reg,
+                                                   phone_agent):
+        """When allocate_dongle returns a replaced_mac, events + registry sync fire."""
+        phone_agent._emit_startup_dongle_reassignment('OLD:MA:CC:DD:EE:01')
+
+        # Should emit dongle.lost and phone.reassigned
+        assert mock_emit.call_count == 2
+        assert mock_emit.call_args_list[0] == call('dongle.lost', {
+            'adapter_mac': 'OLD:MA:CC:DD:EE:01',
+            'orphan_serial': 'TEST_SERIAL',
+            'phone_id': 'reg-test',
+        })
+        assert mock_emit.call_args_list[1] == call('phone.reassigned', {
+            'serial': 'TEST_SERIAL',
+            'phone_id': 'reg-test',
+            'old_adapter_mac': 'OLD:MA:CC:DD:EE:01',
+            'new_adapter_mac': 'AA:BB:CC:DD:EE:01',
+        })
+        # Should clear old dongle and set new dongle's phone_id
+        assert mock_update_reg.call_args_list == [
+            call('OLD:MA:CC:DD:EE:01', None),
+            call('AA:BB:CC:DD:EE:01', 'reg-test'),
+        ]
+
+    @patch('fleet_agent.phone.agent.update_registry_dongle')
+    @patch('fleet_agent.phone.agent.emit_event')
+    def test_uses_phone_id_as_fallback(self, mock_emit, mock_update_reg, phone_agent):
+        """When registry_id is None, falls back to phone_id."""
+        phone_agent.registry_id = None
+
+        phone_agent._emit_startup_dongle_reassignment('OLD:MA:CC:DD:EE:01')
+
+        # phone_id used as fallback
+        assert mock_update_reg.call_args_list[1] == call(
+            'AA:BB:CC:DD:EE:01', 'phone-test')
 
 
 class TestSetupSteps:
