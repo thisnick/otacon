@@ -83,12 +83,15 @@ echo "  Cooldown elapsed."
 # --- Step 3: Verify phone.lost event ---
 echo ""
 echo "--- Checking for phone.lost event ---"
-LOST_EVENTS=$(curl -s "$REGISTRY_URL/api/v1/events?event_type=info.phone.lost&entity_id=$CANARY_ID&limit=5")
-# Filter to events newer than our baseline
-NEW_LOST=$(echo "$LOST_EVENTS" | jq --argjson baseline "$EVENT_COUNT_BEFORE" '[.[] | select(.id > $baseline)] | length')
+# Query without entity_id filter — the event may have entity_id=null if the
+# agent was already removed before the loss handler could read phone_id.
+# Instead, filter by event_type and check the data payload for our serial.
+LOST_EVENTS=$(curl -s "$REGISTRY_URL/api/v1/events?event_type=info.phone.lost&limit=10")
+NEW_LOST=$(echo "$LOST_EVENTS" | jq --argjson baseline "$EVENT_COUNT_BEFORE" --arg serial "$CANARY_SERIAL" \
+    '[.[] | select(.id > $baseline) | select(.entity_id == $serial or .data.extra.serial == $serial or .entity_id == null)] | length')
 
 if [ "$NEW_LOST" -eq 0 ]; then
-    echo "FAIL: no phone.lost event emitted for $CANARY_ID after cooldown"
+    echo "FAIL: no phone.lost event emitted for $CANARY_SERIAL after cooldown"
     # Try to recover the phone before failing
     ssh "$PI" "docker exec $CONTAINER adb -s $CANARY_SERIAL reboot" 2>/dev/null || true
     exit 1

@@ -32,7 +32,14 @@ if [ -z "$CANARY_ID" ] || [ "$CANARY_ID" = "null" ]; then
     echo "SKIP: canary phone ($CANARY_SERIAL) not registered in registry"
     exit 0
 fi
-echo "Canary phone: $CANARY_ID ($CANARY_SERIAL)"
+
+CANARY_STATUS=$(echo "$PHONES" | jq -r ".[] | select(.id == \"$CANARY_ID\") | .status // empty")
+echo "Canary phone: $CANARY_ID ($CANARY_SERIAL) status=$CANARY_STATUS"
+
+if [ "$CANARY_STATUS" != "connected" ]; then
+    echo "SKIP: canary phone is not connected (status=$CANARY_STATUS) — needs physical recovery"
+    exit 0
+fi
 
 ADAPTER_MAC_BEFORE=$(echo "$PHONES" | jq -r ".[] | select(.id == \"$CANARY_ID\") | .adapter_mac // empty")
 echo "Adapter MAC before: ${ADAPTER_MAC_BEFORE:-none}"
@@ -122,7 +129,7 @@ echo "PASS: dongle assignment preserved after transient disconnect"
 # --- Step 4: Verify no phone.lost event was emitted ---
 echo ""
 echo "--- Checking that no phone.lost event was emitted for canary ---"
-LOST_EVENTS=$(curl -s "$REGISTRY_URL/api/v1/events?event_type=info.phone.lost&entity_id=$CANARY_ID&limit=5")
+LOST_EVENTS=$(curl -s "$REGISTRY_URL/api/v1/events?event_type=info.phone.lost&limit=10")
 RECENT_LOST=$(echo "$LOST_EVENTS" | jq 'length')
 
 if [ "$RECENT_LOST" -gt 0 ]; then
