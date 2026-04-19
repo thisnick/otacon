@@ -33,6 +33,14 @@ for f in $DELETED_FILES; do
     fi
 done
 
+# Old package location must not exist (moved to src/)
+if [ -d "$REPO/scripts/fleet_agent" ]; then
+    echo "  FAIL: scripts/fleet_agent/ still exists (should be moved to src/fleet_agent/)"
+    exit 1
+else
+    echo "  PASS: scripts/fleet_agent/ removed (moved to src/)"
+fi
+
 # fleet-cli exists and is executable (or at least exists)
 if [ -f "$REPO/src/fleet-cli" ]; then
     echo "  PASS: src/fleet-cli exists"
