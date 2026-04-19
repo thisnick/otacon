@@ -66,6 +66,17 @@ impl AuthStore {
         }
     }
 
+    /// Re-read tokens from disk. Required because registry and admin run as
+    /// separate processes sharing tokens.json on a Docker volume.
+    async fn reload_from_disk(&self) {
+        let path = self.data_dir.join("tokens.json");
+        if let Ok(data) = tokio::fs::read_to_string(&path).await {
+            if let Ok(map) = serde_json::from_str::<HashMap<String, Token>>(&data) {
+                *self.tokens.write().await = map;
+            }
+        }
+    }
+
     /// Generate a new raw token string with the appropriate prefix.
     pub fn generate_raw_token(scope: AuthScope) -> String {
         let random_bytes: [u8; 32] = rand::random();
@@ -116,6 +127,8 @@ impl AuthStore {
 
     /// Validate a raw bearer token. Returns the Token if valid (not revoked/expired).
     pub async fn validate(&self, raw: &str) -> Option<Token> {
+        // Re-read from disk — token may have been created by the admin process
+        self.reload_from_disk().await;
         let hash = Self::hash_token(raw);
         let mut tokens = self.tokens.write().await;
 
@@ -146,6 +159,7 @@ impl AuthStore {
 
     /// Revoke a token by its ID.
     pub async fn revoke(&self, token_id: &str) -> bool {
+        self.reload_from_disk().await;
         let mut tokens = self.tokens.write().await;
         if let Some(token) = tokens.get_mut(token_id) {
             token.revoked_at = Some(Utc::now());
@@ -159,6 +173,7 @@ impl AuthStore {
 
     /// List all tokens (for admin view).
     pub async fn list_tokens(&self) -> Vec<Token> {
+        self.reload_from_disk().await;
         let tokens = self.tokens.read().await;
         let mut result: Vec<Token> = tokens.values().cloned().collect();
         result.sort_by(|a, b| b.created_at.cmp(&a.created_at));
@@ -319,12 +334,13 @@ mod tests {
         let (store, _dir) = test_store().await;
         let (id, raw) = store.create_token(AuthScope::Node, None, None).await;
 
-        // Manually set expires_at to the past
+        // Manually set expires_at to the past and persist to disk
         {
             let mut tokens = store.tokens.write().await;
             let t = tokens.get_mut(&id).unwrap();
             t.expires_at = Some(Utc::now() - chrono::Duration::hours(1));
         }
+        store.save().await;
 
         assert!(store.validate(&raw).await.is_none(), "expired token must not validate");
     }
@@ -382,5 +398,27 @@ mod tests {
         let token = store2.validate(&raw).await.expect("token must survive reload");
         assert_eq!(token.scope, AuthScope::Node);
         assert_eq!(token.node_id.as_deref(), Some("h1"));
+    }
+
+    #[tokio::test]
+    async fn cross_process_token_visible() {
+        // Simulates cross-process: admin creates token, registry validates it
+        let dir = TempDir::new().unwrap();
+
+        // "Admin process" creates a token
+        let admin = AuthStore::load(dir.path()).await;
+        let (_id, raw) = admin.create_token(AuthScope::Node, Some("h2".into()), None).await;
+
+        // "Registry process" was loaded before the token was created
+        let registry = AuthStore::load(dir.path()).await;
+        // But it loaded from disk so it should already have it.
+        // Now simulate: registry was loaded BEFORE admin created the token.
+        // Clear registry's in-memory state to simulate stale cache:
+        registry.tokens.write().await.clear();
+
+        // validate() should reload from disk and find the token
+        let token = registry.validate(&raw).await.expect("cross-process token must validate");
+        assert_eq!(token.scope, AuthScope::Node);
+        assert_eq!(token.node_id.as_deref(), Some("h2"));
     }
 }
