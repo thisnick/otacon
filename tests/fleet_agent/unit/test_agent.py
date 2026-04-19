@@ -122,7 +122,7 @@ class TestRunMaintenanceTick:
         ])
         with patch('fleet_agent.phone.health.check_bt_bonded',
                    side_effect=lambda *a, **kw: next(bt_results)):
-            with patch('fleet_agent.registry.server.register_with_server'):
+            with patch('fleet_agent.phone.agent.register_with_server'):
                 agent.run_maintenance_tick()
         assert agent.status.health['bt_bonded'] is False
         assert agent.status.health['bt_bonded_pi'] is True

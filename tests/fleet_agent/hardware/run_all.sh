@@ -24,6 +24,7 @@ TESTS=(
     "$DIR/test_post_pair_restriction_reapply.sh"
     "$DIR/test_factory_reset_full_recovery.sh"
     "$DIR/test_bt_silence.sh"
+    "$DIR/verify_clean.sh"
 )
 
 PASSED=0
