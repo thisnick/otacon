@@ -73,6 +73,36 @@ tr:hover { background: #161b22; }
 <script>
 const $ = id => document.getElementById(id);
 
+// --- Admin token handling ---
+function getToken() {
+  // Accept ?token=... in URL (save to localStorage, then strip from URL)
+  const params = new URLSearchParams(location.search);
+  const urlToken = params.get('token');
+  if (urlToken) {
+    localStorage.setItem('otacon_admin_token', urlToken);
+    history.replaceState(null, '', location.pathname);
+    return urlToken;
+  }
+  return localStorage.getItem('otacon_admin_token');
+}
+
+let adminToken = getToken();
+
+function authFetch(url) {
+  const opts = adminToken ? { headers: { 'Authorization': 'Bearer ' + adminToken } } : {};
+  return fetch(url, opts).then(r => {
+    if (r.status === 401) {
+      const token = prompt('Admin token required.\nPaste the otc_admin_... token from server bootstrap logs:');
+      if (token && token.trim()) {
+        adminToken = token.trim();
+        localStorage.setItem('otacon_admin_token', adminToken);
+        return fetch(url, { headers: { 'Authorization': 'Bearer ' + adminToken } });
+      }
+    }
+    return r;
+  });
+}
+
 function relTime(iso) {
   if (!iso) return '-';
   const diff = (Date.now() - new Date(iso).getTime()) / 1000;
@@ -108,10 +138,10 @@ let pollOk = true;
 async function poll() {
   try {
     const [hosts, phones, dongles, events] = await Promise.all([
-      fetch('/api/v1/hosts').then(r => r.json()),
-      fetch('/api/v1/phones').then(r => r.json()),
-      fetch('/api/v1/dongles').then(r => r.json()),
-      fetch('/api/v1/events?limit=20').then(r => r.json()),
+      authFetch('/api/v1/hosts').then(r => r.json()),
+      authFetch('/api/v1/phones').then(r => r.json()),
+      authFetch('/api/v1/dongles').then(r => r.json()),
+      authFetch('/api/v1/events?limit=20').then(r => r.json()),
     ]);
 
     // Hosts
