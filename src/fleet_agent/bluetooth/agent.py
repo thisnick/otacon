@@ -83,9 +83,13 @@ def _get_adapter_mac(hci_name: str) -> str | None:
 def _check_allowlist(device_path: str) -> bool:
     """Return True if this peer is allowed to pair on this adapter.
 
+    Re-reads phones.json each call (cross-process; pair.py may have
+    updated the file since the last check).
+
     If the allowlist is empty (phones.json not yet populated with BT
     MACs), all requests are accepted to avoid blocking initial setup.
     """
+    _load_allowlist()
     if not _adapter_allowlist:
         return True  # no allowlist yet — accept all (initial provisioning)
 
