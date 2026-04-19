@@ -8,7 +8,8 @@ mod ws;
 
 #[tokio::main]
 async fn main() {
-    let data_dir = std::env::var("REGISTRY_DATA_DIR")
+    let data_dir = std::env::var("OTACON_REGISTRY_DATA")
+        .or_else(|_| std::env::var("REGISTRY_DATA_DIR"))
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
             let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());

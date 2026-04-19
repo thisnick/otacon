@@ -1,0 +1,28 @@
+# Stage 1: Build the registry binary
+FROM rust:1-slim-bookworm AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src/registry
+COPY src/registry/Cargo.toml src/registry/Cargo.lock ./
+COPY src/registry/src/ ./src/
+
+RUN cargo build --release
+
+# Stage 2: Minimal runtime
+FROM debian:bookworm-slim
+
+RUN groupadd -r registry && useradd -r -g registry -d /data registry \
+    && mkdir -p /data/registry && chown registry:registry /data/registry
+
+COPY --from=builder /src/registry/target/release/otacon-registry /usr/local/bin/otacon-registry
+
+ENV OTACON_REGISTRY_DATA=/data/registry
+ENV RUST_LOG=info
+
+EXPOSE 8080
+
+USER registry
+ENTRYPOINT ["otacon-registry"]

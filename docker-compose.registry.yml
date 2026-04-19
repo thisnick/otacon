@@ -1,0 +1,17 @@
+services:
+  registry:
+    build:
+      context: .
+      dockerfile: Dockerfile.registry
+    image: ghcr.io/thisnick/${OTACON_REPO:-otacon-dev}/registry:latest
+    restart: unless-stopped
+    ports:
+      - "${REGISTRY_HOST_PORT:-9080}:8080"
+    environment:
+      - OTACON_REGISTRY_DATA=/data/registry
+      - RUST_LOG=${RUST_LOG:-info}
+    volumes:
+      - registry-data:/data/registry
+
+volumes:
+  registry-data:

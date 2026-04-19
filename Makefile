@@ -3,7 +3,8 @@
        wake cli build-all build-server build-cli \
        restart-monitor bluetooth-connect bluetooth-status bluetooth-watch \
        clear-restrictions apply-restrictions \
-       generate generate-api generate-types validate-api
+       generate generate-api generate-types validate-api \
+       registry-build registry-deploy registry-logs registry-restart
 
 PI_HOST ?= otacon-pi
 PI_USER ?= nick
@@ -123,3 +124,19 @@ pigen-config:
 	@[ -n "$${WIFI_AP_SSID}" ] && echo "WIFI_AP_SSID=$${WIFI_AP_SSID}" >> "$(DEVICE)/otacon/startup.conf" || true
 	@[ -n "$${WIFI_AP_PASSWORD}" ] && echo "WIFI_AP_PASSWORD=$${WIFI_AP_PASSWORD}" >> "$(DEVICE)/otacon/startup.conf" || true
 	@echo "Wrote $(DEVICE)/otacon/startup.conf"
+
+# Registry (separate lifecycle from fleet-node)
+REGISTRY_HOST ?= $(PI_HOST)
+REGISTRY_SSH := $(PI_USER)@$(REGISTRY_HOST)
+
+registry-build:
+	docker compose -f docker-compose.registry.yml build
+
+registry-deploy:
+	./scripts/deploy-registry.sh $(REGISTRY_HOST)
+
+registry-logs:
+	ssh $(REGISTRY_SSH) 'cd ~/otacon-registry && docker compose logs -f --tail=50'
+
+registry-restart:
+	ssh $(REGISTRY_SSH) 'cd ~/otacon-registry && docker compose restart'

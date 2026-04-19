@@ -77,6 +77,22 @@ Key variables:
 - `OTACON_REPO` — Docker image repo (`otacon-dev` for dev, `otacon` for prod)
 - `ALSA_CAPTURE_DEVICE` / `ALSA_PLAYBACK_DEVICE` — ALSA device names (default: `plughw:Device,0`)
 
+## Registry Deployment
+
+The registry runs as a separate Docker container with its own lifecycle, independent of the fleet-node container. It can be deployed to any SSH-accessible host.
+
+```bash
+make registry-build                        # Build registry image locally
+make registry-deploy                       # Deploy to Pi (default REGISTRY_HOST=otacon-pi)
+make registry-deploy REGISTRY_HOST=my-vps  # Deploy to any host
+make registry-logs                         # Tail registry logs
+make registry-restart                      # Restart registry container
+```
+
+The registry listens on port 9080 by default (configurable via `REGISTRY_HOST_PORT` in `.env.registry.example`). This avoids collision with the fleet-node's port 8080 when both run on the same host.
+
+Data persists in a Docker named volume (`registry-data`). No data migration is needed — phones re-register on first heartbeat.
+
 ## Make Targets
 
 Default `PI_HOST` is `otacon-pi` (override via `.env` or `PI_HOST=...`).
@@ -105,4 +121,10 @@ Build (local):
 Phone:
   make phone-setup      Lock down connected phone
   make phone-reset      Remove phone lockdown
+
+Registry:
+  make registry-build   Build registry Docker image
+  make registry-deploy  Deploy registry to host (REGISTRY_HOST=otacon-pi)
+  make registry-logs    Tail registry logs
+  make registry-restart Restart registry container
 ```
