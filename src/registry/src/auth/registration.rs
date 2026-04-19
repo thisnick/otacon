@@ -3,9 +3,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::sync::{watch, RwLock};
+use tokio::sync::RwLock;
 
 use super::store::{AuthScope, AuthStore};
+use crate::store::atomic_write;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -23,6 +24,10 @@ pub struct PendingRegistration {
     pub tailnet_node_id: Option<String>,
     pub status: RegistrationStatus,
     pub token_id: Option<String>,
+    /// Raw token stashed here temporarily after approval so the polling process can read it.
+    /// Cleared after the first successful poll retrieval.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_token: Option<String>,
     pub requested_at: DateTime<Utc>,
     pub resolved_at: Option<DateTime<Utc>>,
 }
@@ -37,8 +42,6 @@ pub struct PollResult {
 
 pub struct RegistrationStore {
     pub registrations: RwLock<HashMap<String, PendingRegistration>>,
-    /// Per-registration notification channels. The node long-polls by waiting on rx.
-    notifiers: Arc<RwLock<HashMap<String, watch::Sender<Option<PollResult>>>>>,
     data_dir: PathBuf,
     auth_store: Arc<AuthStore>,
 }
@@ -54,7 +57,6 @@ impl RegistrationStore {
 
         Self {
             registrations: RwLock::new(registrations),
-            notifiers: Arc::new(RwLock::new(HashMap::new())),
             data_dir: data_dir.to_path_buf(),
             auth_store,
         }
@@ -63,10 +65,29 @@ impl RegistrationStore {
     async fn save(&self) {
         let regs = self.registrations.read().await;
         if let Ok(data) = serde_json::to_string_pretty(&*regs) {
-            tokio::fs::write(self.data_dir.join("registrations.json"), data)
-                .await
-                .ok();
+            atomic_write(&self.data_dir.join("registrations.json"), data.as_bytes()).await;
         }
+    }
+
+    /// Re-read all registrations from disk into the in-memory map.
+    /// Required because registry and admin run as separate processes sharing a JSON file.
+    async fn reload_from_disk(&self) {
+        let path = self.data_dir.join("registrations.json");
+        if let Ok(data) = tokio::fs::read_to_string(&path).await {
+            if let Ok(map) = serde_json::from_str::<HashMap<String, PendingRegistration>>(&data) {
+                *self.registrations.write().await = map;
+            }
+        }
+    }
+
+    /// Re-read a single registration's state from disk.
+    /// Used by the poll loop to detect cross-process changes (admin approves in a different container).
+    async fn reload_registration(&self, pending_id: &str) -> Option<PendingRegistration> {
+        let path = self.data_dir.join("registrations.json");
+        let data = tokio::fs::read_to_string(&path).await.ok()?;
+        let map: HashMap<String, PendingRegistration> =
+            serde_json::from_str(&data).ok()?;
+        map.get(pending_id).cloned()
     }
 
     /// Create a new pending registration. Returns the pending_id.
@@ -85,13 +106,10 @@ impl RegistrationStore {
             tailnet_node_id,
             status: RegistrationStatus::Pending,
             token_id: None,
+            raw_token: None,
             requested_at: Utc::now(),
             resolved_at: None,
         };
-
-        // Create the watch channel for long-poll notification
-        let (tx, _) = watch::channel(None);
-        self.notifiers.write().await.insert(id.clone(), tx);
 
         self.registrations.write().await.insert(id.clone(), reg);
         self.save().await;
@@ -100,30 +118,39 @@ impl RegistrationStore {
         id
     }
 
-    /// Long-poll for registration result. Returns when approved/rejected or on timeout.
+    /// Long-poll for registration result. Periodically re-reads from disk to detect
+    /// cross-process approval/rejection (admin runs in a separate container).
+    /// Returns when approved/rejected or on timeout.
     pub async fn poll(
         &self,
         pending_id: &str,
         timeout: std::time::Duration,
     ) -> Option<PollResult> {
-        // Get or create a watch receiver for this registration
-        let rx = {
-            let notifiers = self.notifiers.read().await;
-            notifiers.get(pending_id).map(|tx| tx.subscribe())
-        };
+        let poll_interval = std::time::Duration::from_secs(1);
 
-        let mut rx = match rx {
-            Some(rx) => rx,
-            None => {
-                // Registration doesn't exist or already cleaned up
-                // Check if it was already resolved
-                let regs = self.registrations.read().await;
-                if let Some(reg) = regs.get(pending_id) {
+        let result = tokio::time::timeout(timeout, async {
+            loop {
+                // Re-read from disk to pick up changes made by the admin process
+                if let Some(reg) = self.reload_registration(pending_id).await {
                     match reg.status {
                         RegistrationStatus::Approved => {
-                            // Already approved but we don't have the raw token anymore.
-                            // The node should have received it from the first poll.
-                            return None;
+                            let token = reg.raw_token.clone();
+                            // Clear the raw token from disk now that it's been retrieved
+                            if token.is_some() {
+                                let mut regs = self.registrations.write().await;
+                                if let Some(r) = regs.get_mut(pending_id) {
+                                    r.status = RegistrationStatus::Approved;
+                                    r.token_id = reg.token_id.clone();
+                                    r.resolved_at = reg.resolved_at;
+                                    r.raw_token = None;
+                                }
+                                drop(regs);
+                                self.save().await;
+                            }
+                            return Some(PollResult {
+                                status: RegistrationStatus::Approved,
+                                token,
+                            });
                         }
                         RegistrationStatus::Rejected => {
                             return Some(PollResult {
@@ -131,29 +158,14 @@ impl RegistrationStore {
                                 token: None,
                             });
                         }
-                        RegistrationStatus::Pending => {
-                            // Re-create the notifier
-                            let (tx, rx) = watch::channel(None);
-                            self.notifiers.write().await.insert(pending_id.to_string(), tx);
-                            rx
-                        }
+                        RegistrationStatus::Pending => {}
                     }
                 } else {
+                    // Registration not found on disk
                     return None;
                 }
-            }
-        };
 
-        // Wait for notification or timeout
-        let result = tokio::time::timeout(timeout, async {
-            loop {
-                if rx.changed().await.is_err() {
-                    return None;
-                }
-                let val = rx.borrow().clone();
-                if val.is_some() {
-                    return val;
-                }
+                tokio::time::sleep(poll_interval).await;
             }
         })
         .await;
@@ -164,8 +176,11 @@ impl RegistrationStore {
         }
     }
 
-    /// Approve a pending registration. Creates a node token and notifies the poller.
+    /// Approve a pending registration. Creates a node token and writes to disk.
+    /// The polling registry process will pick up the change on its next file re-read.
     pub async fn approve(&self, pending_id: &str) -> Result<String, String> {
+        // Re-read from disk — registration may have been created by a different process
+        self.reload_from_disk().await;
         let mut regs = self.registrations.write().await;
         let reg = regs
             .get_mut(pending_id)
@@ -187,36 +202,21 @@ impl RegistrationStore {
 
         reg.status = RegistrationStatus::Approved;
         reg.token_id = Some(token_id);
+        reg.raw_token = Some(raw_token.clone());
         reg.resolved_at = Some(Utc::now());
 
         let host_id = reg.host_id.clone();
         drop(regs);
         self.save().await;
 
-        // Notify the long-poller
-        let notifiers = self.notifiers.read().await;
-        if let Some(tx) = notifiers.get(pending_id) {
-            let _ = tx.send(Some(PollResult {
-                status: RegistrationStatus::Approved,
-                token: Some(raw_token.clone()),
-            }));
-        }
-        drop(notifiers);
-
-        // Cleanup the notifier after a short delay
-        let pending_id_owned = pending_id.to_string();
-        let notifiers = self.notifiers.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-            notifiers.write().await.remove(&pending_id_owned);
-        });
-
         eprintln!("[auth] Registration {pending_id} approved for host {host_id}");
         Ok(raw_token)
     }
 
-    /// Reject a pending registration.
+    /// Reject a pending registration. Writes to disk; polling process picks it up.
     pub async fn reject(&self, pending_id: &str) -> Result<(), String> {
+        // Re-read from disk — registration may have been created by a different process
+        self.reload_from_disk().await;
         let mut regs = self.registrations.write().await;
         let reg = regs
             .get_mut(pending_id)
@@ -231,29 +231,13 @@ impl RegistrationStore {
         drop(regs);
         self.save().await;
 
-        // Notify the long-poller
-        let notifiers = self.notifiers.read().await;
-        if let Some(tx) = notifiers.get(pending_id) {
-            let _ = tx.send(Some(PollResult {
-                status: RegistrationStatus::Rejected,
-                token: None,
-            }));
-        }
-
-        // Cleanup
-        let pending_id_owned = pending_id.to_string();
-        let notifiers_clone = self.notifiers.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-            notifiers_clone.write().await.remove(&pending_id_owned);
-        });
-
         eprintln!("[auth] Registration {pending_id} rejected");
         Ok(())
     }
 
     /// List pending registrations (for admin view).
     pub async fn list_pending(&self) -> Vec<PendingRegistration> {
+        self.reload_from_disk().await;
         let regs = self.registrations.read().await;
         let mut result: Vec<PendingRegistration> = regs
             .values()
@@ -267,6 +251,7 @@ impl RegistrationStore {
     /// List all registrations (for admin view).
     #[allow(dead_code)]
     pub async fn list_all(&self) -> Vec<PendingRegistration> {
+        self.reload_from_disk().await;
         let regs = self.registrations.read().await;
         let mut result: Vec<PendingRegistration> = regs.values().cloned().collect();
         result.sort_by(|a, b| b.requested_at.cmp(&a.requested_at));
@@ -316,10 +301,11 @@ mod tests {
         // Registration should no longer be pending
         assert!(reg.list_pending().await.is_empty());
 
-        // Registration should be marked approved
+        // Registration should be marked approved with raw_token stashed
         let all = reg.list_all().await;
         assert_eq!(all[0].status, RegistrationStatus::Approved);
         assert!(all[0].token_id.is_some());
+        assert!(all[0].raw_token.is_some(), "raw_token should be stashed for poll retrieval");
     }
 
     #[tokio::test]
@@ -370,20 +356,18 @@ mod tests {
 
         let id = reg.register("host-6".into(), None, None).await;
 
-        // Spawn a poller
+        // Spawn a poller — it will re-read the file every 1s
         let reg_clone = reg.clone();
         let id_clone = id.clone();
         let poll_handle = tokio::spawn(async move {
-            reg_clone.poll(&id_clone, std::time::Duration::from_secs(5)).await
+            reg_clone.poll(&id_clone, std::time::Duration::from_secs(10)).await
         });
 
-        // Small delay to ensure poller is waiting
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-        // Approve
+        // Small delay then approve — the poller's next file re-read will pick it up
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         reg.approve(&id).await.unwrap();
 
-        // Poller should wake up with the token
+        // Poller should wake up with the token within ~1s
         let result = poll_handle.await.unwrap().expect("poll should return result");
         assert_eq!(result.status, RegistrationStatus::Approved);
         assert!(result.token.is_some());
@@ -400,10 +384,10 @@ mod tests {
         let reg_clone = reg.clone();
         let id_clone = id.clone();
         let poll_handle = tokio::spawn(async move {
-            reg_clone.poll(&id_clone, std::time::Duration::from_secs(5)).await
+            reg_clone.poll(&id_clone, std::time::Duration::from_secs(10)).await
         });
 
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         reg.reject(&id).await.unwrap();
 
         let result = poll_handle.await.unwrap().expect("poll should return result");
@@ -412,11 +396,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn poll_clears_raw_token_after_retrieval() {
+        let (_auth, reg, _dir) = test_stores().await;
+        let reg = Arc::new(reg);
+
+        let id = reg.register("host-clear".into(), None, None).await;
+        reg.approve(&id).await.unwrap();
+
+        // Poll picks up the approval and clears raw_token
+        let result = reg.poll(&id, std::time::Duration::from_millis(500)).await;
+        assert!(result.is_some());
+        assert!(result.unwrap().token.is_some());
+
+        // raw_token should now be cleared on disk
+        let disk_reg = reg.reload_registration(&id).await.unwrap();
+        assert!(disk_reg.raw_token.is_none(), "raw_token should be cleared after poll retrieval");
+    }
+
+    #[tokio::test]
     async fn poll_times_out() {
         let (_auth, reg, _dir) = test_stores().await;
 
         let id = reg.register("host-8".into(), None, None).await;
-        // Very short timeout
+        // Short timeout — shorter than poll interval, so it times out without ever re-reading
         let result = reg.poll(&id, std::time::Duration::from_millis(50)).await;
         assert!(result.is_none(), "poll should return None on timeout");
     }
@@ -446,5 +448,48 @@ mod tests {
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].id, id);
         assert_eq!(pending[0].host_id, "host-persist");
+    }
+
+    #[tokio::test]
+    async fn atomic_write_creates_valid_file() {
+        use crate::store::atomic_write;
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("test.json");
+        let data = r#"{"key": "value"}"#;
+        atomic_write(&path, data.as_bytes()).await;
+        let read_back = tokio::fs::read_to_string(&path).await.unwrap();
+        assert_eq!(read_back, data);
+    }
+
+    #[tokio::test]
+    async fn cross_process_approve() {
+        // Simulates cross-process scenario: registry creates registration,
+        // admin (separate store instance) approves it.
+        let dir = TempDir::new().unwrap();
+
+        // "Registry process" — creates registration
+        let auth1 = Arc::new(AuthStore::load(dir.path()).await);
+        let registry = RegistrationStore::load(dir.path(), auth1.clone()).await;
+        let id = registry.register("host-cross".into(), Some("pi".into()), None).await;
+
+        // "Admin process" — loaded after registration was created, but from same data dir
+        let auth2 = Arc::new(AuthStore::load(dir.path()).await);
+        let admin = RegistrationStore::load(dir.path(), auth2.clone()).await;
+
+        // Admin should see the pending registration (reload_from_disk on list_pending)
+        let pending = admin.list_pending().await;
+        assert_eq!(pending.len(), 1, "admin should see registry's pending registration");
+        assert_eq!(pending[0].id, id);
+
+        // Admin approves — reload_from_disk should find the registration
+        let raw_token = admin.approve(&id).await.expect("cross-process approve should succeed");
+        assert!(raw_token.starts_with("otc_node_"));
+
+        // Registry's poll should pick up the approval from disk
+        let result = registry.poll(&id, std::time::Duration::from_millis(500)).await;
+        assert!(result.is_some());
+        let result = result.unwrap();
+        assert_eq!(result.status, RegistrationStatus::Approved);
+        assert!(result.token.unwrap().starts_with("otc_node_"));
     }
 }

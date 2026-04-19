@@ -54,13 +54,32 @@ while true; do
         FIXED=true
     fi
 
-    # 5. Ensure iptables NAT is set up
-    if ! iptables -t nat -L POSTROUTING 2>/dev/null | grep -q "10.42.0.0/24"; then
+    # 5. Ensure iptables NAT + OTACON_FWD chain are set up
+    if ! iptables -t nat -S POSTROUTING 2>/dev/null | grep -q -- "-s 10.42.0.0/24"; then
         log "iptables NAT missing — reconfiguring"
         sysctl -w net.ipv4.ip_forward=1 &>/dev/null
         iptables -t nat -A POSTROUTING -s 10.42.0.0/24 -o eth0 -j MASQUERADE 2>/dev/null || true
-        iptables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
-        iptables -A FORWARD -i wlan0 -o eth0 -s 10.42.0.0/24 -j ACCEPT 2>/dev/null || true
+        FIXED=true
+    fi
+    if ! iptables -t nat -S POSTROUTING 2>/dev/null | grep -q -- "-s 172.0.0.0/8"; then
+        log "Docker bridge NAT missing — adding"
+        iptables -t nat -A POSTROUTING -s 172.0.0.0/8 -o eth0 -j MASQUERADE 2>/dev/null || true
+        FIXED=true
+    fi
+    # Ensure OTACON_FWD chain exists and is jumped to from FORWARD
+    if ! iptables -L OTACON_FWD -n 2>/dev/null | grep -q "OTACON_FWD"; then
+        log "OTACON_FWD chain missing — rebuilding"
+        iptables -N OTACON_FWD 2>/dev/null || iptables -F OTACON_FWD
+        iptables -C FORWARD -j OTACON_FWD 2>/dev/null || iptables -I FORWARD 1 -j OTACON_FWD
+        iptables -A OTACON_FWD -m state --state ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true
+        iptables -A OTACON_FWD -i wlan0 -o eth0 -s 10.42.0.0/24 -j ACCEPT 2>/dev/null || true
+        iptables -A OTACON_FWD -i br-+ -o eth0 -j ACCEPT 2>/dev/null || true
+        iptables -A OTACON_FWD -i eth0 -o br-+ -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null || true
+        iptables -A OTACON_FWD -o br-+ -m conntrack --ctstate DNAT -j ACCEPT 2>/dev/null || true
+        iptables -A OTACON_FWD -i wlan0 -d 10.0.0.0/8 -j DROP 2>/dev/null || true
+        iptables -A OTACON_FWD -i wlan0 -d 172.16.0.0/12 -j DROP 2>/dev/null || true
+        iptables -A OTACON_FWD -i wlan0 -d 192.168.0.0/16 -j DROP 2>/dev/null || true
+        iptables -A OTACON_FWD -i wlan0 -j DROP 2>/dev/null || true
         FIXED=true
     fi
 

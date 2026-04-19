@@ -218,7 +218,25 @@ async fn load_map<V: serde::de::DeserializeOwned>(path: &Path) -> HashMap<String
 
 async fn save_map<V: Serialize>(path: &Path, map: &HashMap<String, V>) {
     if let Ok(data) = serde_json::to_string_pretty(map) {
-        tokio::fs::write(path, data).await.ok();
+        atomic_write(path, data.as_bytes()).await;
+    }
+}
+
+/// Write data atomically: write to a temp file in the same directory, then rename.
+/// This prevents readers from seeing partial/corrupt JSON during concurrent access.
+pub(crate) async fn atomic_write(path: &Path, data: &[u8]) {
+    use tokio::io::AsyncWriteExt;
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let tmp_path = dir.join(format!(".tmp_{}", uuid::Uuid::new_v4()));
+    let ok = async {
+        let mut f = tokio::fs::File::create(&tmp_path).await?;
+        f.write_all(data).await?;
+        f.sync_all().await?;
+        tokio::fs::rename(&tmp_path, path).await
+    }
+    .await;
+    if ok.is_err() {
+        let _ = tokio::fs::remove_file(&tmp_path).await;
     }
 }
 

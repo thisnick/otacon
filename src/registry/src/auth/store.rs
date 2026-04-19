@@ -5,6 +5,8 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::sync::RwLock;
 
+use crate::store::atomic_write;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AuthScope {
@@ -60,9 +62,7 @@ impl AuthStore {
     pub async fn save(&self) {
         let tokens = self.tokens.read().await;
         if let Ok(data) = serde_json::to_string_pretty(&*tokens) {
-            tokio::fs::write(self.data_dir.join("tokens.json"), data)
-                .await
-                .ok();
+            atomic_write(&self.data_dir.join("tokens.json"), data.as_bytes()).await;
         }
     }
 

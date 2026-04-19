@@ -34,9 +34,11 @@ for pid in "${PIDS[@]}"; do
 done
 
 # Analyze responses
-TOTAL=$(wc -l < "$STATUSES_FILE")
-OK_COUNT=$(grep -c '^20[01]$' "$STATUSES_FILE" || echo 0)
-RATE_LIMITED=$(grep -c '^429$' "$STATUSES_FILE" || echo 0)
+TOTAL=$(wc -l < "$STATUSES_FILE" | tr -d ' ')
+OK_COUNT=$(grep -c '^20[01]$' "$STATUSES_FILE" 2>/dev/null || true)
+OK_COUNT=${OK_COUNT:-0}
+RATE_LIMITED=$(grep -c '^429$' "$STATUSES_FILE" 2>/dev/null || true)
+RATE_LIMITED=${RATE_LIMITED:-0}
 OTHER=$(grep -v '^20[01]$' "$STATUSES_FILE" | grep -v '^429$' | sort | uniq -c | sort -rn || echo "none")
 
 echo ""

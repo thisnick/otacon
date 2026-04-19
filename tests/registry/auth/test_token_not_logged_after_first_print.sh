@@ -27,7 +27,7 @@ echo "--- Checking container logs for plaintext token ---"
 
 # Get recent logs (excluding first 10 lines which might be the bootstrap output)
 ALL_LOGS=$(ssh "$PI_HOST" "docker logs $CONTAINER 2>&1" 2>/dev/null || echo "")
-LINE_COUNT=$(echo "$ALL_LOGS" | wc -l)
+LINE_COUNT=$(echo "$ALL_LOGS" | wc -l | tr -d ' ')
 
 if [ "$LINE_COUNT" -le 10 ]; then
     observe "Only $LINE_COUNT lines of logs -- too few to test post-bootstrap behavior"
@@ -37,7 +37,8 @@ fi
 # Skip the first section (bootstrap) and search remaining logs
 # The bootstrap token print is expected in the first few lines
 AFTER_BOOTSTRAP=$(echo "$ALL_LOGS" | tail -n +11)
-TOKEN_APPEARANCES=$(echo "$AFTER_BOOTSTRAP" | grep -c "$ADMIN_TOKEN" || echo 0)
+TOKEN_APPEARANCES=$(echo "$AFTER_BOOTSTRAP" | grep -c "$ADMIN_TOKEN" 2>/dev/null || true)
+TOKEN_APPEARANCES=${TOKEN_APPEARANCES:-0}
 
 if [ "$TOKEN_APPEARANCES" -eq 0 ]; then
     pass "Admin token not found in post-bootstrap logs"
@@ -56,7 +57,8 @@ TOKEN_HEX="${ADMIN_TOKEN#otc_admin_}"
 if [ -n "$TOKEN_HEX" ] && [ ${#TOKEN_HEX} -ge 16 ]; then
     # Search for first 16 chars of hex in logs
     PARTIAL="${TOKEN_HEX:0:16}"
-    PARTIAL_HITS=$(echo "$AFTER_BOOTSTRAP" | grep -c "$PARTIAL" || echo 0)
+    PARTIAL_HITS=$(echo "$AFTER_BOOTSTRAP" | grep -c "$PARTIAL" 2>/dev/null || true)
+    PARTIAL_HITS=${PARTIAL_HITS:-0}
     if [ "$PARTIAL_HITS" -eq 0 ]; then
         pass "No partial token hex found in operational logs"
     else

@@ -20,12 +20,12 @@ pass "Registered, pending_id=$PENDING_ID"
 # Poll and DON'T approve -- expect 408
 echo ""
 echo "--- Polling without approval (waiting for server timeout) ---"
-echo "    This may take up to 60 seconds..."
+echo "    Server timeout is 300s (5 min). Client waits up to 330s."
 
 START_TIME=$(date +%s)
 TMPFILE=$(mktemp)
 STATUS=$(curl -s -o "$TMPFILE" -w '%{http_code}' \
-    -X POST --max-time 120 \
+    -X POST --max-time 330 \
     "$REGISTRY_URL/api/v1/auth/poll/$PENDING_ID" 2>/dev/null) || STATUS="000"
 END_TIME=$(date +%s)
 ELAPSED=$((END_TIME - START_TIME))
@@ -37,7 +37,7 @@ echo "  Server responded after ${ELAPSED}s with status=$STATUS"
 if [ "$STATUS" = "408" ]; then
     pass "Long-poll timed out with 408 after ${ELAPSED}s"
 elif [ "$STATUS" = "000" ]; then
-    fail "poll_timeout" "Client timed out (120s) before server returned -- server may not enforce timeout"
+    fail "poll_timeout" "Client timed out (330s) before server returned -- server may not enforce timeout"
 elif [ "$STATUS" = "200" ]; then
     fail "poll_timeout" "Got 200 without approval -- possible bug, body=$BODY"
 else

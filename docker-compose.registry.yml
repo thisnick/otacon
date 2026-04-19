@@ -9,7 +9,8 @@ services:
     environment:
       - TS_AUTHKEY=${TS_AUTH_KEY_REGISTRY}
       - TS_HOSTNAME=otacon-registry
-      - TS_EXTRA_ARGS=--advertise-tags=tag:registry
+      # tag:registry can be re-added once the tailnet ACL defines it
+      - TS_EXTRA_ARGS=
       - TS_STATE_DIR=/var/lib/tailscale
       - TS_USERSPACE=false
     volumes:

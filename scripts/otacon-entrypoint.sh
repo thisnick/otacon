@@ -65,15 +65,30 @@ EOF
 
     sysctl -w net.ipv4.ip_forward=1
 
-    iptables -F FORWARD || true
+    # Use a custom chain for WiFi AP firewall rules so we don't flush Docker's
+    # own FORWARD rules (which handle port-mapped container traffic like admin:9090).
+    iptables -N OTACON_FWD 2>/dev/null || iptables -F OTACON_FWD
+    # Ensure our chain is jumped to from FORWARD (idempotent — check before adding)
+    iptables -C FORWARD -j OTACON_FWD 2>/dev/null || iptables -I FORWARD 1 -j OTACON_FWD
+
     iptables -t nat -F POSTROUTING || true
     iptables -t nat -A POSTROUTING -s 10.42.0.0/24 -o eth0 -j MASQUERADE
-    iptables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
-    iptables -A FORWARD -i wlan0 -o eth0 -s 10.42.0.0/24 -j ACCEPT
-    iptables -A FORWARD -i wlan0 -d 10.0.0.0/8     -j DROP
-    iptables -A FORWARD -i wlan0 -d 172.16.0.0/12  -j DROP
-    iptables -A FORWARD -i wlan0 -d 192.168.0.0/16 -j DROP
-    iptables -A FORWARD -i wlan0 -j DROP
+    # Docker bridge containers (e.g. tailscale-registry sidecar) need outbound access
+    iptables -t nat -A POSTROUTING -s 172.0.0.0/8 -o eth0 -j MASQUERADE
+
+    # WiFi AP: allow phones out to internet, block LAN access
+    iptables -A OTACON_FWD -m state --state ESTABLISHED,RELATED -j ACCEPT
+    iptables -A OTACON_FWD -i wlan0 -o eth0 -s 10.42.0.0/24 -j ACCEPT
+    # Docker bridge outbound (sidecar → internet)
+    iptables -A OTACON_FWD -i br-+ -o eth0 -j ACCEPT
+    iptables -A OTACON_FWD -i eth0 -o br-+ -m state --state RELATED,ESTABLISHED -j ACCEPT
+    # Inbound to Docker bridge containers (e.g. admin:9090 via Tailscale / eth0)
+    iptables -A OTACON_FWD -o br-+ -m conntrack --ctstate DNAT -j ACCEPT
+    # WiFi AP isolation — block phones from reaching LAN/Docker
+    iptables -A OTACON_FWD -i wlan0 -d 10.0.0.0/8     -j DROP
+    iptables -A OTACON_FWD -i wlan0 -d 172.16.0.0/12  -j DROP
+    iptables -A OTACON_FWD -i wlan0 -d 192.168.0.0/16 -j DROP
+    iptables -A OTACON_FWD -i wlan0 -j DROP
 else
     echo "WIFI_AP_SSID not set — skipping WiFi AP setup"
 fi
