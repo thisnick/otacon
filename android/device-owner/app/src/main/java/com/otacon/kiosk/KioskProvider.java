@@ -501,7 +501,12 @@ public class KioskProvider extends ContentProvider {
             return cursor;
         }
 
-        // removeBond is hidden API but accessible via reflection
+        // removeBond is hidden API but accessible via reflection.
+        // NOTE: On Samsung Android 16+, removeBond() returns true but the
+        // native bt_config retains the bond keys — the bond silently
+        // re-appears.  The fleet agent now uses `pm clear com.android.bluetooth`
+        // as the reliable unbond mechanism.  We still attempt removeBond here
+        // for other OEMs / older versions, but verify the outcome.
         try {
             java.lang.reflect.Method removeBond = device.getClass().getMethod("removeBond");
             boolean ok = (Boolean) removeBond.invoke(device);
@@ -512,8 +517,16 @@ public class KioskProvider extends ContentProvider {
                     try { Thread.sleep(500); } catch (InterruptedException ignored) {}
                 }
             }
+            // Verify the bond was actually removed — don't trust the return value
+            boolean stillBonded = device.getBondState() == android.bluetooth.BluetoothDevice.BOND_BONDED;
             MatrixCursor cursor = new MatrixCursor(new String[]{"ok", "status"});
-            cursor.addRow(new Object[]{ok, ok ? "removed" : "removeBond_returned_false"});
+            if (!stillBonded) {
+                cursor.addRow(new Object[]{true, "removed"});
+            } else if (ok) {
+                cursor.addRow(new Object[]{false, "removeBond_returned_ok_but_bond_persists"});
+            } else {
+                cursor.addRow(new Object[]{false, "removeBond_returned_false"});
+            }
             return cursor;
         } catch (Exception e) {
             return errorCursor("removeBond failed: " + e.getMessage());

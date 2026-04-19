@@ -267,6 +267,37 @@ def run_pair_dialog_watcher(serial: str, snapshot_url: str,
     log.info(f'[{serial}] Pair-dialog watcher stopped')
 
 
+def _nuke_phone_bt_bonds(serial: str):
+    """Wipe all phone-side BT bonds by clearing the Bluetooth app data.
+
+    On Samsung Android 16+, BluetoothDevice.removeBond() via reflection
+    silently fails — the Java API returns true but the native bt_config
+    retains the bond keys.  ``pm clear com.android.bluetooth`` is the only
+    reliable way to remove bonds on these devices.
+
+    Sequence: disable BT → clear data → re-enable BT.
+    """
+    log.info(f'[{serial}] Nuking all phone-side BT bonds via pm clear')
+    try:
+        adb_shell(serial, 'svc bluetooth disable', timeout=5)
+        time.sleep(3)
+        adb_shell(serial, 'pm clear com.android.bluetooth', timeout=10)
+        time.sleep(2)
+        adb_shell(serial, 'svc bluetooth enable', timeout=5)
+        # Wait for BT stack to fully reinitialize
+        for _ in range(10):
+            time.sleep(1)
+            try:
+                out = adb_shell(serial, 'dumpsys bluetooth_manager', timeout=5)
+                if 'state: ON' in out:
+                    break
+            except Exception:
+                pass
+        log.info(f'[{serial}] Phone BT bonds cleared and BT re-enabled')
+    except Exception as e:
+        log.warning(f'[{serial}] Failed to nuke phone BT bonds: {e}')
+
+
 def allocate_and_pair_bluetooth(serial: str, snapshot_url: str,
                                  report_error=None) -> tuple[str | None, str | None, str | None, str | None]:
     """Allocate a BT dongle and pair the phone with it.
@@ -308,16 +339,30 @@ def allocate_and_pair_bluetooth(serial: str, snapshot_url: str,
 
     log.info(f'[{serial}] Pairing with dongle {adapter_mac} ({adapter_hci}), phone BT: {phone_bt_mac}')
 
-    # Clear stale phone-side bonds with OTHER dongles
+    # Clear stale phone-side bonds with OTHER dongles.
+    # Also remove Pi-side bonds for the phone on wrong adapters.
     all_dongles = enum_dongles()
+    has_wrong_bond = False
     for mac, _hci in all_dongles.items():
-        if mac.upper() != adapter_mac.upper():
-            log.info(f'[{serial}] Clearing stale phone-side bond with {mac}')
-            adb_shell(
-                serial,
-                f"content query --uri 'content://com.otacon.kiosk/bluetooth/unpair?mac={mac}'",
-                timeout=10
-            )
+        if mac.upper() != adapter_mac.upper() and phone_bt_mac:
+            # Check if wrong adapter has a Pi-side bond with this phone
+            try:
+                info_out = _btctl(mac, f'info {phone_bt_mac}')
+                if 'Paired: yes' in info_out:
+                    log.warning(f'[{serial}] Removing cross-dongle Pi-side bond: '
+                                f'{phone_bt_mac} on {mac}')
+                    _btctl(mac, f'disconnect {phone_bt_mac}',
+                           f'remove {phone_bt_mac}')
+                    has_wrong_bond = True
+            except Exception:
+                pass
+
+    # Clear phone-side bonds. On Samsung Android 16+, removeBond() via
+    # reflection silently fails — the API returns true but the native BT
+    # config retains the bond. The only reliable mechanism is to nuke all
+    # phone BT data via `pm clear`, then re-enable.
+    _nuke_phone_bt_bonds(serial)
+    time.sleep(2)
 
     pair_result = {}
     pair_done = threading.Event()
@@ -354,13 +399,8 @@ def allocate_and_pair_bluetooth(serial: str, snapshot_url: str,
             timeout=10,
         )
         if 'Paired: yes' not in (bluez_check.stdout or ''):
-            log.warning(f'[{serial}] Phone reports already_paired but BlueZ has no record -- forcing unpair and retrying')
-            adb_shell(
-                serial,
-                f"content query --uri 'content://com.otacon.kiosk/bluetooth/unpair?mac={adapter_mac}'",
-                timeout=10
-            )
-            time.sleep(2)
+            log.warning(f'[{serial}] Phone reports already_paired but BlueZ has no record -- nuking bonds and retrying')
+            _nuke_phone_bt_bonds(serial)
             pair_result.clear()
             pair_done.clear()
             retry_script = threading.Thread(target=_run_bluez_pair, args=(adapter_mac, adapter_hci, serial), daemon=True)

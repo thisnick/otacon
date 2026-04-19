@@ -23,7 +23,12 @@ def heal_bt_silent(adapter_mac: str | None) -> bool:
 
 def heal_bt_bonded(serial: str, snapshot_url: str,
                     report_error=None) -> tuple[str | None, str | None, str | None, str | None]:
-    """Re-pair bluetooth. Returns (adapter_mac, adapter_hci, phone_bt_mac, replaced_mac)."""
+    """Re-pair bluetooth. Returns (adapter_mac, adapter_hci, phone_bt_mac, replaced_mac).
+
+    Before re-pairing, detects if the phone is bonded to a wrong dongle
+    and cleans up Pi-side bonds on wrong adapters.  Phone-side bonds are
+    wiped inside allocate_and_pair_bluetooth via ``pm clear``.
+    """
     log.info(f'[{serial}] Healing: bt_bonded (re-pairing)')
     return allocate_and_pair_bluetooth(serial, snapshot_url, report_error=report_error)
 
