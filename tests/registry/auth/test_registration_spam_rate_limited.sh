@@ -56,21 +56,28 @@ fi
 rm -f "$STATUSES_FILE"
 
 # Cleanup: reject all pending registrations if possible
+# Wrapped in subshell to prevent SIGPIPE from large jq output killing the script
 if [ -n "$ADMIN_TOKEN" ]; then
     echo ""
     echo "--- Cleanup: rejecting spam registrations ---"
-    REGS=$(http_get "$ADMIN_URL/api/v1/auth/registrations/pending" "$ADMIN_TOKEN")
-    REG_STATUS=$(get_status "$REGS")
-    if [ "$REG_STATUS" = "200" ]; then
-        REG_BODY=$(get_body "$REGS")
-        PENDING_IDS=$(echo "$REG_BODY" | jq -r '.[] | select(.host_id | startswith("spam-test-node-")) | .id // .pending_id' 2>/dev/null || echo "")
-        CLEANED=0
-        for pid in $PENDING_IDS; do
-            http_post "$ADMIN_URL/api/v1/auth/registrations/$pid/reject" '{}' "$ADMIN_TOKEN" >/dev/null 2>&1 || true
-            CLEANED=$((CLEANED + 1))
-        done
-        echo "  Cleaned up $CLEANED spam registrations"
-    fi
+    (
+        set +eo pipefail
+        REGS=$(http_get "$ADMIN_URL/api/v1/auth/registrations/pending" "$ADMIN_TOKEN")
+        REG_STATUS=$(get_status "$REGS")
+        if [ "$REG_STATUS" = "200" ]; then
+            REG_BODY=$(get_body "$REGS")
+            PENDING_IDS_FILE=$(mktemp)
+            echo "$REG_BODY" | jq -r '.[] | select(.host_id | startswith("spam-test-node-")) | .id // .pending_id' > "$PENDING_IDS_FILE" 2>/dev/null || true
+            CLEANED=0
+            while IFS= read -r pid; do
+                [ -z "$pid" ] && continue
+                http_post "$ADMIN_URL/api/v1/auth/registrations/$pid/reject" '{}' "$ADMIN_TOKEN" >/dev/null 2>&1 || true
+                CLEANED=$((CLEANED + 1))
+            done < "$PENDING_IDS_FILE"
+            rm -f "$PENDING_IDS_FILE"
+            echo "  Cleaned up $CLEANED spam registrations"
+        fi
+    ) || true
 fi
 
 finish_test "test_registration_spam_rate_limited"

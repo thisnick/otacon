@@ -34,18 +34,18 @@ if [ "$LINE_COUNT" -le 10 ]; then
     finish_test "test_token_not_logged_after_first_print"
 fi
 
-# Skip the first section (bootstrap) and search remaining logs
-# The bootstrap token print is expected in the first few lines
-AFTER_BOOTSTRAP=$(echo "$ALL_LOGS" | tail -n +11)
-TOKEN_APPEARANCES=$(echo "$AFTER_BOOTSTRAP" | grep -c "$ADMIN_TOKEN" 2>/dev/null || true)
+# Filter out the bootstrap announcement box (which legitimately contains the token).
+# The box uses Unicode box-drawing chars (║, ╔, ╗, ╚, ╝) and keywords like BOOTSTRAP.
+NON_BOOTSTRAP=$(echo "$ALL_LOGS" | grep -v "BOOTSTRAP" | grep -v "bootstrap" | grep -v '║' | grep -v '╔' | grep -v '╚')
+TOKEN_APPEARANCES=$(echo "$NON_BOOTSTRAP" | grep -c "$ADMIN_TOKEN" 2>/dev/null || true)
 TOKEN_APPEARANCES=${TOKEN_APPEARANCES:-0}
 
 if [ "$TOKEN_APPEARANCES" -eq 0 ]; then
-    pass "Admin token not found in post-bootstrap logs"
+    pass "Admin token not found in non-bootstrap log lines"
 else
-    fail "token_in_logs" "Found $TOKEN_APPEARANCES occurrence(s) of plaintext admin token in logs after bootstrap"
+    fail "token_in_logs" "Found $TOKEN_APPEARANCES occurrence(s) of plaintext admin token in non-bootstrap logs"
     echo "  Lines containing token:"
-    echo "$AFTER_BOOTSTRAP" | grep "$ADMIN_TOKEN" | head -5 | sed 's/^/    /'
+    echo "$NON_BOOTSTRAP" | grep "$ADMIN_TOKEN" | head -5 | sed 's/^/    /'
 fi
 
 # Also check: do any logs contain the raw hex portion of token hashes?
@@ -57,7 +57,7 @@ TOKEN_HEX="${ADMIN_TOKEN#otc_admin_}"
 if [ -n "$TOKEN_HEX" ] && [ ${#TOKEN_HEX} -ge 16 ]; then
     # Search for first 16 chars of hex in logs
     PARTIAL="${TOKEN_HEX:0:16}"
-    PARTIAL_HITS=$(echo "$AFTER_BOOTSTRAP" | grep -c "$PARTIAL" 2>/dev/null || true)
+    PARTIAL_HITS=$(echo "$NON_BOOTSTRAP" | grep -c "$PARTIAL" 2>/dev/null || true)
     PARTIAL_HITS=${PARTIAL_HITS:-0}
     if [ "$PARTIAL_HITS" -eq 0 ]; then
         pass "No partial token hex found in operational logs"

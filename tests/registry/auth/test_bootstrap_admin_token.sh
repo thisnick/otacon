@@ -40,9 +40,9 @@ ssh "$PI_HOST" "docker restart $CONTAINER" >/dev/null 2>&1
 # Wait for startup
 sleep 5
 
-# Grab recent logs looking for the bootstrap token
-LOGS=$(ssh "$PI_HOST" "docker logs --tail 50 $CONTAINER 2>&1" 2>/dev/null || echo "")
-BOOTSTRAP_TOKEN=$(echo "$LOGS" | grep -oP 'otc_admin_[a-f0-9]+' | head -1)
+# Grab only post-restart logs (last 20 lines) looking for the bootstrap token
+LOGS=$(ssh "$PI_HOST" "docker logs --since 8s $CONTAINER 2>&1" 2>/dev/null || echo "")
+BOOTSTRAP_TOKEN=$(echo "$LOGS" | grep -oP 'otc_admin_[a-f0-9]+' | tail -1)
 
 if [ -n "$BOOTSTRAP_TOKEN" ]; then
     pass "Bootstrap admin token found in logs (prefix=${BOOTSTRAP_TOKEN:0:20}...)"
@@ -74,7 +74,7 @@ ssh "$PI_HOST" "docker restart $CONTAINER" >/dev/null 2>&1
 sleep 5
 
 LOGS2=$(ssh "$PI_HOST" "docker logs --since 10s $CONTAINER 2>&1" 2>/dev/null || echo "")
-NEW_TOKEN=$(echo "$LOGS2" | grep -oP 'otc_admin_[a-f0-9]+' | head -1)
+NEW_TOKEN=$(echo "$LOGS2" | grep -oP 'otc_admin_[a-f0-9]+' 2>/dev/null | head -1 || true)
 
 if [ -z "$NEW_TOKEN" ]; then
     pass "No new bootstrap token on subsequent restart"
