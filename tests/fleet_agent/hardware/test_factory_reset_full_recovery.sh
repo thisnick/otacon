@@ -13,8 +13,7 @@
 set -euo pipefail
 
 PI="nick@otacon-pi"
-PI_FQDN=$(tailscale status --json | jq -r '.Peer[] | select(.HostName == "otacon-pi") | .DNSName | rtrimstr(".")')
-PI_URL="https://${PI_FQDN}:8080"
+source "$(cd "$(dirname "$0")/../../.." && pwd)/scripts/lib/tailscale.sh"
 PHONE_ID="${1:-phone-r92x1022}"
 SERIAL="${2:-R92X1022S7K}"
 MAX_WAIT=1200  # 20 minutes total

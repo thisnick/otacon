@@ -6,7 +6,7 @@
 
 set -euo pipefail
 
-REGISTRY_URL="http://localhost:8080"
+source "$(cd "$(dirname "$0")/../../.." && pwd)/scripts/lib/tailscale.sh"
 
 echo "=== Test 9: Registry heartbeats + dongles ==="
 

@@ -25,9 +25,7 @@
 set -euo pipefail
 
 PI="nick@otacon-pi"
-PI_FQDN=$(tailscale status --json | jq -r '.Peer[] | select(.HostName == "otacon-pi") | .DNSName | rtrimstr(".")')
-PI_URL="https://${PI_FQDN}:8080"
-REGISTRY_URL="http://localhost:8080"
+source "$(cd "$(dirname "$0")/../../.." && pwd)/scripts/lib/tailscale.sh"
 CONTAINER="otacon-otacon-1"
 COOLDOWN=320  # 5 min + 20s margin
 REPAIR_WAIT=180  # 3 min for re-pair on new dongle

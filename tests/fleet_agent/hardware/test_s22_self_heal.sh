@@ -11,8 +11,7 @@
 set -euo pipefail
 
 PI="nick@otacon-pi"
-PI_FQDN=$(tailscale status --json | jq -r '.Peer[] | select(.HostName == "otacon-pi") | .DNSName | rtrimstr(".")')
-PI_URL="https://${PI_FQDN}:8080"
+source "$(cd "$(dirname "$0")/../../.." && pwd)/scripts/lib/tailscale.sh"
 PHONE_ID="phone-r5ct60sd"
 S22_SERIAL="R5CT60SDGKD"
 DONGLE_MAC="F4:4E:FC:27:B3:E8"

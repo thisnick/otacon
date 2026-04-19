@@ -10,8 +10,7 @@
 
 set -euo pipefail
 
-PI_FQDN=$(tailscale status --json | jq -r '.Peer[] | select(.HostName == "otacon-pi") | .DNSName | rtrimstr(".")')
-REGISTRY_URL="http://${PI_FQDN}:9080"
+source "$(cd "$(dirname "$0")/../../.." && pwd)/scripts/lib/tailscale.sh"
 
 echo "=== Test: registry UI ==="
 

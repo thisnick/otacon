@@ -20,7 +20,7 @@
 set -euo pipefail
 
 PI="nick@otacon-pi"
-REGISTRY_URL="http://localhost:8080"
+source "$(cd "$(dirname "$0")/../../.." && pwd)/scripts/lib/tailscale.sh"
 CONTAINER="otacon-otacon-1"
 
 echo "=== Test: replug after cutoff (non-reclaiming) ==="
