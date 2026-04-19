@@ -10,13 +10,13 @@ import threading
 import time
 
 from .util.adb import get_connected_serials
-from .util.http import http_post
 from .util.ports import PortAllocator
 from .phone.agent import PhoneAgent
 from .bluetooth.dongle import enum_dongles, load_dongle_assignments
 from .bluetooth.agent import register_agent
 from .bluetooth.reconnect import setup_reconnect_watcher
 from .loss_handler import LOSS_TIMEOUT_SECONDS, handle_phone_lost, handle_dongle_lost
+from .registry.client import ensure_registered
 
 log = logging.getLogger('fleet-agent')
 
@@ -90,10 +90,14 @@ class FleetAgent:
                 'hci_device': hci,
                 'phone_id': phone_id,
             })
-        http_post(f'{registry_url}/api/v1/dongles/register', {
-            'host_id': host_id,
-            'dongles': dongle_list,
-        })
+        from .registry.client import _http_post
+        try:
+            _http_post(f'{registry_url}/api/v1/dongles/register', {
+                'host_id': host_id,
+                'dongles': dongle_list,
+            })
+        except Exception:
+            pass
         log.info(f'Reported {len(dongle_list)} dongles to registry')
 
     def _update_last_seen(self, current_serials: set[str]) -> None:
@@ -153,6 +157,13 @@ class FleetAgent:
 
     def run(self):
         log.info('Fleet agent started')
+
+        # Obtain auth token before any registry calls.  Blocks until an
+        # admin approves the registration (long-poll).  If the token already
+        # exists on disk this returns immediately.
+        if os.environ.get('REGISTRY_URL'):
+            ensure_registered()
+
         self._start_bluetooth_services()
         self.report_dongles()
 

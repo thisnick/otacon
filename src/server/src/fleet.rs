@@ -10,6 +10,9 @@ use tokio::sync::Mutex;
 
 use crate::AppState;
 
+/// Path to the auth token file (shared with fleet-agent Python process).
+const AUTH_FILE: &str = "/etc/otacon/auth.json";
+
 pub struct FleetClient {
     registry_url: String,
     host_id: String,
@@ -18,6 +21,14 @@ pub struct FleetClient {
     registry_ids: Mutex<HashMap<String, String>>,
     /// Dongle IDs reported to the registry (for heartbeat)
     dongle_ids: Mutex<Vec<String>>,
+}
+
+/// Load the bearer token from the auth file on disk.
+/// Returns None if the file doesn't exist or can't be parsed.
+fn load_auth_token() -> Option<String> {
+    let data = std::fs::read_to_string(AUTH_FILE).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&data).ok()?;
+    json.get("token")?.as_str().map(|s| s.to_string())
 }
 
 impl FleetClient {
@@ -39,6 +50,15 @@ impl FleetClient {
         })
     }
 
+    /// Build a POST request with auth header (if token is available).
+    fn authed_post(&self, url: &str) -> reqwest::RequestBuilder {
+        let mut req = self.client.post(url);
+        if let Some(token) = load_auth_token() {
+            req = req.header("Authorization", format!("Bearer {token}"));
+        }
+        req
+    }
+
     /// Register this host with the registry.
     pub async fn register_host(&self) {
         let tailscale_ip = get_tailscale_ip().await;
@@ -55,8 +75,7 @@ impl FleetClient {
             "api_port": api_port,
         });
 
-        match self.client
-            .post(format!("{}/api/v1/hosts/register", self.registry_url))
+        match self.authed_post(&format!("{}/api/v1/hosts/register", self.registry_url))
             .json(&body)
             .send()
             .await
@@ -102,8 +121,7 @@ impl FleetClient {
             "dongles": dongles,
         });
 
-        match self.client
-            .post(format!("{}/api/v1/dongles/register", self.registry_url))
+        match self.authed_post(&format!("{}/api/v1/dongles/register", self.registry_url))
             .json(&body)
             .send()
             .await
@@ -148,13 +166,18 @@ impl FleetClient {
             "dongles": dongle_ids,
         });
 
-        if let Err(e) = self.client
-            .post(format!("{}/api/v1/hosts/heartbeat", self.registry_url))
+        match self.authed_post(&format!("{}/api/v1/hosts/heartbeat", self.registry_url))
             .json(&body)
             .send()
             .await
         {
-            eprintln!("[fleet] Heartbeat error: {e}");
+            Ok(resp) if !resp.status().is_success() => {
+                eprintln!("[fleet] Heartbeat failed: {}", resp.status());
+            }
+            Err(e) => {
+                eprintln!("[fleet] Heartbeat error: {e}");
+            }
+            _ => {}
         }
     }
 
@@ -166,8 +189,7 @@ impl FleetClient {
             "adapter_mac": config.adapter_mac,
         });
 
-        match self.client
-            .post(format!("{}/api/v1/phones/register", self.registry_url))
+        match self.authed_post(&format!("{}/api/v1/phones/register", self.registry_url))
             .json(&body)
             .send()
             .await
@@ -207,8 +229,7 @@ impl FleetClient {
             "message": message,
         });
 
-        if let Err(e) = self.client
-            .post(format!("{}/api/v1/events", self.registry_url))
+        if let Err(e) = self.authed_post(&format!("{}/api/v1/events", self.registry_url))
             .json(&body)
             .send()
             .await
@@ -228,8 +249,7 @@ impl FleetClient {
             "phone_id": reg_id,
         });
 
-        if let Err(e) = self.client
-            .post(format!("{}/api/v1/phones/deregister", self.registry_url))
+        if let Err(e) = self.authed_post(&format!("{}/api/v1/phones/deregister", self.registry_url))
             .json(&body)
             .send()
             .await
@@ -306,7 +326,24 @@ pub fn spawn_config_ws(fleet: Arc<FleetClient>, state: Arc<AppState>) {
             let url = fleet.config_ws_url();
             eprintln!("[fleet] Connecting to config WS: {url}");
 
-            match tokio_tungstenite::connect_async(&url).await {
+            // Build a WS request with auth header so the upgrade passes
+            // the registry's node_auth middleware.
+            let connect_result = {
+                let mut builder = axum::http::Request::builder()
+                    .uri(&url)
+                    .header("Connection", "Upgrade")
+                    .header("Upgrade", "websocket")
+                    .header("Sec-WebSocket-Version", "13")
+                    .header("Sec-WebSocket-Key", tokio_tungstenite::tungstenite::handshake::client::generate_key());
+                if let Some(token) = load_auth_token() {
+                    builder = builder.header("Authorization", format!("Bearer {token}"));
+                }
+                match builder.body(()) {
+                    Ok(req) => tokio_tungstenite::connect_async(req).await,
+                    Err(_) => tokio_tungstenite::connect_async(&url).await,
+                }
+            };
+            match connect_result {
                 Ok((ws_stream, _)) => {
                     eprintln!("[fleet] Config WS connected");
                     backoff = Duration::from_secs(1); // reset on success
