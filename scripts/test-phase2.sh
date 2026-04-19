@@ -4,9 +4,9 @@
 #
 # Usage:
 #   ./scripts/test-phase2.sh                           # test against local (localhost:8080)
-#   ./scripts/test-phase2.sh --host otacon-pi.tail0437b8.ts.net:8080     # test against deployed Pi
+#   ./scripts/test-phase2.sh --host otacon-pi:8080     # test against deployed Pi
 #   ./scripts/test-phase2.sh --registry localhost:8090  # test registry API
-#   ./scripts/test-phase2.sh --all --host otacon-pi.tail0437b8.ts.net:8080 --registry localhost:8090
+#   ./scripts/test-phase2.sh --all --host otacon-pi:8080 --registry localhost:8090
 #
 # Exit codes: 0 = all passed, 1 = failures
 

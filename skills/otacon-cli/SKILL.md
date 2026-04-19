@@ -16,7 +16,7 @@ Control an Android phone connected to a Raspberry Pi via USB. Otacon exposes a R
 Set the server URL via environment variable or `--host` flag:
 
 ```bash
-export OTACON_HOST=https://otacon-pi.tail0437b8.ts.net:8080
+export OTACON_HOST=https://otacon-pi.<tailnet>.ts.net:8080
 ```
 
 The server uses a self-signed TLS certificate on a private Tailscale network. No authentication is required.
@@ -214,7 +214,7 @@ otacon contacts search "John"
 
 ## WebSocket Events
 
-Subscribe to real-time events via WebSocket at `wss://otacon-pi.tail0437b8.ts.net:8080/ws/events`. The server sends JSON text messages with `{event, data}` structure. On connect, the current state of all active audio sinks is sent.
+Subscribe to real-time events via WebSocket at `wss://otacon-pi.<tailnet>.ts.net:8080/ws/events`. The server sends JSON text messages with `{event, data}` structure. On connect, the current state of all active audio sinks is sent.
 
 | Event | Description |
 |-------|-------------|

@@ -13,8 +13,8 @@
 set -euo pipefail
 
 PI="nick@otacon-pi"
-FLEET_URL="https://otacon-pi.tail0437b8.ts.net:8080"
-REGISTRY_URL="http://otacon-pi.tail0437b8.ts.net:9080"
+FLEET_URL="https://otacon-pi:8080"
+REGISTRY_URL="http://otacon-pi:9080"
 
 echo "=== Test: port no collision (8080 vs 9080) ==="
 

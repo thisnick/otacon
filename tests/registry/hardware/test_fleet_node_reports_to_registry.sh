@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-REGISTRY_URL="http://otacon-pi.tail0437b8.ts.net:9080"
+REGISTRY_URL="http://otacon-pi:9080"
 HEARTBEAT_WAIT=90
 
 echo "=== Test: fleet-node reports to Pi-hosted registry ==="

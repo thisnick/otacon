@@ -13,7 +13,7 @@
 set -euo pipefail
 
 PI="nick@otacon-pi"
-REGISTRY_URL="http://otacon-pi.tail0437b8.ts.net:9080"
+REGISTRY_URL="http://otacon-pi:9080"
 COMPOSE_DIR="/home/nick/otacon-registry"
 RESTART_WAIT=30
 

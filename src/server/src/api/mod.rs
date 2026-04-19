@@ -66,7 +66,7 @@ impl IntoResponse for ApiError {
         license(name = "MIT"),
     ),
     servers(
-        (url = "https://otacon-pi.tail0437b8.ts.net:8080", description = "Default Tailscale address"),
+        (url = "https://otacon-pi.<tailnet>.ts.net:8080", description = "Default Tailscale address"),
     ),
     paths(
         action::handler,

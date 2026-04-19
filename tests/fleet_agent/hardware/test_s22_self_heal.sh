@@ -11,7 +11,7 @@
 set -euo pipefail
 
 PI="nick@otacon-pi"
-PI_URL="https://otacon-pi.tail0437b8.ts.net:8080"
+PI_URL="https://otacon-pi:8080"
 PHONE_ID="phone-r5ct60sd"
 S22_SERIAL="R5CT60SDGKD"
 DONGLE_MAC="F4:4E:FC:27:B3:E8"

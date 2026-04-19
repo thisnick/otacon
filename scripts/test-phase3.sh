@@ -4,7 +4,7 @@
 #
 # Usage:
 #   ./scripts/test-phase3.sh                                     # test against Pi via Tailscale
-#   ./scripts/test-phase3.sh --host otacon-pi.tail0437b8.ts.net:8080               # custom host
+#   ./scripts/test-phase3.sh --host otacon-pi:8080               # custom host
 #   ./scripts/test-phase3.sh --registry localhost:8090            # include registry tests
 #   ./scripts/test-phase3.sh --all                               # Pi + registry
 #   ./scripts/test-phase3.sh --section lazy                      # run only one section
@@ -14,7 +14,7 @@
 set -euo pipefail
 
 # --- Defaults ---
-PI_HOST="${PI_HOST:-otacon-pi.tail0437b8.ts.net:8080}"
+PI_HOST="${PI_HOST:-otacon-pi:8080}"
 PI_SCHEME="${PI_SCHEME:-https}"
 PI_SSH="${PI_SSH:-nick@otacon-pi}"
 REGISTRY_HOST="${REGISTRY_HOST:-}"

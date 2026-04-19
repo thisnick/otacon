@@ -17,7 +17,7 @@
 set -euo pipefail
 
 PI="nick@otacon-pi"
-PI_URL="https://otacon-pi.tail0437b8.ts.net:8080"
+PI_URL="https://otacon-pi:8080"
 REGISTRY_URL="http://localhost:8080"
 CONTAINER="otacon-otacon-1"
 MAX_RECONNECT_WAIT=120

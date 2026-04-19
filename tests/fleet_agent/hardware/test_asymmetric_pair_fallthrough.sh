@@ -18,7 +18,7 @@
 set -euo pipefail
 
 PI="nick@otacon-pi"
-PI_URL="https://otacon-pi.tail0437b8.ts.net:8080"
+PI_URL="https://otacon-pi:8080"
 PHONE_ID="${1:-phone-r5ct60sd}"
 SERIAL="${2:-R5CT60SDGKD}"
 MAX_WAIT=600  # 10 minutes — heal_bt_connected retries + cooldown + re-pair

@@ -6,7 +6,7 @@ import { program } from "commander";
 import { readFileSync, writeFileSync } from "fs";
 import { OtaconClient, type Action } from "./client.js";
 
-const DEFAULT_HOST = "https://otacon-pi.tail0437b8.ts.net:8080";
+const DEFAULT_HOST = "https://otacon-pi:8080";
 
 function getClient(opts: { host?: string }): OtaconClient {
   const baseUrl =

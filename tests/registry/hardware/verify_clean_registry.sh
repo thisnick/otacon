@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-REGISTRY_URL="http://otacon-pi.tail0437b8.ts.net:9080"
+REGISTRY_URL="http://otacon-pi:9080"
 
 echo "=== Test: verify no test fixture leakage in registry ==="
 
