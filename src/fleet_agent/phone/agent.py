@@ -154,7 +154,18 @@ class PhoneAgent:
             except Exception as e:
                 self.log.warning(f'Check {name} error: {e}')
                 result = False
-            self.status.health[name] = result
+
+            # bt_bonded returns BtBondedDetail — expand into three health keys
+            if name == 'bt_bonded':
+                from .health import BtBondedDetail
+                if isinstance(result, BtBondedDetail):
+                    self.status.health['bt_bonded_pi'] = result.pi
+                    self.status.health['bt_bonded_phone'] = result.phone
+                    result = result.ok
+                self.status.health['bt_bonded'] = result
+            else:
+                self.status.health[name] = result
+
             if not result:
                 # Skip bt_connected heal when bt_bonded is failing — reconnect
                 # is impossible without a bond, so only the bond heal matters.
@@ -214,8 +225,9 @@ class PhoneAgent:
                         self.serial, self.snapshot_port, self.internal_port,
                         adapter_mac=self.adapter_mac, phone_bt_mac=self.phone_bt_mac)
                     # Verify the bond actually formed
-                    heal_ok = health.check_bt_bonded(
+                    detail = health.check_bt_bonded(
                         self.adapter_mac, self.phone_bt_mac, serial=self.serial)
+                    heal_ok = detail.ok
                 else:
                     heal_ok = False
             elif name == 'bt_connected':

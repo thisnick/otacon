@@ -3,6 +3,7 @@
 import logging
 import os
 import re
+from dataclasses import dataclass
 
 from ..util.adb import adb, adb_shell, run_cmd
 from ..steps.provisioning import DEVICE_OWNER_PKG
@@ -45,18 +46,30 @@ def check_bt_silent(adapter_mac: str | None) -> bool:
         return True  # can't reach adapter — don't fail on that
 
 
-def check_bt_bonded(adapter_mac: str | None, phone_bt_mac: str | None,
-                     serial: str | None = None) -> bool:
-    """Bond exists in BlueZ (Pi-side) via D-Bus.
+@dataclass
+class BtBondedDetail:
+    """Per-side bond status for diagnostics."""
+    pi: bool      # Pi-side BlueZ has the bond
+    phone: bool   # phone-side dumpsys has the bond
 
-    Uses bluetoothctl info as the authoritative source — the /var/lib/bluetooth
-    filesystem dir is unreliable in Docker (ephemeral storage, USB dongle dirs
-    may not be written). Also cross-checks the phone side via dumpsys.
+    @property
+    def ok(self) -> bool:
+        """Both sides bonded."""
+        return self.pi and self.phone
+
+
+def check_bt_bonded(adapter_mac: str | None, phone_bt_mac: str | None,
+                     serial: str | None = None) -> BtBondedDetail:
+    """Check bond on both Pi and phone sides, returning per-side detail.
+
+    Pi-side uses bluetoothctl info as the authoritative source.
+    Phone-side uses dumpsys bluetooth_manager.
     """
     if not adapter_mac or not phone_bt_mac:
-        return False
+        return BtBondedDetail(pi=False, phone=False)
 
     # BlueZ D-Bus check — the authoritative Pi-side source
+    pi_bonded = False
     try:
         result = run_cmd(
             ['bluetoothctl'],
@@ -64,24 +77,22 @@ def check_bt_bonded(adapter_mac: str | None, phone_bt_mac: str | None,
             timeout=10,
         )
         stdout = result.stdout or ''
-        if 'Paired: yes' not in stdout:
-            return False
+        pi_bonded = 'Paired: yes' in stdout
     except Exception:
-        return False
+        pass
 
-    # Phone-side cross-check — if the phone has removed the bond, the Pi-side
-    # bond is stale and reconnection will never succeed.  Failing here triggers
-    # the bt_bonded heal (full re-pair) instead of futile bt_connected retries.
+    # Phone-side cross-check
+    phone_bonded = True  # default to True if we can't check (no serial)
     if serial:
         try:
             bt_dump = adb_shell(serial, 'dumpsys bluetooth_manager', timeout=5)
-            if adapter_mac.upper() not in bt_dump.upper():
+            phone_bonded = adapter_mac.upper() in bt_dump.upper()
+            if pi_bonded and not phone_bonded:
                 log.warning(f'bt_bonded: Pi paired but phone has no record of {adapter_mac} — stale bond')
-                return False
         except Exception:
             pass  # can't reach phone — don't fail on that
 
-    return True
+    return BtBondedDetail(pi=pi_bonded, phone=phone_bonded)
 
 
 def check_bt_connected(adapter_mac: str | None, phone_bt_mac: str | None) -> bool:

@@ -4,6 +4,7 @@ from unittest.mock import patch, MagicMock, call
 from dataclasses import asdict
 
 from fleet_agent.phone.agent import PhoneAgent, SETUP_STEPS
+from fleet_agent.phone.health import BtBondedDetail
 from fleet_agent.phone.status import MonitorStatus, StepStatus, HealStatus
 
 
@@ -61,7 +62,8 @@ class TestGetChecks:
 
 
 class TestRunMaintenanceTick:
-    @patch('fleet_agent.phone.health.check_bt_bonded', return_value=True)
+    @patch('fleet_agent.phone.health.check_bt_bonded',
+           return_value=BtBondedDetail(pi=True, phone=True))
     @patch('fleet_agent.phone.health.check_bt_connected', return_value=True)
     @patch('fleet_agent.phone.health.check_wifi_connected', return_value=True)
     @patch('fleet_agent.phone.health.check_device_owner', return_value=True)
@@ -75,10 +77,13 @@ class TestRunMaintenanceTick:
         agent.run_maintenance_tick()
         assert agent.status.loop_iteration == 1
         assert agent.status.last_check_at is not None
-        assert all(v is True for v in agent.status.health.values())
+        assert agent.status.health['bt_bonded'] is True
+        assert agent.status.health['bt_bonded_pi'] is True
+        assert agent.status.health['bt_bonded_phone'] is True
         assert agent.status.heals == {}
 
-    @patch('fleet_agent.phone.health.check_bt_bonded', return_value=True)
+    @patch('fleet_agent.phone.health.check_bt_bonded',
+           return_value=BtBondedDetail(pi=True, phone=True))
     @patch('fleet_agent.phone.health.check_bt_connected', return_value=True)
     @patch('fleet_agent.phone.health.check_wifi_connected', return_value=False)
     @patch('fleet_agent.phone.health.check_device_owner', return_value=True)
@@ -96,6 +101,32 @@ class TestRunMaintenanceTick:
         assert agent.status.heals['wifi'].last_result == 'ok'
         assert agent.status.heals['wifi'].count_today == 1
         mock_heal_wifi.assert_called_once()
+
+    @patch('fleet_agent.phone.health.check_bt_connected', return_value=True)
+    @patch('fleet_agent.phone.health.check_wifi_connected', return_value=True)
+    @patch('fleet_agent.phone.health.check_device_owner', return_value=True)
+    @patch('fleet_agent.phone.health.check_restrictions', return_value=True)
+    @patch('fleet_agent.phone.health.check_snapshot_alive', return_value=True)
+    @patch('fleet_agent.phone.health.check_port_forwards', return_value=True)
+    @patch('fleet_agent.phone.heal.heal_bt_bonded',
+           return_value=('AA:BB:CC:DD:EE:01', 'hci1', '11:22:33:44:55:66'))
+    def test_asymmetric_bond_triggers_heal(self, mock_heal, *mocks):
+        """Pi bonded but phone not — bt_bonded=false, splits visible."""
+        agent = PhoneAgent('TEST', 9091, 8081, 50, 5900)
+        agent.adapter_mac = 'AA:BB:CC:DD:EE:01'
+        agent.phone_bt_mac = '11:22:33:44:55:66'
+        # First call (maintenance check) returns asymmetric; second (heal verify) returns ok
+        bt_results = iter([
+            BtBondedDetail(pi=True, phone=False),
+            BtBondedDetail(pi=True, phone=True),
+        ])
+        with patch('fleet_agent.phone.health.check_bt_bonded',
+                   side_effect=lambda *a, **kw: next(bt_results)):
+            with patch('fleet_agent.registry.server.register_with_server'):
+                agent.run_maintenance_tick()
+        assert agent.status.health['bt_bonded'] is False
+        assert agent.status.health['bt_bonded_pi'] is True
+        assert agent.status.health['bt_bonded_phone'] is False
 
 
 class TestRunSingleCheck:

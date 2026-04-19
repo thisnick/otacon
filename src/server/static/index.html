@@ -1512,10 +1512,19 @@ function renderMonitor(monitor) {
   const h = monitor.health || {};
   const healthKeys = ['bt_silent', 'bt_bonded', 'bt_connected', 'wifi', 'device_owner', 'restrictions', 'snapshot_alive', 'port_forwards'];
   healthEl.innerHTML = healthKeys.map(k => {
+    if (k === 'bt_bonded' && (h.bt_bonded_pi !== undefined || h.bt_bonded_phone !== undefined)) {
+      const piVal = h.bt_bonded_pi;
+      const phVal = h.bt_bonded_phone;
+      const piCls = piVal === true ? 'green' : piVal === false ? 'red' : 'gray';
+      const phCls = phVal === true ? 'green' : phVal === false ? 'red' : 'gray';
+      return `<div class="health-dot" title="bt_bonded pi=${piVal} phone=${phVal}" style="gap:3px">` +
+        `<div class="dot-circle ${piCls}"></div>` +
+        `<div class="dot-circle ${phCls}"></div>` +
+        `bt_bonded <span style="font-size:9px;color:var(--text-muted)">(pi/phone)</span></div>`;
+    }
     const val = h[k];
     const cls = val === true ? 'green' : val === false ? 'red' : 'gray';
-    const label = k.replace(/_/g, '_');
-    return `<div class="health-dot" title="${k}: ${val}"><div class="dot-circle ${cls}"></div>${label}</div>`;
+    return `<div class="health-dot" title="${k}: ${val}"><div class="dot-circle ${cls}"></div>${k}</div>`;
   }).join('');
 
   // Auto-expand heals if any recent failure

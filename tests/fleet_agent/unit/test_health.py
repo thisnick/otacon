@@ -5,30 +5,71 @@ from unittest.mock import patch, MagicMock
 
 
 class TestCheckBtBonded:
-    def test_returns_false_when_no_adapter(self):
-        from fleet_agent.phone.health import check_bt_bonded
-        assert check_bt_bonded(None, '11:22:33:44:55:66') is False
+    def test_returns_detail_both_false_when_no_adapter(self):
+        from fleet_agent.phone.health import check_bt_bonded, BtBondedDetail
+        result = check_bt_bonded(None, '11:22:33:44:55:66')
+        assert isinstance(result, BtBondedDetail)
+        assert result.pi is False
+        assert result.phone is False
+        assert result.ok is False
 
-    def test_returns_false_when_no_phone_mac(self):
-        from fleet_agent.phone.health import check_bt_bonded
-        assert check_bt_bonded('AA:BB:CC:DD:EE:01', None) is False
+    def test_returns_detail_both_false_when_no_phone_mac(self):
+        from fleet_agent.phone.health import check_bt_bonded, BtBondedDetail
+        result = check_bt_bonded('AA:BB:CC:DD:EE:01', None)
+        assert isinstance(result, BtBondedDetail)
+        assert result.pi is False
+        assert result.phone is False
+        assert result.ok is False
 
-    def test_returns_true_when_paired(self):
+    def test_returns_pi_true_phone_true_when_paired(self):
         from fleet_agent.phone.health import check_bt_bonded
         mock_result = MagicMock(stdout='Paired: yes', stderr='', returncode=0)
         with patch('fleet_agent.phone.health.run_cmd', return_value=mock_result):
-            assert check_bt_bonded('AA:BB:CC:DD:EE:01', '11:22:33:44:55:66') is True
+            result = check_bt_bonded('AA:BB:CC:DD:EE:01', '11:22:33:44:55:66')
+            assert result.pi is True
+            assert result.phone is True
+            assert result.ok is True
 
-    def test_returns_false_when_not_paired(self):
+    def test_returns_pi_false_when_not_paired(self):
         from fleet_agent.phone.health import check_bt_bonded
         mock_result = MagicMock(stdout='Paired: no', stderr='', returncode=0)
         with patch('fleet_agent.phone.health.run_cmd', return_value=mock_result):
-            assert check_bt_bonded('AA:BB:CC:DD:EE:01', '11:22:33:44:55:66') is False
+            result = check_bt_bonded('AA:BB:CC:DD:EE:01', '11:22:33:44:55:66')
+            assert result.pi is False
+            assert result.ok is False
 
-    def test_returns_false_on_exception(self):
+    def test_returns_pi_false_on_exception(self):
         from fleet_agent.phone.health import check_bt_bonded
         with patch('fleet_agent.phone.health.run_cmd', side_effect=Exception('fail')):
-            assert check_bt_bonded('AA:BB:CC:DD:EE:01', '11:22:33:44:55:66') is False
+            result = check_bt_bonded('AA:BB:CC:DD:EE:01', '11:22:33:44:55:66')
+            assert result.pi is False
+            assert result.ok is False
+
+    def test_pi_true_phone_false_asymmetric(self):
+        """Pi has bond but phone removed it — stale bond scenario."""
+        from fleet_agent.phone.health import check_bt_bonded
+        mock_btctl = MagicMock(stdout='Paired: yes', stderr='', returncode=0)
+        with patch('fleet_agent.phone.health.run_cmd', return_value=mock_btctl):
+            with patch('fleet_agent.phone.health.adb_shell',
+                       return_value='no bonded devices'):
+                result = check_bt_bonded('AA:BB:CC:DD:EE:01', '11:22:33:44:55:66',
+                                         serial='SERIAL')
+                assert result.pi is True
+                assert result.phone is False
+                assert result.ok is False
+
+    def test_pi_true_phone_true_with_serial(self):
+        """Both sides bonded — healthy state with serial cross-check."""
+        from fleet_agent.phone.health import check_bt_bonded
+        mock_btctl = MagicMock(stdout='Paired: yes', stderr='', returncode=0)
+        with patch('fleet_agent.phone.health.run_cmd', return_value=mock_btctl):
+            with patch('fleet_agent.phone.health.adb_shell',
+                       return_value='Bonded devices:\n  AA:BB:CC:DD:EE:01'):
+                result = check_bt_bonded('AA:BB:CC:DD:EE:01', '11:22:33:44:55:66',
+                                         serial='SERIAL')
+                assert result.pi is True
+                assert result.phone is True
+                assert result.ok is True
 
 
 class TestCheckBtConnected:
