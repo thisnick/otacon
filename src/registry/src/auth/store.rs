@@ -171,3 +171,216 @@ impl AuthStore {
         tokens.values().any(|t| t.scope == AuthScope::Admin)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    async fn test_store() -> (AuthStore, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let store = AuthStore::load(dir.path()).await;
+        (store, dir)
+    }
+
+    // ── Token generation ─────────────────────────────────────────
+
+    #[tokio::test]
+    async fn generate_node_token_format() {
+        let raw = AuthStore::generate_raw_token(AuthScope::Node);
+        assert!(raw.starts_with("otc_node_"), "expected otc_node_ prefix, got: {raw}");
+        // otc_node_ = 9 chars + 64 hex chars = 73 total
+        assert_eq!(raw.len(), 73, "expected 73 chars, got {}", raw.len());
+        // hex portion should be valid hex
+        let hex_part = &raw[9..];
+        assert!(hex_part.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[tokio::test]
+    async fn generate_admin_token_format() {
+        let raw = AuthStore::generate_raw_token(AuthScope::Admin);
+        assert!(raw.starts_with("otc_admin_"), "expected otc_admin_ prefix, got: {raw}");
+        // otc_admin_ = 10 chars + 64 hex chars = 74 total
+        assert_eq!(raw.len(), 74, "expected 74 chars, got {}", raw.len());
+        let hex_part = &raw[10..];
+        assert!(hex_part.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[tokio::test]
+    async fn generate_tokens_are_unique() {
+        let t1 = AuthStore::generate_raw_token(AuthScope::Node);
+        let t2 = AuthStore::generate_raw_token(AuthScope::Node);
+        assert_ne!(t1, t2, "two generated tokens must differ");
+    }
+
+    // ── Hashing ──────────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn hash_is_sha256_hex() {
+        let raw = "otc_node_deadbeef";
+        let hash = AuthStore::hash_token(raw);
+        // SHA-256 produces 64 hex chars
+        assert_eq!(hash.len(), 64);
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[tokio::test]
+    async fn hash_is_deterministic() {
+        let raw = "otc_node_test1234";
+        let h1 = AuthStore::hash_token(raw);
+        let h2 = AuthStore::hash_token(raw);
+        assert_eq!(h1, h2);
+    }
+
+    #[tokio::test]
+    async fn hash_does_not_contain_plaintext() {
+        let raw = "otc_node_abcdef1234567890abcdef1234567890abcdef1234567890abcdef123456";
+        let hash = AuthStore::hash_token(raw);
+        assert!(!hash.contains("otc_node_"), "hash must not contain raw token prefix");
+        assert!(!hash.contains("abcdef1234567890"), "hash must not contain raw token body");
+    }
+
+    #[tokio::test]
+    async fn different_tokens_different_hashes() {
+        let h1 = AuthStore::hash_token("otc_node_aaa");
+        let h2 = AuthStore::hash_token("otc_node_bbb");
+        assert_ne!(h1, h2);
+    }
+
+    // ── Create + validate ────────────────────────────────────────
+
+    #[tokio::test]
+    async fn create_and_validate_node_token() {
+        let (store, _dir) = test_store().await;
+        let (id, raw) = store.create_token(AuthScope::Node, Some("host-1".into()), None).await;
+
+        assert!(!id.is_empty());
+        assert!(raw.starts_with("otc_node_"));
+
+        let token = store.validate(&raw).await.expect("token should validate");
+        assert_eq!(token.scope, AuthScope::Node);
+        assert_eq!(token.node_id.as_deref(), Some("host-1"));
+        assert!(token.last_seen_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn create_and_validate_admin_token() {
+        let (store, _dir) = test_store().await;
+        let (_id, raw) = store.create_token(AuthScope::Admin, None, Some("test".into())).await;
+
+        let token = store.validate(&raw).await.expect("token should validate");
+        assert_eq!(token.scope, AuthScope::Admin);
+        assert!(token.node_id.is_none());
+        assert_eq!(token.note.as_deref(), Some("test"));
+    }
+
+    #[tokio::test]
+    async fn validate_bogus_token_returns_none() {
+        let (store, _dir) = test_store().await;
+        store.create_token(AuthScope::Node, None, None).await;
+
+        let result = store.validate("otc_node_does_not_exist").await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn validate_empty_string_returns_none() {
+        let (store, _dir) = test_store().await;
+        assert!(store.validate("").await.is_none());
+    }
+
+    // ── Revocation ───────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn revoked_token_fails_validation() {
+        let (store, _dir) = test_store().await;
+        let (id, raw) = store.create_token(AuthScope::Node, None, None).await;
+
+        // Valid before revocation
+        assert!(store.validate(&raw).await.is_some());
+
+        // Revoke
+        assert!(store.revoke(&id).await);
+
+        // Invalid after revocation
+        assert!(store.validate(&raw).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn revoke_nonexistent_returns_false() {
+        let (store, _dir) = test_store().await;
+        assert!(!store.revoke("nonexistent-id").await);
+    }
+
+    // ── Expiration ───────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn expired_token_fails_validation() {
+        let (store, _dir) = test_store().await;
+        let (id, raw) = store.create_token(AuthScope::Node, None, None).await;
+
+        // Manually set expires_at to the past
+        {
+            let mut tokens = store.tokens.write().await;
+            let t = tokens.get_mut(&id).unwrap();
+            t.expires_at = Some(Utc::now() - chrono::Duration::hours(1));
+        }
+
+        assert!(store.validate(&raw).await.is_none(), "expired token must not validate");
+    }
+
+    // ── Token prefix ─────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn token_prefix_is_first_12_chars() {
+        let (store, _dir) = test_store().await;
+        let (id, raw) = store.create_token(AuthScope::Node, None, None).await;
+
+        let tokens = store.tokens.read().await;
+        let t = tokens.get(&id).unwrap();
+        assert_eq!(t.token_prefix, &raw[..12]);
+        // Prefix must NOT be the hash
+        assert_ne!(t.token_prefix, &t.token_hash[..12]);
+    }
+
+    // ── Listing + has_admin ──────────────────────────────────────
+
+    #[tokio::test]
+    async fn list_tokens_returns_all() {
+        let (store, _dir) = test_store().await;
+        store.create_token(AuthScope::Node, None, None).await;
+        store.create_token(AuthScope::Admin, None, None).await;
+
+        let all = store.list_tokens().await;
+        assert_eq!(all.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn has_admin_tokens_check() {
+        let (store, _dir) = test_store().await;
+        assert!(!store.has_admin_tokens().await);
+
+        store.create_token(AuthScope::Admin, None, None).await;
+        assert!(store.has_admin_tokens().await);
+    }
+
+    // ── Persistence ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn tokens_persist_to_disk_and_reload() {
+        let dir = TempDir::new().unwrap();
+
+        let raw;
+        {
+            let store = AuthStore::load(dir.path()).await;
+            let (_id, r) = store.create_token(AuthScope::Node, Some("h1".into()), None).await;
+            raw = r;
+        }
+
+        // Reload from same directory
+        let store2 = AuthStore::load(dir.path()).await;
+        let token = store2.validate(&raw).await.expect("token must survive reload");
+        assert_eq!(token.scope, AuthScope::Node);
+        assert_eq!(token.node_id.as_deref(), Some("h1"));
+    }
+}

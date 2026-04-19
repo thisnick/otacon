@@ -5,14 +5,28 @@
 # serials that look like test fixtures (TEST, FAKE, PHANTOM, or
 # ending in ABC). Fails if any are found.
 #
-# Usage: ./verify_clean_registry.sh
+# Usage: OTACON_ADMIN_TOKEN=otc_admin_... ./verify_clean_registry.sh
 # Requires: curl, jq
+#
+# In split mode, phone/dongle listing lives on the admin service.
+# Set OTACON_ADMIN_TOKEN to authenticate.
 
 set -euo pipefail
 
 source "$(cd "$(dirname "$0")/../../.." && pwd)/scripts/lib/tailscale.sh"
 
 echo "=== Test: verify no test fixture leakage in registry ==="
+
+# Use admin URL for read endpoints (split mode) with bearer auth
+BASE_URL="${ADMIN_URL:-$REGISTRY_URL}"
+CURL_OPTS=(-sf)
+
+if [ -n "${OTACON_ADMIN_TOKEN:-}" ]; then
+    CURL_OPTS+=(-H "Authorization: Bearer ${OTACON_ADMIN_TOKEN}")
+    echo "Using admin bearer token for auth"
+else
+    echo "WARNING: OTACON_ADMIN_TOKEN not set — requests may fail in split mode"
+fi
 
 FAIL=false
 
@@ -22,7 +36,7 @@ PATTERN='^(TEST|FAKE|PHANTOM|.*ABC)$'
 # --- Check phones ---
 echo ""
 echo "--- Checking registry /api/v1/phones ---"
-PHONES=$(curl -sf "$REGISTRY_URL/api/v1/phones" 2>/dev/null || echo "[]")
+PHONES=$(curl "${CURL_OPTS[@]}" "$BASE_URL/api/v1/phones" 2>/dev/null || echo "[]")
 
 PHONE_SERIALS=$(echo "$PHONES" | jq -r '.[].adb_serial // empty' 2>/dev/null || true)
 if [ -n "$PHONE_SERIALS" ]; then
@@ -42,7 +56,7 @@ fi
 # --- Check dongles ---
 echo ""
 echo "--- Checking registry /api/v1/dongles ---"
-DONGLES=$(curl -sf "$REGISTRY_URL/api/v1/dongles" 2>/dev/null || echo "[]")
+DONGLES=$(curl "${CURL_OPTS[@]}" "$BASE_URL/api/v1/dongles" 2>/dev/null || echo "[]")
 
 DONGLE_SERIALS=$(echo "$DONGLES" | jq -r '.[].serial // empty' 2>/dev/null || true)
 if [ -n "$DONGLE_SERIALS" ]; then

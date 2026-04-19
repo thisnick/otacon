@@ -265,10 +265,186 @@ impl RegistrationStore {
     }
 
     /// List all registrations (for admin view).
+    #[allow(dead_code)]
     pub async fn list_all(&self) -> Vec<PendingRegistration> {
         let regs = self.registrations.read().await;
         let mut result: Vec<PendingRegistration> = regs.values().cloned().collect();
         result.sort_by(|a, b| b.requested_at.cmp(&a.requested_at));
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    async fn test_stores() -> (Arc<AuthStore>, RegistrationStore, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let auth_store = Arc::new(AuthStore::load(dir.path()).await);
+        let reg_store = RegistrationStore::load(dir.path(), auth_store.clone()).await;
+        (auth_store, reg_store, dir)
+    }
+
+    #[tokio::test]
+    async fn register_creates_pending_entry() {
+        let (_auth, reg, _dir) = test_stores().await;
+
+        let id = reg.register("host-1".into(), Some("mypi".into()), None).await;
+        assert!(!id.is_empty());
+
+        let pending = reg.list_pending().await;
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].host_id, "host-1");
+        assert_eq!(pending[0].hostname.as_deref(), Some("mypi"));
+        assert_eq!(pending[0].status, RegistrationStatus::Pending);
+    }
+
+    #[tokio::test]
+    async fn approve_creates_node_token() {
+        let (auth, reg, _dir) = test_stores().await;
+
+        let id = reg.register("host-2".into(), None, None).await;
+        let raw_token = reg.approve(&id).await.expect("approve should succeed");
+
+        assert!(raw_token.starts_with("otc_node_"));
+
+        // Token should be valid
+        let token = auth.validate(&raw_token).await.expect("token should validate");
+        assert_eq!(token.node_id.as_deref(), Some("host-2"));
+
+        // Registration should no longer be pending
+        assert!(reg.list_pending().await.is_empty());
+
+        // Registration should be marked approved
+        let all = reg.list_all().await;
+        assert_eq!(all[0].status, RegistrationStatus::Approved);
+        assert!(all[0].token_id.is_some());
+    }
+
+    #[tokio::test]
+    async fn reject_marks_registration_rejected() {
+        let (_auth, reg, _dir) = test_stores().await;
+
+        let id = reg.register("host-3".into(), None, None).await;
+        reg.reject(&id).await.expect("reject should succeed");
+
+        assert!(reg.list_pending().await.is_empty());
+        let all = reg.list_all().await;
+        assert_eq!(all[0].status, RegistrationStatus::Rejected);
+    }
+
+    #[tokio::test]
+    async fn cannot_approve_already_approved() {
+        let (_auth, reg, _dir) = test_stores().await;
+
+        let id = reg.register("host-4".into(), None, None).await;
+        reg.approve(&id).await.unwrap();
+
+        let err = reg.approve(&id).await.unwrap_err();
+        assert!(err.contains("already"), "error should mention already resolved: {err}");
+    }
+
+    #[tokio::test]
+    async fn cannot_reject_already_rejected() {
+        let (_auth, reg, _dir) = test_stores().await;
+
+        let id = reg.register("host-5".into(), None, None).await;
+        reg.reject(&id).await.unwrap();
+
+        let err = reg.reject(&id).await.unwrap_err();
+        assert!(err.contains("already"));
+    }
+
+    #[tokio::test]
+    async fn approve_nonexistent_returns_error() {
+        let (_auth, reg, _dir) = test_stores().await;
+        let err = reg.approve("nonexistent").await.unwrap_err();
+        assert!(err.contains("not found"));
+    }
+
+    #[tokio::test]
+    async fn poll_returns_token_on_approve() {
+        let (_auth, reg, _dir) = test_stores().await;
+        let reg = Arc::new(reg);
+
+        let id = reg.register("host-6".into(), None, None).await;
+
+        // Spawn a poller
+        let reg_clone = reg.clone();
+        let id_clone = id.clone();
+        let poll_handle = tokio::spawn(async move {
+            reg_clone.poll(&id_clone, std::time::Duration::from_secs(5)).await
+        });
+
+        // Small delay to ensure poller is waiting
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Approve
+        reg.approve(&id).await.unwrap();
+
+        // Poller should wake up with the token
+        let result = poll_handle.await.unwrap().expect("poll should return result");
+        assert_eq!(result.status, RegistrationStatus::Approved);
+        assert!(result.token.is_some());
+        assert!(result.token.unwrap().starts_with("otc_node_"));
+    }
+
+    #[tokio::test]
+    async fn poll_returns_rejected_on_reject() {
+        let (_auth, reg, _dir) = test_stores().await;
+        let reg = Arc::new(reg);
+
+        let id = reg.register("host-7".into(), None, None).await;
+
+        let reg_clone = reg.clone();
+        let id_clone = id.clone();
+        let poll_handle = tokio::spawn(async move {
+            reg_clone.poll(&id_clone, std::time::Duration::from_secs(5)).await
+        });
+
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        reg.reject(&id).await.unwrap();
+
+        let result = poll_handle.await.unwrap().expect("poll should return result");
+        assert_eq!(result.status, RegistrationStatus::Rejected);
+        assert!(result.token.is_none());
+    }
+
+    #[tokio::test]
+    async fn poll_times_out() {
+        let (_auth, reg, _dir) = test_stores().await;
+
+        let id = reg.register("host-8".into(), None, None).await;
+        // Very short timeout
+        let result = reg.poll(&id, std::time::Duration::from_millis(50)).await;
+        assert!(result.is_none(), "poll should return None on timeout");
+    }
+
+    #[tokio::test]
+    async fn poll_nonexistent_returns_none() {
+        let (_auth, reg, _dir) = test_stores().await;
+        let result = reg.poll("nonexistent", std::time::Duration::from_millis(50)).await;
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn registrations_persist_to_disk() {
+        let dir = TempDir::new().unwrap();
+
+        let id;
+        {
+            let auth = Arc::new(AuthStore::load(dir.path()).await);
+            let reg = RegistrationStore::load(dir.path(), auth).await;
+            id = reg.register("host-persist".into(), None, None).await;
+        }
+
+        // Reload
+        let auth2 = Arc::new(AuthStore::load(dir.path()).await);
+        let reg2 = RegistrationStore::load(dir.path(), auth2).await;
+        let pending = reg2.list_pending().await;
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, id);
+        assert_eq!(pending[0].host_id, "host-persist");
     }
 }

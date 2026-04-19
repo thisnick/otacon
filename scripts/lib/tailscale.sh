@@ -38,6 +38,11 @@ ts_fqdn() {
 # Pre-resolve common hosts
 PI_FQDN=$(ts_fqdn "otacon-pi")
 PI_URL="https://${PI_FQDN}:8080"
-REGISTRY_URL="http://${PI_FQDN}:9080"
 
-export PI_FQDN PI_URL REGISTRY_URL
+# Split-mode control plane: registry (node-facing) + admin (human-facing)
+REGISTRY_FQDN=$(ts_fqdn "otacon-registry")
+ADMIN_FQDN=$(ts_fqdn "otacon-admin")
+REGISTRY_URL="http://${REGISTRY_FQDN}:9080"
+ADMIN_URL="http://${ADMIN_FQDN}:9090"
+
+export PI_FQDN PI_URL REGISTRY_FQDN ADMIN_FQDN REGISTRY_URL ADMIN_URL
