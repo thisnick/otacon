@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Otacon Registry</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace; background: #0d1117; color: #c9d1d9; padding: 16px; font-size: 13px; }
+h1 { font-size: 18px; margin-bottom: 4px; }
+.header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+.header .stats { color: #8b949e; font-size: 13px; }
+.pulse { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #238636; }
+.pulse.active { animation: pulse 1s ease-in-out; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(35,134,54,0.7); } 70% { box-shadow: 0 0 0 6px rgba(35,134,54,0); } }
+.pulse.dead { background: #da3633; }
+.tables { display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 16px; margin-bottom: 16px; }
+.panel h2 { font-size: 14px; margin-bottom: 6px; color: #58a6ff; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid #21262d; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
+th { color: #8b949e; font-weight: 600; font-size: 11px; text-transform: uppercase; }
+tr:hover { background: #161b22; }
+.s-online, .s-connected { color: #3fb950; }
+.s-offline, .s-disconnected { color: #8b949e; }
+.s-unreachable { color: #da3633; }
+.events-panel h2 { font-size: 14px; margin-bottom: 6px; color: #58a6ff; }
+.event-list { max-height: 300px; overflow-y: auto; font-size: 12px; }
+.event-row { padding: 3px 0; border-bottom: 1px solid #21262d; display: flex; gap: 8px; }
+.event-row .ts { color: #8b949e; flex-shrink: 0; }
+.event-row .type { color: #d2a8ff; flex-shrink: 0; }
+.event-row .entity { color: #58a6ff; }
+.icon { font-size: 12px; }
+.empty { color: #484f58; padding: 12px; text-align: center; }
+</style>
+</head>
+<body data-testid="otacon-registry-ui">
+
+<div class="header">
+  <h1>Otacon Registry</h1>
+  <span class="pulse" id="pulse"></span>
+  <span class="stats" id="stats">loading...</span>
+</div>
+
+<div class="tables">
+  <div class="panel">
+    <h2>Hosts</h2>
+    <table>
+      <thead><tr><th>ID</th><th>Status</th><th>Last Heartbeat</th><th>Tailscale IP</th></tr></thead>
+      <tbody id="hosts-body"></tbody>
+    </table>
+  </div>
+  <div class="panel">
+    <h2>Phones</h2>
+    <table>
+      <thead><tr><th>ID</th><th>Serial</th><th>Model</th><th>Status</th><th>Host</th><th>Adapter</th><th>Config</th></tr></thead>
+      <tbody id="phones-body"></tbody>
+    </table>
+  </div>
+  <div class="panel">
+    <h2>Dongles</h2>
+    <table>
+      <thead><tr><th>ID</th><th>BT MAC</th><th>HCI</th><th>Host</th><th>Phone</th><th>Status</th></tr></thead>
+      <tbody id="dongles-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="events-panel">
+  <h2>Recent Events</h2>
+  <div class="event-list" id="events-list"></div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+
+function relTime(iso) {
+  if (!iso) return '-';
+  const diff = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (diff < 5) return 'just now';
+  if (diff < 60) return Math.floor(diff) + 's ago';
+  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+  return Math.floor(diff / 86400) + 'd ago';
+}
+
+function sc(status) {
+  return 's-' + (status || 'offline');
+}
+
+function esc(s) {
+  if (s == null) return '-';
+  const d = document.createElement('span');
+  d.textContent = String(s);
+  return d.innerHTML;
+}
+
+function configIcons(cfg) {
+  if (!cfg) return '-';
+  let s = '';
+  s += cfg.wifi_enabled ? '<span class="icon" title="WiFi on">W</span>' : '<span class="icon" style="color:#484f58" title="WiFi off">W</span>';
+  s += ' ';
+  s += cfg.bluetooth_enabled ? '<span class="icon" title="BT on">B</span>' : '<span class="icon" style="color:#484f58" title="BT off">B</span>';
+  return s;
+}
+
+let pollOk = true;
+
+async function poll() {
+  try {
+    const [hosts, phones, dongles, events] = await Promise.all([
+      fetch('/api/v1/hosts').then(r => r.json()),
+      fetch('/api/v1/phones').then(r => r.json()),
+      fetch('/api/v1/dongles').then(r => r.json()),
+      fetch('/api/v1/events?limit=20').then(r => r.json()),
+    ]);
+
+    // Hosts
+    $('hosts-body').innerHTML = hosts.length === 0
+      ? '<tr><td colspan="4" class="empty">No hosts registered</td></tr>'
+      : hosts.map(h => `<tr>
+          <td>${esc(h.id)}</td>
+          <td class="${sc(h.status)}">${esc(h.status)}</td>
+          <td>${relTime(h.last_heartbeat)}</td>
+          <td>${esc(h.tailscale_ip)}</td>
+        </tr>`).join('');
+
+    // Phones
+    $('phones-body').innerHTML = phones.length === 0
+      ? '<tr><td colspan="7" class="empty">No phones registered</td></tr>'
+      : phones.map(p => `<tr>
+          <td>${esc(p.id)}</td>
+          <td>${esc(p.adb_serial)}</td>
+          <td>${esc(p.model)}</td>
+          <td class="${sc(p.status)}">${esc(p.status)}</td>
+          <td>${esc(p.host_id)}</td>
+          <td>${esc(p.adapter_mac)}</td>
+          <td>${configIcons(p.config)}</td>
+        </tr>`).join('');
+
+    // Dongles
+    $('dongles-body').innerHTML = dongles.length === 0
+      ? '<tr><td colspan="6" class="empty">No dongles registered</td></tr>'
+      : dongles.map(d => `<tr>
+          <td>${esc(d.id)}</td>
+          <td>${esc(d.bt_mac)}</td>
+          <td>${esc(d.hci_device)}</td>
+          <td>${esc(d.host_id)}</td>
+          <td>${d.phone_id ? esc(d.phone_id) : '<span style="color:#484f58">spare</span>'}</td>
+          <td class="${sc(d.status)}">${esc(d.status)}</td>
+        </tr>`).join('');
+
+    // Events
+    $('events-list').innerHTML = events.length === 0
+      ? '<div class="empty">No events</div>'
+      : events.map(e => `<div class="event-row">
+          <span class="ts">${relTime(e.timestamp)}</span>
+          <span class="type">${esc(e.event_type)}</span>
+          <span class="entity">${esc(e.entity_id)}</span>
+        </div>`).join('');
+
+    // Stats
+    const onlineHosts = hosts.filter(h => h.status === 'online').length;
+    const connPhones = phones.filter(p => p.status === 'connected').length;
+    $('stats').textContent = `${onlineHosts} host${onlineHosts !== 1 ? 's' : ''} | ${connPhones}/${phones.length} phones connected`;
+
+    // Pulse
+    const el = $('pulse');
+    el.classList.remove('dead', 'active');
+    el.classList.add('active');
+    pollOk = true;
+  } catch (e) {
+    $('pulse').classList.add('dead');
+    if (pollOk) { $('stats').textContent = 'poll failed'; pollOk = false; }
+  }
+}
+
+poll();
+setInterval(poll, 5000);
+</script>
+</body>
+</html>

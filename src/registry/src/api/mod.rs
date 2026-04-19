@@ -1,4 +1,5 @@
 use axum::{routing::{get, post}, Router};
+use axum::response::Html;
 use std::sync::Arc;
 
 use crate::store::RegistryStore;
@@ -10,8 +11,14 @@ pub mod hosts;
 pub mod phones;
 pub mod sims;
 
+async fn index() -> Html<&'static str> {
+    Html(include_str!("../../static/index.html"))
+}
+
 pub fn router(store: Arc<RegistryStore>) -> Router {
     Router::new()
+        // Debug UI
+        .route("/", get(index))
         // Host management
         .route("/api/v1/hosts/register", post(hosts::register))
         .route("/api/v1/hosts/heartbeat", post(hosts::heartbeat))
