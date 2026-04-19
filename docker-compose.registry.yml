@@ -5,10 +5,10 @@ services:
       dockerfile: Dockerfile.registry
     image: ghcr.io/thisnick/${OTACON_REPO:-otacon-dev}/registry:latest
     restart: unless-stopped
-    ports:
-      - "${REGISTRY_HOST_PORT:-9080}:8080"
+    network_mode: host
     environment:
       - OTACON_REGISTRY_DATA=/data/registry
+      - OTACON_REGISTRY_PORT=${REGISTRY_HOST_PORT:-9080}
       - RUST_LOG=${RUST_LOG:-info}
     volumes:
       - registry-data:/data/registry

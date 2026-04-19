@@ -22,7 +22,8 @@ async fn main() {
     let app = api::router(store)
         .layer(CorsLayer::permissive());
 
-    let port: u16 = std::env::var("REGISTRY_PORT")
+    let port: u16 = std::env::var("OTACON_REGISTRY_PORT")
+        .or_else(|_| std::env::var("REGISTRY_PORT"))
         .ok()
         .and_then(|p| p.parse().ok())
         .unwrap_or(8080);
