@@ -1,7 +1,7 @@
 """FleetAgent — top-level manager. Replaces DeviceManager from device-monitor.py.
 
 Handles ADB device discovery, dongle pool reporting, BlueZ agent registration,
-reconnect watcher, and PhoneAgent supervision.
+reconnect watcher, PhoneAgent supervision, and loss detection/recovery.
 """
 
 import logging
@@ -16,21 +16,28 @@ from .phone.agent import PhoneAgent
 from .bluetooth.dongle import enum_dongles, load_dongle_assignments
 from .bluetooth.agent import register_agent
 from .bluetooth.reconnect import setup_reconnect_watcher
+from .loss_handler import LOSS_TIMEOUT_SECONDS, handle_phone_lost, handle_dongle_lost
 
 log = logging.getLogger('fleet-agent')
 
 DISCONNECT_GRACE = 3
+LOSS_SWEEP_INTERVAL = 30  # seconds between loss-detection sweeps
 
 
 class FleetAgent:
     """Watches for ADB devices and spawns PhoneAgents."""
 
-    def __init__(self):
+    def __init__(self, *, time_fn=None):
         self.agents: dict[str, tuple[PhoneAgent, threading.Thread]] = {}
         self.port_allocator = PortAllocator(snapshot_start=9091, internal_start=8081)
         self._missing_count: dict[str, int] = {}
         self._lock = threading.Lock()
         self._glib_loop = None
+        # Last-seen timestamps: {serial: monotonic_time} / {mac: monotonic_time}
+        self.phone_last_seen: dict[str, float] = {}
+        self.dongle_last_seen: dict[str, float] = {}
+        self._time_fn = time_fn or time.monotonic
+        self._last_sweep: float = 0
 
     def _start_bluetooth_services(self):
         """Start BlueZ agent and reconnect watcher in a background thread."""
@@ -89,6 +96,58 @@ class FleetAgent:
         })
         log.info(f'Reported {len(dongle_list)} dongles to registry')
 
+    def _update_last_seen(self, current_serials: set[str]) -> None:
+        """Update phone_last_seen for all currently visible phones."""
+        now = self._time_fn()
+        for serial in current_serials:
+            self.phone_last_seen[serial] = now
+
+    def _update_dongle_last_seen(self) -> None:
+        """Update dongle_last_seen for all currently visible dongles."""
+        now = self._time_fn()
+        live_dongles = enum_dongles()
+        for mac in live_dongles:
+            self.dongle_last_seen[mac.upper()] = now
+
+    def loss_sweep(self) -> None:
+        """Check for phones/dongles absent longer than LOSS_TIMEOUT_SECONDS.
+
+        Runs every LOSS_SWEEP_INTERVAL seconds. On detection:
+        - Phone lost -> free its dongle to spare pool
+        - Dongle lost -> reassign orphaned phone to a spare dongle
+        """
+        now = self._time_fn()
+        if now - self._last_sweep < LOSS_SWEEP_INTERVAL:
+            return
+        self._last_sweep = now
+
+        # Check for lost phones
+        lost_phones = []
+        with self._lock:
+            for serial in list(self.agents.keys()):
+                last_seen = self.phone_last_seen.get(serial)
+                if last_seen is not None and (now - last_seen) > LOSS_TIMEOUT_SECONDS:
+                    lost_phones.append(serial)
+
+        for serial in lost_phones:
+            log.warning(f'Phone {serial} absent >{LOSS_TIMEOUT_SECONDS}s — triggering loss handler')
+            self.phone_last_seen.pop(serial, None)
+            handle_phone_lost(serial, self)
+
+        # Check for lost dongles
+        assignments = load_dongle_assignments()
+        assigned_macs = set(mac.upper() for mac in assignments.values() if mac)
+        lost_dongles = []
+        for mac in assigned_macs:
+            last_seen = self.dongle_last_seen.get(mac)
+            if last_seen is not None and (now - last_seen) > LOSS_TIMEOUT_SECONDS:
+                lost_dongles.append(mac)
+
+        for mac in lost_dongles:
+            log.warning(f'Dongle {mac} absent >{LOSS_TIMEOUT_SECONDS}s — triggering loss handler')
+            self.dongle_last_seen.pop(mac, None)
+            handle_dongle_lost(mac, self)
+
     def run(self):
         log.info('Fleet agent started')
         self._start_bluetooth_services()
@@ -96,6 +155,10 @@ class FleetAgent:
 
         while True:
             current_serials = get_connected_serials()
+
+            # Update last-seen timestamps
+            self._update_last_seen(current_serials)
+            self._update_dongle_last_seen()
 
             with self._lock:
                 # Start agents for new devices
@@ -124,6 +187,9 @@ class FleetAgent:
                             log.info(f'Removed agent for {serial} (missing {DISCONNECT_GRACE} checks)')
                     else:
                         self._missing_count.pop(serial, None)
+
+            # Run loss sweep (every LOSS_SWEEP_INTERVAL seconds)
+            self.loss_sweep()
 
             time.sleep(2)
 

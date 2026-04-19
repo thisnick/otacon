@@ -63,3 +63,27 @@ def report_error(category: str, message: str, phone_id: str | None = None,
         payload['data'] = data
     http_post(f'{registry_url}/api/v1/events', payload)
     log.error(f'[{category}] {message}')
+
+
+def emit_event(event_type: str, data: dict | None = None) -> None:
+    """Emit a fleet event to the registry (fire and forget).
+
+    Used for phone.lost, dongle.lost, phone.reassigned events.
+    """
+    registry_url = os.environ.get('REGISTRY_URL')
+    if not registry_url:
+        log.info(f'[event] {event_type}: {data}')
+        return
+    host_id = os.environ.get('HOST_ID', '')
+    phone_id = data.get('phone_id') if data else None
+    payload = {
+        'host_id': host_id,
+        'phone_id': phone_id,
+        'severity': 'info',
+        'category': event_type,
+        'message': f'{event_type} event',
+    }
+    if data:
+        payload['data'] = data
+    http_post(f'{registry_url}/api/v1/events', payload)
+    log.info(f'[event] {event_type}: {data}')

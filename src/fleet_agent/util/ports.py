@@ -1,11 +1,15 @@
 import json
 import logging
 import os
+import re
 import threading
 
 PHONES_JSON_PATH = os.environ.get('PHONES_CONFIG', '/data/otacon/phones.json')
 
 log = logging.getLogger('fleet-agent')
+
+# Reject test/fake serials as defense in depth (feedback_test_cleanup.md)
+_REJECT_SERIAL_RE = re.compile(r'^(TEST|FAKE|PHANTOM|.*ABC)$', re.IGNORECASE)
 
 
 class PortAllocator:
@@ -77,8 +81,19 @@ class PortAllocator:
         except OSError as e:
             log.warning(f'Failed to persist port assignment for {serial}: {e}')
 
+    @staticmethod
+    def _validate_serial(serial: str) -> None:
+        """Reject empty or test-pattern serials (defense in depth)."""
+        if not serial:
+            raise ValueError('Cannot register phone with empty serial')
+        if _REJECT_SERIAL_RE.match(serial):
+            raise ValueError(
+                f'Rejected test/fake serial: {serial!r} '
+                f'(matches reject pattern)')
+
     def allocate(self, serial: str) -> tuple[int, int, int, int]:
         """Allocate ports for a serial. Reuses saved assignment if present."""
+        self._validate_serial(serial)
         with self._lock:
             assignments = self._load_assignments()
             if serial in assignments:
@@ -100,3 +115,70 @@ class PortAllocator:
 
     def release(self, snapshot_port: int):
         pass
+
+    def release_dongle(self, adapter_mac: str) -> None:
+        """Clear dongle assignment, returning it to the spare pool.
+
+        Sets adapter_mac to None for the phone entry in phones.json that
+        was using this dongle. Does NOT delete the dongle or phone entry.
+        """
+        with self._lock:
+            try:
+                phones = []
+                try:
+                    with open(PHONES_JSON_PATH) as f:
+                        phones = json.load(f)
+                except (FileNotFoundError, json.JSONDecodeError):
+                    return
+                changed = False
+                for p in phones:
+                    if (p.get('adapter_mac') or '').upper() == adapter_mac.upper():
+                        p['adapter_mac'] = None
+                        p['phone_bt_mac'] = None
+                        changed = True
+                        break
+                if changed:
+                    with open(PHONES_JSON_PATH, 'w') as f:
+                        json.dump(phones, f, indent=2)
+                    log.info(f'Released dongle {adapter_mac} back to spare pool')
+            except OSError as e:
+                log.warning(f'Failed to release dongle {adapter_mac}: {e}')
+
+    def claim_spare_dongle(self, serial: str, _enum_dongles=None) -> str | None:
+        """Claim a free spare dongle for the given phone serial.
+
+        Looks at phones.json to find adapter_macs that are currently assigned,
+        then enumerates live dongles and returns the first one that is NOT
+        assigned to any phone. Returns None if no spare is available.
+        """
+        if _enum_dongles is None:
+            from ..bluetooth.dongle import enum_dongles
+            _enum_dongles = enum_dongles
+
+        with self._lock:
+            try:
+                phones = []
+                try:
+                    with open(PHONES_JSON_PATH) as f:
+                        phones = json.load(f)
+                except (FileNotFoundError, json.JSONDecodeError):
+                    pass
+
+                # Collect all currently assigned MACs (excluding the requesting phone)
+                assigned_macs = set()
+                for p in phones:
+                    mac = p.get('adapter_mac')
+                    if mac and (p.get('adb_serial') or '') != serial:
+                        assigned_macs.add(mac.upper())
+
+                # Enumerate live dongles
+                live_dongles = _enum_dongles()
+                for mac in live_dongles:
+                    if mac.upper() not in assigned_macs:
+                        log.info(f'Claiming spare dongle {mac} for phone {serial}')
+                        return mac.upper()
+
+                return None
+            except Exception as e:
+                log.error(f'Error claiming spare dongle: {e}')
+                return None
