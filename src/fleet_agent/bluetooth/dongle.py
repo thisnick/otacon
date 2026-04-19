@@ -38,20 +38,45 @@ def _seed_cache():
 
 
 def parse_hciconfig(output: str) -> dict[str, str]:
-    """Parse hciconfig output into {bt_mac: hci_name}. Pure function for testing."""
+    """Parse hciconfig output into {bt_mac: hci_name}.
+
+    Only includes adapters that are UP. DOWN adapters are excluded so
+    the loss sweep can detect when an adapter has been powered off.
+    Pure function for testing.
+    """
     dongles = {}
     current_hci = None
+    current_mac = None
+    is_up = False
     for raw_line in output.splitlines():
         stripped = raw_line.strip()
         if not stripped:
+            # Block boundary — flush current adapter
+            if current_hci and current_mac and is_up:
+                dongles[current_mac] = current_hci
+            current_hci = None
+            current_mac = None
+            is_up = False
             continue
-        if 'BD Address:' in stripped and current_hci:
+        if raw_line and not raw_line[0].isspace() and ':' in stripped:
+            # New adapter header — flush previous if any
+            if current_hci and current_mac and is_up:
+                dongles[current_mac] = current_hci
+            current_hci = stripped.split(':')[0]
+            current_mac = None
+            is_up = False
+        elif 'BD Address:' in stripped and current_hci:
             mac = stripped.split('BD Address:')[1].strip().split()[0]
             if mac and mac != '00:00:00:00:00:00':
-                dongles[mac.upper()] = current_hci
-            current_hci = None
-        elif raw_line and not raw_line[0].isspace() and ':' in stripped:
-            current_hci = stripped.split(':')[0]
+                current_mac = mac.upper()
+        elif stripped and current_hci and current_mac is not None:
+            # Flags line (e.g., "UP RUNNING PSCAN ISCAN" or "DOWN")
+            if 'UP' in stripped.split():
+                is_up = True
+
+    # Flush last adapter (no trailing blank line)
+    if current_hci and current_mac and is_up:
+        dongles[current_mac] = current_hci
     return dongles
 
 

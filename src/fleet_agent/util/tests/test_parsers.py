@@ -55,7 +55,7 @@ hci0:	Type: Primary  Bus: USB
         self.assertEqual(parse_hciconfig(''), {})
 
     def test_skips_zero_mac(self):
-        out = "hci0:\tType: Primary\n\tBD Address: 00:00:00:00:00:00  ACL MTU: 1\n"
+        out = "hci0:\tType: Primary\n\tBD Address: 00:00:00:00:00:00  ACL MTU: 1\n\tUP RUNNING\n"
         self.assertEqual(parse_hciconfig(out), {})
 
 

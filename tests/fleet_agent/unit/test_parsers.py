@@ -62,14 +62,29 @@ class TestParseHciconfig:
         assert parse_hciconfig(output) == {}
 
     def test_single_adapter(self):
-        output = "hci0:\tType: Primary\n\tBD Address: FF:EE:DD:CC:BB:AA  ACL\n"
+        output = "hci0:\tType: Primary\n\tBD Address: FF:EE:DD:CC:BB:AA  ACL\n\tUP RUNNING\n"
         result = parse_hciconfig(output)
         assert result == {'FF:EE:DD:CC:BB:AA': 'hci0'}
 
     def test_lowercases_to_upper(self):
-        output = "hci0:\tType: Primary\n\tBD Address: aa:bb:cc:dd:ee:ff  ACL\n"
+        output = "hci0:\tType: Primary\n\tBD Address: aa:bb:cc:dd:ee:ff  ACL\n\tUP RUNNING\n"
         result = parse_hciconfig(output)
         assert 'AA:BB:CC:DD:EE:FF' in result
+
+    def test_excludes_down_adapter(self):
+        output = (
+            "hci0:\tType: Primary  Bus: USB\n"
+            "\tBD Address: AA:BB:CC:DD:EE:01  ACL MTU: 310:10\n"
+            "\tUP RUNNING\n"
+            "\n"
+            "hci3:\tType: Primary  Bus: USB\n"
+            "\tBD Address: F4:4E:FC:27:B3:E8  ACL MTU: 310:10\n"
+            "\tDOWN\n"
+        )
+        result = parse_hciconfig(output)
+        assert len(result) == 1
+        assert 'AA:BB:CC:DD:EE:01' in result
+        assert 'F4:4E:FC:27:B3:E8' not in result
 
 
 class TestFindPairButtonInTree:
