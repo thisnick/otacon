@@ -11,6 +11,11 @@ def configure_screen(serial: str):
     log.info(f'[{serial}] Configuring screen...')
     adb_shell(serial, 'settings put global stay_on_while_plugged_in 0')
     adb_shell(serial, 'settings put system screen_off_timeout 300000')  # 5 min
+    # Keep USB debugging persistent across reboots (Samsung silently disables on
+    # cold-power-off via Auto Blocker; reboot survives, cold boot still requires
+    # manual toggle). These two are also no-ops on Pixel which already persists.
+    adb_shell(serial, 'settings put global adb_enabled 1')
+    adb_shell(serial, 'settings put global development_settings_enabled 1')
     adb_shell(serial, 'settings put system screen_brightness_mode 1')
     adb_shell(serial, 'settings put system accelerometer_rotation 0')
     adb_shell(serial, 'settings put system user_rotation 0')
