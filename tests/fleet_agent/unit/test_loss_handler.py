@@ -37,8 +37,28 @@ class TestLossTimeout:
 
 
 class TestHandlePhoneLost:
+    @patch('fleet_agent.loss_handler.load_dongle_assignments',
+           return_value={'SER001': 'AA:BB:CC:DD:EE:01'})
     @patch('fleet_agent.loss_handler.emit_event')
-    def test_stops_agent_and_frees_dongle(self, mock_emit):
+    def test_frees_dongle_when_agent_already_gone(self, mock_emit, mock_assign):
+        """Normal case: agent removed at T+6s, loss fires at T+300s.
+        Dongle assignment looked up from cache, not from agent."""
+        fa = _make_fleet_agent({})  # agent already gone
+
+        handle_phone_lost('SER001', fa)
+
+        fa.port_allocator.release_dongle.assert_called_once_with('AA:BB:CC:DD:EE:01')
+        mock_emit.assert_called_once_with('phone.lost', {
+            'serial': 'SER001',
+            'phone_id': None,
+            'adapter_mac': 'AA:BB:CC:DD:EE:01',
+        })
+
+    @patch('fleet_agent.loss_handler.load_dongle_assignments',
+           return_value={'SER001': 'AA:BB:CC:DD:EE:01'})
+    @patch('fleet_agent.loss_handler.emit_event')
+    def test_stops_agent_if_still_present(self, mock_emit, mock_assign):
+        """Edge case: agent still present when loss fires."""
         agent = _make_agent()
         thread = MagicMock()
         fa = _make_fleet_agent({'SER001': (agent, thread)})
@@ -48,43 +68,29 @@ class TestHandlePhoneLost:
         agent.stop.assert_called_once()
         fa.port_allocator.release.assert_called_once_with(9091)
         fa.port_allocator.release_dongle.assert_called_once_with('AA:BB:CC:DD:EE:01')
-
-    @patch('fleet_agent.loss_handler.emit_event')
-    def test_emits_phone_lost_event(self, mock_emit):
-        agent = _make_agent()
-        thread = MagicMock()
-        fa = _make_fleet_agent({'SER001': (agent, thread)})
-
-        handle_phone_lost('SER001', fa)
-
-        mock_emit.assert_called_once_with('phone.lost', {
-            'serial': 'SER001',
-            'phone_id': 'phone-1',
-            'adapter_mac': 'AA:BB:CC:DD:EE:01',
-        })
-
-    @patch('fleet_agent.loss_handler.emit_event')
-    def test_removes_agent_from_fleet(self, mock_emit):
-        agent = _make_agent()
-        thread = MagicMock()
-        fa = _make_fleet_agent({'SER001': (agent, thread)})
-
-        handle_phone_lost('SER001', fa)
-
         assert 'SER001' not in fa.agents
 
+    @patch('fleet_agent.loss_handler.load_dongle_assignments',
+           return_value={})
     @patch('fleet_agent.loss_handler.emit_event')
-    def test_handles_missing_agent_gracefully(self, mock_emit):
+    def test_emits_event_even_without_dongle(self, mock_emit, mock_assign):
+        """Phone lost but no dongle assignment found."""
         fa = _make_fleet_agent({})
-        handle_phone_lost('SER_GONE', fa)
-        # Should not raise, just log warning
-        mock_emit.assert_not_called()
 
+        handle_phone_lost('SER_GONE', fa)
+
+        fa.port_allocator.release_dongle.assert_not_called()
+        mock_emit.assert_called_once_with('phone.lost', {
+            'serial': 'SER_GONE',
+            'phone_id': None,
+            'adapter_mac': None,
+        })
+
+    @patch('fleet_agent.loss_handler.load_dongle_assignments',
+           return_value={'SER001': None})
     @patch('fleet_agent.loss_handler.emit_event')
-    def test_skips_dongle_release_when_no_adapter(self, mock_emit):
-        agent = _make_agent(adapter_mac=None)
-        thread = MagicMock()
-        fa = _make_fleet_agent({'SER001': (agent, thread)})
+    def test_skips_dongle_release_when_no_adapter(self, mock_emit, mock_assign):
+        fa = _make_fleet_agent({})
 
         handle_phone_lost('SER001', fa)
 

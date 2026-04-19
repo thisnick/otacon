@@ -34,9 +34,6 @@ class TestLossSweep:
         fa, clock = _make_fleet_agent(now=1000)
         # Phone seen 10s ago — well within timeout
         fa.phone_last_seen['SER001'] = 990
-        agent = MagicMock()
-        agent.adapter_mac = 'AA:BB:CC:DD:EE:01'
-        fa.agents['SER001'] = (agent, MagicMock())
         fa._last_sweep = 0  # force sweep
 
         fa.loss_sweep()
@@ -51,10 +48,9 @@ class TestLossSweep:
             self, _ed, _ld, mock_dongle_lost, mock_phone_lost):
         fa, clock = _make_fleet_agent(now=1000)
         # Phone last seen 301s ago — past timeout
+        # Agent is already gone from self.agents (removed at T+6s by DISCONNECT_GRACE)
+        # but phone_last_seen still has the stale timestamp
         fa.phone_last_seen['SER001'] = 1000 - LOSS_TIMEOUT_SECONDS - 1
-        agent = MagicMock()
-        agent.adapter_mac = 'AA:BB:CC:DD:EE:01'
-        fa.agents['SER001'] = (agent, MagicMock())
         fa._last_sweep = 0
 
         fa.loss_sweep()
@@ -62,6 +58,25 @@ class TestLossSweep:
         mock_phone_lost.assert_called_once_with('SER001', fa)
         # last_seen should be cleared after loss
         assert 'SER001' not in fa.phone_last_seen
+
+    @patch('fleet_agent.manager.handle_phone_lost')
+    @patch('fleet_agent.manager.handle_dongle_lost')
+    @patch('fleet_agent.manager.load_dongle_assignments', return_value={})
+    @patch('fleet_agent.manager.enum_dongles', return_value={})
+    def test_triggers_phone_lost_even_when_agent_already_removed(
+            self, _ed, _ld, mock_dongle_lost, mock_phone_lost):
+        """Key scenario: agent is removed at T+6s, loss fires at T+300s.
+        The sweep must still trigger because phone_last_seen is independent
+        of self.agents."""
+        fa, clock = _make_fleet_agent(now=1000)
+        # Agent already gone — but phone_last_seen still tracks it
+        fa.phone_last_seen['SER001'] = 1000 - LOSS_TIMEOUT_SECONDS - 1
+        assert 'SER001' not in fa.agents  # agent already cleaned up
+        fa._last_sweep = 0
+
+        fa.loss_sweep()
+
+        mock_phone_lost.assert_called_once_with('SER001', fa)
 
     @patch('fleet_agent.manager.handle_phone_lost')
     @patch('fleet_agent.manager.handle_dongle_lost')
@@ -87,8 +102,6 @@ class TestLossSweep:
             self, _ed, _ld, mock_dongle_lost, mock_phone_lost):
         fa, clock = _make_fleet_agent(now=1000)
         fa.phone_last_seen['SER001'] = 0  # way past timeout
-        agent = MagicMock()
-        fa.agents['SER001'] = (agent, MagicMock())
 
         # Last sweep was 10s ago — too soon
         fa._last_sweep = 990
@@ -105,8 +118,6 @@ class TestLossSweep:
             self, _ed, _ld, mock_dongle_lost, mock_phone_lost):
         fa, clock = _make_fleet_agent(now=1000)
         fa.phone_last_seen['SER001'] = 0
-        agent = MagicMock()
-        fa.agents['SER001'] = (agent, MagicMock())
 
         # Last sweep was exactly LOSS_SWEEP_INTERVAL ago
         fa._last_sweep = 1000 - LOSS_SWEEP_INTERVAL - 1

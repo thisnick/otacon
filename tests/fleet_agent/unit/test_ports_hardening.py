@@ -7,6 +7,81 @@ from unittest.mock import patch
 from fleet_agent.util.ports import PortAllocator
 
 
+class TestPurgePoisonedEntries:
+    """Startup sweep removes existing entries with empty/test-pattern serials."""
+
+    def test_removes_empty_serial_on_startup(self, tmp_path):
+        path = str(tmp_path / 'phones.json')
+        phones = [
+            {'adb_serial': '', 'snapshot_port': 9091},
+            {'adb_serial': 'R92X1022S7K', 'snapshot_port': 9092},
+        ]
+        with open(path, 'w') as f:
+            json.dump(phones, f)
+
+        with patch('fleet_agent.util.ports.PHONES_JSON_PATH', path):
+            PortAllocator()
+            with open(path) as f:
+                result = json.load(f)
+            assert len(result) == 1
+            assert result[0]['adb_serial'] == 'R92X1022S7K'
+
+    def test_removes_abc_serial_on_startup(self, tmp_path):
+        path = str(tmp_path / 'phones.json')
+        phones = [
+            {'adb_serial': '14151JECABC', 'snapshot_port': 9091},
+            {'adb_serial': 'R5CT60SDGKD', 'snapshot_port': 9092},
+        ]
+        with open(path, 'w') as f:
+            json.dump(phones, f)
+
+        with patch('fleet_agent.util.ports.PHONES_JSON_PATH', path):
+            PortAllocator()
+            with open(path) as f:
+                result = json.load(f)
+            assert len(result) == 1
+            assert result[0]['adb_serial'] == 'R5CT60SDGKD'
+
+    def test_removes_test_fake_phantom_on_startup(self, tmp_path):
+        path = str(tmp_path / 'phones.json')
+        phones = [
+            {'adb_serial': 'TEST', 'snapshot_port': 9091},
+            {'adb_serial': 'FAKE', 'snapshot_port': 9092},
+            {'adb_serial': 'PHANTOM', 'snapshot_port': 9093},
+            {'adb_serial': 'R92X1022S7K', 'snapshot_port': 9094},
+        ]
+        with open(path, 'w') as f:
+            json.dump(phones, f)
+
+        with patch('fleet_agent.util.ports.PHONES_JSON_PATH', path):
+            PortAllocator()
+            with open(path) as f:
+                result = json.load(f)
+            assert len(result) == 1
+            assert result[0]['adb_serial'] == 'R92X1022S7K'
+
+    def test_no_change_when_all_clean(self, tmp_path):
+        path = str(tmp_path / 'phones.json')
+        phones = [
+            {'adb_serial': 'R92X1022S7K', 'snapshot_port': 9091},
+            {'adb_serial': 'R5CT60SDGKD', 'snapshot_port': 9092},
+        ]
+        with open(path, 'w') as f:
+            json.dump(phones, f)
+
+        with patch('fleet_agent.util.ports.PHONES_JSON_PATH', path):
+            PortAllocator()
+            with open(path) as f:
+                result = json.load(f)
+            assert len(result) == 2
+
+    def test_handles_missing_file_gracefully(self, tmp_path):
+        path = str(tmp_path / 'phones.json')
+        with patch('fleet_agent.util.ports.PHONES_JSON_PATH', path):
+            # Should not crash
+            PortAllocator()
+
+
 class TestPortAllocatorHardening:
     """Reject empty or test-pattern serials (defense in depth)."""
 

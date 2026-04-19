@@ -26,6 +26,39 @@ class PortAllocator:
         self._display_start = display_start
         self._vnc_start = vnc_start
         self._lock = threading.Lock()
+        self._purge_poisoned_entries()
+
+    def _purge_poisoned_entries(self) -> None:
+        """Remove existing entries with empty or test-pattern serials on startup.
+
+        Defense in depth: cleans up residue from prior test fixture leaks
+        so phantom phones don't collide with real port assignments.
+        """
+        try:
+            phones = []
+            try:
+                with open(PHONES_JSON_PATH) as f:
+                    phones = json.load(f)
+            except (FileNotFoundError, json.JSONDecodeError):
+                return
+
+            original_count = len(phones)
+            clean = []
+            for p in phones:
+                serial = p.get('adb_serial') or ''
+                if not serial or _REJECT_SERIAL_RE.match(serial):
+                    log.warning(f'Purging poisoned phones.json entry: '
+                                f'adb_serial={serial!r}')
+                else:
+                    clean.append(p)
+
+            if len(clean) < original_count:
+                with open(PHONES_JSON_PATH, 'w') as f:
+                    json.dump(clean, f, indent=2)
+                removed = original_count - len(clean)
+                log.info(f'Purged {removed} poisoned entries from phones.json')
+        except OSError as e:
+            log.warning(f'Failed to purge poisoned entries: {e}')
 
     def _idx_from_ports(self, snapshot_port: int) -> int:
         return snapshot_port - self._snapshot_start

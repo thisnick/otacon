@@ -115,19 +115,22 @@ class FleetAgent:
         Runs every LOSS_SWEEP_INTERVAL seconds. On detection:
         - Phone lost -> free its dongle to spare pool
         - Dongle lost -> reassign orphaned phone to a spare dongle
+
+        Note: We iterate phone_last_seen (not self.agents) because the agent
+        is removed from self.agents after DISCONNECT_GRACE (~6s), well before
+        the 5-min loss timeout elapses. phone_last_seen retains the stale
+        timestamp so we can detect the loss.
         """
         now = self._time_fn()
         if now - self._last_sweep < LOSS_SWEEP_INTERVAL:
             return
         self._last_sweep = now
 
-        # Check for lost phones
+        # Check for lost phones — iterate phone_last_seen, not self.agents
         lost_phones = []
-        with self._lock:
-            for serial in list(self.agents.keys()):
-                last_seen = self.phone_last_seen.get(serial)
-                if last_seen is not None and (now - last_seen) > LOSS_TIMEOUT_SECONDS:
-                    lost_phones.append(serial)
+        for serial, last_seen in list(self.phone_last_seen.items()):
+            if (now - last_seen) > LOSS_TIMEOUT_SECONDS:
+                lost_phones.append(serial)
 
         for serial in lost_phones:
             log.warning(f'Phone {serial} absent >{LOSS_TIMEOUT_SECONDS}s — triggering loss handler')

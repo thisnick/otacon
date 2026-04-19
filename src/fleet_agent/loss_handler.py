@@ -9,7 +9,7 @@ import logging
 import threading
 
 from .registry.client import emit_event
-from .bluetooth.dongle import save_dongle_assignment
+from .bluetooth.dongle import save_dongle_assignment, load_dongle_assignments
 
 log = logging.getLogger('fleet-agent')
 
@@ -19,26 +19,31 @@ LOSS_TIMEOUT_SECONDS = 300  # 5 minutes
 def handle_phone_lost(serial: str, fleet_agent) -> None:
     """Phone disappeared permanently. Free its assigned dongle back to spare pool.
 
+    The PhoneAgent is typically already removed from self.agents by the
+    DISCONNECT_GRACE cleanup (~6s after disconnect). This handler fires
+    after the 5-min loss timeout, so we look up the dongle assignment
+    from the dongle assignments cache rather than the (already gone) agent.
+
     Steps:
-    1. Stop the PhoneAgent for this serial
-    2. Free the dongle assignment (adapter_mac) so it returns to spare pool
-    3. Emit phone.lost event to registry
+    1. Stop the PhoneAgent if still present (rare edge case)
+    2. Look up dongle assignment from cache
+    3. Free the dongle assignment so it returns to spare pool
+    4. Emit phone.lost event to registry
     """
 
+    # If agent is somehow still present, stop it
     with fleet_agent._lock:
         entry = fleet_agent.agents.pop(serial, None)
 
-    if not entry:
-        log.warning(f'handle_phone_lost({serial}): no agent found, already cleaned up')
-        return
+    if entry:
+        agent, thread = entry
+        agent.stop()
+        fleet_agent.port_allocator.release(agent.snapshot_port)
 
-    agent, thread = entry
-    adapter_mac = agent.adapter_mac
-    phone_id = agent.phone_id or agent.registry_id
-
-    # Stop the agent
-    agent.stop()
-    fleet_agent.port_allocator.release(agent.snapshot_port)
+    # Look up the dongle that was assigned to this phone from the cache
+    # (works even after the agent has been removed from self.agents)
+    assignments = load_dongle_assignments()
+    adapter_mac = assignments.get(serial)
 
     # Free the dongle back to spare pool
     if adapter_mac:
@@ -47,7 +52,7 @@ def handle_phone_lost(serial: str, fleet_agent) -> None:
 
     emit_event('phone.lost', {
         'serial': serial,
-        'phone_id': phone_id,
+        'phone_id': None,
         'adapter_mac': adapter_mac,
     })
     log.info(f'Phone {serial} marked as lost — dongle freed to spare pool')
