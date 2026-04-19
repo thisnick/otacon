@@ -87,7 +87,9 @@ def handle_dongle_lost(adapter_mac: str, fleet_agent) -> None:
         })
         return
 
-    phone_id = orphan_agent.phone_id or orphan_agent.registry_id
+    # Use registry_id (canonical registry-assigned ID like "phone-2") for all
+    # registry-bound calls; fall back to local phone_id only if registry_id unset
+    phone_id = orphan_agent.registry_id or orphan_agent.phone_id
 
     emit_event('dongle.lost', {
         'adapter_mac': adapter_mac,

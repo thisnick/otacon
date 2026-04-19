@@ -126,10 +126,10 @@ class TestHandleDongleLost:
         assert agent.phone_bt_mac is None  # cleared for re-pair
         mock_save.assert_called_once_with('SER001', 'FF:FF:FF:FF:FF:01')
         agent._run_heal.assert_called_once_with('bt_bonded')
-        # Registry: old dongle cleared, new dongle gets phone_id
+        # Registry: old dongle cleared, new dongle gets registry_id (not local phone_id)
         assert mock_update_reg.call_args_list == [
             call('AA:BB:CC:DD:EE:01', None),
-            call('FF:FF:FF:FF:FF:01', 'phone-1'),
+            call('FF:FF:FF:FF:FF:01', 'reg-1'),
         ]
 
     @patch('fleet_agent.loss_handler.update_registry_dongle')
@@ -149,11 +149,11 @@ class TestHandleDongleLost:
         assert calls[0] == call('dongle.lost', {
             'adapter_mac': 'AA:BB:CC:DD:EE:01',
             'orphan_serial': 'SER001',
-            'phone_id': 'phone-1',
+            'phone_id': 'reg-1',
         })
         assert calls[1] == call('phone.reassigned', {
             'serial': 'SER001',
-            'phone_id': 'phone-1',
+            'phone_id': 'reg-1',
             'old_adapter_mac': 'AA:BB:CC:DD:EE:01',
             'new_adapter_mac': 'FF:FF:FF:FF:FF:01',
         })
@@ -172,6 +172,25 @@ class TestHandleDongleLost:
         assert agent.adapter_mac == 'AA:BB:CC:DD:EE:01'
         agent._run_heal.assert_not_called()
         mock_update_reg.assert_not_called()
+
+    @patch('fleet_agent.loss_handler.update_registry_dongle')
+    @patch('fleet_agent.loss_handler.save_dongle_assignment')
+    @patch('fleet_agent.loss_handler.emit_event')
+    def test_falls_back_to_phone_id_when_no_registry_id(self, mock_emit, mock_save,
+                                                         mock_update_reg):
+        """When registry_id is None, phone_id is used as fallback."""
+        agent = _make_agent(serial='SER001', adapter_mac='AA:BB:CC:DD:EE:01',
+                            phone_id='phone-local', registry_id=None)
+        thread = MagicMock()
+        fa = _make_fleet_agent({'SER001': (agent, thread)})
+        fa.port_allocator.claim_spare_dongle.return_value = 'FF:FF:FF:FF:FF:01'
+
+        handle_dongle_lost('AA:BB:CC:DD:EE:01', fa)
+
+        assert mock_update_reg.call_args_list == [
+            call('AA:BB:CC:DD:EE:01', None),
+            call('FF:FF:FF:FF:FF:01', 'phone-local'),
+        ]
 
     @patch('fleet_agent.loss_handler.update_registry_dongle')
     @patch('fleet_agent.loss_handler.emit_event')
