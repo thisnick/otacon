@@ -92,8 +92,8 @@ def _needs_apk_update(serial: str) -> bool:
     except Exception:
         return True  # can't read — reinstall to be safe
     # Get built APK version code via aapt2 or aapt
-    try:
-        for tool in ('aapt2', 'aapt'):
+    for tool in ('aapt2', 'aapt'):
+        try:
             r = subprocess.run(
                 [tool, 'dump', 'badging', APK_PATH],
                 capture_output=True, text=True, timeout=5)
@@ -105,8 +105,8 @@ def _needs_apk_update(serial: str) -> bool:
                         return False
                     log.info(f'[{serial}] APK version mismatch: installed={installed_ver} built={built_ver}')
                     return True
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        pass
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            continue
     # If we can't read the built APK version, reinstall to be safe
     return True
 
@@ -120,6 +120,9 @@ def apply_restrictions(serial: str):
         result = adb(serial, 'install', '-r', APK_PATH, timeout=30)
         if 'Success' in result:
             log.info(f'[{serial}] Kiosk APK updated before applying restrictions')
+            # Re-grant runtime permissions — reinstall can reset dangerous
+            # permission state (e.g. BLUETOOTH_CONNECT) on Android 12+.
+            grant_permissions(serial)
     adb_shell(
         serial,
         f'am broadcast -a {DEVICE_OWNER_PKG}.CLEAR_RESTRICTIONS '
