@@ -111,15 +111,19 @@ def _btctl(adapter_mac: str, *commands: str, timeout: int = 15) -> str:
 
 
 def enable_discoverable(adapter_mac: str, timeout_seconds: int = 120):
-    """Make a specific adapter discoverable with a safety-net timeout."""
-    _btctl(adapter_mac, f'discoverable-timeout {timeout_seconds}', 'discoverable on')
-    log.info(f'Adapter {adapter_mac} set Discoverable=true (timeout={timeout_seconds}s)')
+    """Make a specific adapter discoverable and pairable for pairing."""
+    _btctl(adapter_mac,
+           f'discoverable-timeout {timeout_seconds}',
+           'discoverable on',
+           'pairable on')
+    log.info(f'Adapter {adapter_mac} set Discoverable+Pairable=true '
+             f'(timeout={timeout_seconds}s)')
 
 
 def disable_discoverable(adapter_mac: str):
-    """Turn off discoverable on a specific adapter (idempotent)."""
-    _btctl(adapter_mac, 'discoverable off')
-    log.info(f'Adapter {adapter_mac} set Discoverable=false')
+    """Turn off discoverable and pairable on a specific adapter (idempotent)."""
+    _btctl(adapter_mac, 'discoverable off', 'pairable off')
+    log.info(f'Adapter {adapter_mac} set Discoverable+Pairable=false')
 
 
 def _run_bluez_pair(adapter_mac: str, adapter_hci: str, serial: str):
@@ -423,6 +427,12 @@ def allocate_and_pair_bluetooth(serial: str, snapshot_url: str,
     # Trust and persist
     if phone_bt_mac and 'ok=true' in (pair_result.get('data', '')):
         save_dongle_assignment(serial, adapter_mac, phone_bt_mac)
+        # Refresh the agent's MAC allowlist so it knows about this assignment
+        try:
+            from .agent import reload_allowlist
+            reload_allowlist()
+        except Exception:
+            pass
         try:
             run_cmd(
                 ['bluetoothctl'],

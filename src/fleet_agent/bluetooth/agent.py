@@ -1,12 +1,20 @@
-"""BlueZ auto-accept pairing agent.
+"""BlueZ pairing agent with per-adapter MAC allowlist.
 
-Auto-accepts all pairing requests (KeyboardDisplay capability),
-trusts paired devices, keeps adapters pairable.  All adapters
-default to Discoverable=false; only the specific adapter being
-paired is temporarily made discoverable during the pair flow.
+Accepts pairing requests only when the peer MAC matches the phone
+assigned to that adapter in phones.json.  All other pair attempts
+are rejected with org.bluez.Error.Rejected, preventing cross-dongle
+bonds that are very hard to clean up (especially on Samsung Android
+16+ where removeBond() silently fails).
+
+Adapters default to Pairable=false; the pair flow in pair.py
+temporarily sets Pairable=true on the specific adapter being paired.
 """
 
+import json
 import logging
+import os
+import re
+
 import dbus
 import dbus.mainloop.glib
 import dbus.service
@@ -21,6 +29,98 @@ ADAPTER_IFACE   = "org.bluez.Adapter1"
 DEVICE_IFACE    = "org.bluez.Device1"
 AGENT_PATH      = "/otacon/agent"
 
+PHONES_JSON_PATH = os.environ.get('PHONES_CONFIG', '/data/otacon/phones.json')
+
+# {adapter_mac_upper: phone_bt_mac_upper}  — loaded from phones.json
+_adapter_allowlist: dict[str, str] = {}
+
+
+def _load_allowlist():
+    """Reload the per-adapter MAC allowlist from phones.json."""
+    global _adapter_allowlist
+    try:
+        with open(PHONES_JSON_PATH) as f:
+            phones = json.load(f)
+        mapping = {}
+        for p in phones:
+            adapter = (p.get('adapter_mac') or '').upper()
+            phone_bt = (p.get('phone_bt_mac') or '').upper()
+            if adapter and phone_bt:
+                mapping[adapter] = phone_bt
+        _adapter_allowlist = mapping
+        log.info(f'BT agent allowlist loaded: {len(mapping)} adapter→phone mappings')
+    except (FileNotFoundError, json.JSONDecodeError) as e:
+        log.warning(f'BT agent allowlist load failed: {e}')
+
+
+def _parse_device_path(device_path: str) -> tuple[str | None, str | None]:
+    """Extract (hci_name, peer_mac) from a BlueZ device path.
+
+    Example: /org/bluez/hci3/dev_4C_2E_5E_D2_D6_00
+    Returns: ('hci3', '4C:2E:5E:D2:D6:00')
+    """
+    m = re.match(r'.*/bluez/(hci\d+)/dev_([0-9A-F_]+)', device_path, re.I)
+    if not m:
+        return None, None
+    hci = m.group(1)
+    peer_mac = m.group(2).replace('_', ':').upper()
+    return hci, peer_mac
+
+
+def _get_adapter_mac(hci_name: str) -> str | None:
+    """Look up the BD_ADDR of a local adapter by its hci name."""
+    try:
+        bus = dbus.SystemBus()
+        props = dbus.Interface(
+            bus.get_object(BUS_NAME, f'/org/bluez/{hci_name}'),
+            'org.freedesktop.DBus.Properties',
+        )
+        return str(props.Get(ADAPTER_IFACE, 'Address')).upper()
+    except Exception:
+        return None
+
+
+def _check_allowlist(device_path: str) -> bool:
+    """Return True if this peer is allowed to pair on this adapter.
+
+    If the allowlist is empty (phones.json not yet populated with BT
+    MACs), all requests are accepted to avoid blocking initial setup.
+    """
+    if not _adapter_allowlist:
+        return True  # no allowlist yet — accept all (initial provisioning)
+
+    hci, peer_mac = _parse_device_path(device_path)
+    if not hci or not peer_mac:
+        log.warning(f'BT agent: cannot parse device path {device_path} — rejecting')
+        return False
+
+    adapter_mac = _get_adapter_mac(hci)
+    if not adapter_mac:
+        log.warning(f'BT agent: cannot get MAC for {hci} — rejecting')
+        return False
+
+    expected = _adapter_allowlist.get(adapter_mac)
+    if expected is None:
+        # Adapter not in phones.json — no phone assigned, reject
+        log.warning(f'BT agent: adapter {adapter_mac} ({hci}) has no phone assigned — '
+                     f'rejecting pair from {peer_mac}')
+        return False
+
+    if peer_mac != expected:
+        log.warning(f'BT agent: REJECTING cross-dongle pair — '
+                     f'{peer_mac} tried to pair on {adapter_mac} ({hci}), '
+                     f'expected {expected}')
+        return False
+
+    log.info(f'BT agent: allowing pair — {peer_mac} on {adapter_mac} ({hci})')
+    return True
+
+
+REJECTED = dbus.exceptions.DBusException(
+    'org.bluez.Error.Rejected',
+    'Peer MAC not in allowlist for this adapter',
+)
+
 
 class AutoAcceptAgent(dbus.service.Object):
     @dbus.service.method(AGENT_IFACE, in_signature="", out_signature="")
@@ -30,33 +130,49 @@ class AutoAcceptAgent(dbus.service.Object):
     @dbus.service.method(AGENT_IFACE, in_signature="os", out_signature="")
     def AuthorizeService(self, device, uuid):
         log.info(f"AuthorizeService: {device} {uuid}")
+        if not _check_allowlist(device):
+            raise REJECTED
 
     @dbus.service.method(AGENT_IFACE, in_signature="o", out_signature="s")
     def RequestPinCode(self, device):
         log.info(f"RequestPinCode: {device}")
+        if not _check_allowlist(device):
+            raise REJECTED
         return "0000"
 
     @dbus.service.method(AGENT_IFACE, in_signature="o", out_signature="u")
     def RequestPasskey(self, device):
         log.info(f"RequestPasskey: {device}")
+        if not _check_allowlist(device):
+            raise REJECTED
         return dbus.UInt32(0)
 
     @dbus.service.method(AGENT_IFACE, in_signature="ouq", out_signature="")
     def DisplayPasskey(self, device, passkey, entered):
         log.info(f"DisplayPasskey: {device} {passkey:06d} entered={entered}")
+        if not _check_allowlist(device):
+            raise REJECTED
 
     @dbus.service.method(AGENT_IFACE, in_signature="os", out_signature="")
     def DisplayPinCode(self, device, pincode):
         log.info(f"DisplayPinCode: {device} {pincode}")
+        if not _check_allowlist(device):
+            raise REJECTED
 
     @dbus.service.method(AGENT_IFACE, in_signature="ou", out_signature="")
     def RequestConfirmation(self, device, passkey):
-        log.info(f"RequestConfirmation: {device} {passkey:06d} -> auto-accepting")
+        log.info(f"RequestConfirmation: {device} {passkey:06d}")
+        if not _check_allowlist(device):
+            raise REJECTED
+        log.info(f"RequestConfirmation: auto-accepting")
         _trust_device(device)
 
     @dbus.service.method(AGENT_IFACE, in_signature="o", out_signature="")
     def RequestAuthorization(self, device):
-        log.info(f"RequestAuthorization: {device} -> auto-accepting")
+        log.info(f"RequestAuthorization: {device}")
+        if not _check_allowlist(device):
+            raise REJECTED
+        log.info(f"RequestAuthorization: auto-accepting")
         _trust_device(device)
 
     @dbus.service.method(AGENT_IFACE, in_signature="", out_signature="")
@@ -86,11 +202,12 @@ def _on_properties_changed(interface, changed, invalidated, path=None):
 
 
 def silence_all_adapters():
-    """Set Discoverable=false on ALL adapters (including hci0).
+    """Set Discoverable=false and Pairable=false on ALL adapters.
 
-    Called at startup to ensure no adapter broadcasts its name.
-    Adapters remain Pairable so bonded devices can still reconnect
-    via known BD_ADDR.
+    Called at startup to ensure no adapter broadcasts its name and
+    no adapter accepts unsolicited pair requests.  The pair flow in
+    pair.py temporarily enables Pairable+Discoverable on the specific
+    adapter being paired, then disables both afterward.
     """
     bus = dbus.SystemBus()
     manager = dbus.Interface(
@@ -119,7 +236,7 @@ def silence_all_adapters():
         for prop, val in [
             ("Discoverable",        False),
             ("DiscoverableTimeout", dbus.UInt32(0)),
-            ("Pairable",            True),
+            ("Pairable",            False),
             ("PairableTimeout",     dbus.UInt32(0)),
         ]:
             try:
@@ -129,12 +246,23 @@ def silence_all_adapters():
         try:
             alias = props.Get(ADAPTER_IFACE, "Alias")
             discoverable = bool(props.Get(ADAPTER_IFACE, "Discoverable"))
-            log.info(f"Adapter {path} ({alias}) silenced: Discoverable={discoverable}")
+            pairable = bool(props.Get(ADAPTER_IFACE, "Pairable"))
+            log.info(f"Adapter {path} ({alias}) locked down: "
+                     f"Discoverable={discoverable} Pairable={pairable}")
         except Exception:
             pass
         found = True
     if not found:
         log.warning("No Bluetooth adapter found")
+
+
+def reload_allowlist():
+    """Public entry point to refresh the MAC allowlist from phones.json.
+
+    Called by the pair flow after saving a new dongle assignment so that
+    the agent immediately recognizes the new phone→adapter mapping.
+    """
+    _load_allowlist()
 
 
 def register_agent():
@@ -148,6 +276,9 @@ def register_agent():
 
     dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
     bus = dbus.SystemBus()
+
+    # Load per-adapter MAC allowlist from phones.json
+    _load_allowlist()
 
     # Create the D-Bus object once — this claims the path on the bus connection
     agent = AutoAcceptAgent(bus, AGENT_PATH)
