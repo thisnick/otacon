@@ -269,19 +269,44 @@ def _run_bluez_pair(adapter_mac: str, adapter_hci: str, serial: str):
                 log.warning(f'[{serial}] BlueZ pair: could not get phone BT MAC')
                 return
 
-            # Check if already paired — test connection
-            info_out = _btctl(adapter_mac, f'info {phone_bt_mac}')
-            if 'Paired: yes' in info_out:
+            # Check if already paired — test connection (via D-Bus)
+            import dbus as _dbus
+            _bus = _dbus.SystemBus()
+            _dev_path = (f'/org/bluez/{adapter_hci}/dev_'
+                         + phone_bt_mac.upper().replace(':', '_'))
+            try:
+                _props = _dbus.Interface(
+                    _bus.get_object('org.bluez', _dev_path),
+                    'org.freedesktop.DBus.Properties',
+                )
+                _is_paired = bool(_props.Get('org.bluez.Device1', 'Paired'))
+            except _dbus.DBusException:
+                _is_paired = False
+
+            if _is_paired:
                 log.info(f'[{serial}] Already paired in BlueZ — testing connection')
-                _btctl(adapter_mac, f'trust {phone_bt_mac}')
-                connect_out = _btctl(adapter_mac, f'connect {phone_bt_mac}')
-                if 'successful' in connect_out.lower() or 'already connected' in connect_out.lower():
-                    log.info(f'[{serial}] BlueZ: connected (already paired)')
-                    return
-                else:
-                    log.warning(f'[{serial}] Stale BlueZ bond — removing and re-pairing')
-                    _btctl(adapter_mac, f'remove {phone_bt_mac}')
-                    time.sleep(1)
+                try:
+                    _props.Set('org.bluez.Device1', 'Trusted', True)
+                    _dev = _dbus.Interface(
+                        _bus.get_object('org.bluez', _dev_path),
+                        'org.bluez.Device1',
+                    )
+                    _is_connected = bool(
+                        _props.Get('org.bluez.Device1', 'Connected'))
+                    if not _is_connected:
+                        _dev.Connect()
+                        time.sleep(2)
+                        _is_connected = bool(
+                            _props.Get('org.bluez.Device1', 'Connected'))
+                    if _is_connected:
+                        log.info(f'[{serial}] BlueZ: connected (already paired)')
+                        return
+                except _dbus.DBusException as _e:
+                    log.warning(f'[{serial}] Connect test failed: {_e}')
+
+                log.warning(f'[{serial}] Stale BlueZ bond — removing and re-pairing')
+                _btctl(adapter_mac, f'remove {phone_bt_mac}')
+                time.sleep(1)
 
             # Make phone discoverable (REQUEST_DISCOVERABLE is more
             # reliable than just opening BT settings, which may not
