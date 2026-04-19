@@ -66,3 +66,30 @@ This is the headline functional test. It may take up to 2 minutes:
 - Waits 60s for fleet-agent to observe the failure
 - Then up to 120s for the maintenance loop to heal
 - Records the heal timeline from `monitor.heals`
+
+### Phase 3: resilience / auto-reassign tests
+
+These tests verify the 5-min cooldown auto-reassign policy for permanent
+phone/dongle loss. They run against the live fleet and involve real
+hardware state changes (reboots, adapter power-cycles, container restarts).
+
+```bash
+./tests/fleet_agent/hardware/test_transient_phone_disconnect.sh    # Reboot phone, verify same dongle preserved
+./tests/fleet_agent/hardware/test_transient_dongle_disconnect.sh   # Power-cycle adapter, verify no reassignment
+./tests/fleet_agent/hardware/test_permanent_phone_loss.sh          # Power off phone >5min, verify dongle freed (~6min)
+./tests/fleet_agent/hardware/test_permanent_dongle_loss.sh         # Power off dongle >5min, verify phone reassigned (~8min)
+./tests/fleet_agent/hardware/test_replug_after_cutoff.sh           # Return lost hardware, verify spare pool (non-reclaiming)
+./tests/fleet_agent/hardware/test_host_failure_detection.sh        # Stop/start container, verify host offline/recovery
+./tests/fleet_agent/hardware/test_bt_reconnect_after_reboot.sh     # Restart container, verify BT reconnects to same dongles
+```
+
+**Timing notes:**
+- `test_permanent_phone_loss.sh` and `test_permanent_dongle_loss.sh` each take ~6-8 minutes (5-min cooldown + margin)
+- `test_host_failure_detection.sh` stops the container for ~100s
+- `test_bt_reconnect_after_reboot.sh` restarts the container
+- Run order matters: `test_permanent_dongle_loss.sh` should run before `test_replug_after_cutoff.sh`
+
+**Simulation limitations:**
+- Phone disconnect is simulated via `adb reboot` / `adb reboot -p` (not physical unplug)
+- Dongle disconnect is simulated via `hciconfig hciN down` (not USB unplug)
+- hci0 (built-in BT) is never powered off to avoid breaking the Pi's BT subsystem

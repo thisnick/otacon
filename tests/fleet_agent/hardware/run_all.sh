@@ -24,6 +24,15 @@ TESTS=(
     "$DIR/test_post_pair_restriction_reapply.sh"
     "$DIR/test_factory_reset_full_recovery.sh"
     "$DIR/test_bt_silence.sh"
+    # Phase 3: resilience / auto-reassign tests
+    "$DIR/test_transient_phone_disconnect.sh"
+    "$DIR/test_transient_dongle_disconnect.sh"
+    "$DIR/test_permanent_phone_loss.sh"
+    "$DIR/test_permanent_dongle_loss.sh"
+    "$DIR/test_replug_after_cutoff.sh"
+    "$DIR/test_host_failure_detection.sh"
+    "$DIR/test_bt_reconnect_after_reboot.sh"
+    # verify_clean must be last
     "$DIR/verify_clean.sh"
 )
 
