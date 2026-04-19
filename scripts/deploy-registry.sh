@@ -30,28 +30,22 @@ echo "Syncing compose file to ${REMOTE}:${REMOTE_DIR}..."
 ssh "${REMOTE}" "mkdir -p ${REMOTE_DIR}"
 rsync -az docker-compose.registry.yml "${REMOTE}:${REMOTE_DIR}/docker-compose.yml"
 
-# Write .env — pull TS auth keys from local .env
+# Write .env — pull TS auth key from local .env (only registry needs one)
 TS_AUTH_KEY_REGISTRY="${TS_AUTH_KEY_REGISTRY:-}"
-TS_AUTH_KEY_ADMIN="${TS_AUTH_KEY_ADMIN:-}"
 OTACON_ADMIN_USERS="${OTACON_ADMIN_USERS:-}"
 
-if [ -z "${TS_AUTH_KEY_REGISTRY}" ] || [ -z "${TS_AUTH_KEY_ADMIN}" ]; then
-    # Try reading from local .env
+if [ -z "${TS_AUTH_KEY_REGISTRY}" ]; then
     if [ -f .env ]; then
-        eval "$(grep -E '^TS_AUTH_KEY_(REGISTRY|ADMIN)=' .env 2>/dev/null || true)"
+        eval "$(grep -E '^TS_AUTH_KEY_REGISTRY=' .env 2>/dev/null || true)"
     fi
 fi
 
 if [ -z "${TS_AUTH_KEY_REGISTRY}" ]; then
     echo "WARNING: TS_AUTH_KEY_REGISTRY not set. Registry Tailscale sidecar will not start."
 fi
-if [ -z "${TS_AUTH_KEY_ADMIN}" ]; then
-    echo "WARNING: TS_AUTH_KEY_ADMIN not set. Admin Tailscale sidecar will not start."
-fi
 
 ssh "${REMOTE}" "cat > ${REMOTE_DIR}/.env" <<EOF
 TS_AUTH_KEY_REGISTRY=${TS_AUTH_KEY_REGISTRY}
-TS_AUTH_KEY_ADMIN=${TS_AUTH_KEY_ADMIN}
 OTACON_REPO=${OTACON_REPO:-otacon-dev}
 OTACON_ADMIN_USERS=${OTACON_ADMIN_USERS}
 EOF
@@ -61,7 +55,7 @@ echo "Pulling images and starting services on ${PI_HOST}..."
 ssh "${REMOTE}" "cd ${REMOTE_DIR} && docker compose pull && docker compose up -d"
 
 echo "=== Registry + admin deployed ==="
-echo "  Registry: http://otacon-registry.tail*.ts.net:9080"
-echo "  Admin:    http://otacon-admin.tail*.ts.net:9090"
+echo "  Registry: http://otacon-registry.tail*.ts.net:9080  (own Tailscale identity)"
+echo "  Admin:    http://${PI_HOST}:9090                    (host port, no Tailscale sidecar)"
 echo ""
 echo "Check admin bootstrap token: ssh ${REMOTE} 'cd ${REMOTE_DIR} && docker compose logs otacon-admin | grep BOOTSTRAP'"

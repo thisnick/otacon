@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Shared Tailscale FQDN resolver for test scripts and tooling.
-# Source this file; it exports ts_fqdn(), PI_FQDN, PI_URL, REGISTRY_URL.
+# Source this file; it exports ts_fqdn(), PI_FQDN, PI_URL, REGISTRY_URL, ADMIN_URL.
 #
 # Usage:
 #   REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 #   source "$REPO_ROOT/scripts/lib/tailscale.sh"
-#   # Now use $PI_URL, $REGISTRY_URL, or call ts_fqdn <hostname>
+#   # Now use $PI_URL, $REGISTRY_URL, $ADMIN_URL, or call ts_fqdn <hostname>
 
 # Cache: hostname -> FQDN (avoid repeated tailscale calls)
 declare -A _TS_FQDN_CACHE 2>/dev/null || true
@@ -39,10 +39,12 @@ ts_fqdn() {
 PI_FQDN=$(ts_fqdn "otacon-pi")
 PI_URL="https://${PI_FQDN}:8080"
 
-# Split-mode control plane: registry (node-facing) + admin (human-facing)
+# Registry has its own Tailscale identity (sidecar)
 REGISTRY_FQDN=$(ts_fqdn "otacon-registry")
-ADMIN_FQDN=$(ts_fqdn "otacon-admin")
 REGISTRY_URL="http://${REGISTRY_FQDN}:9080"
-ADMIN_URL="http://${ADMIN_FQDN}:9090"
 
-export PI_FQDN PI_URL REGISTRY_FQDN ADMIN_FQDN REGISTRY_URL ADMIN_URL
+# Admin does NOT have its own Tailscale identity — it rides on the host's
+# network (port 9090). In dev, that's the Pi's existing tailnet identity.
+ADMIN_URL="http://${PI_FQDN}:9090"
+
+export PI_FQDN PI_URL REGISTRY_FQDN REGISTRY_URL ADMIN_URL
