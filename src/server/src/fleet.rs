@@ -287,6 +287,29 @@ pub fn spawn_heartbeat(fleet: Arc<FleetClient>, state: Arc<AppState>) {
         let mut interval = tokio::time::interval(Duration::from_secs(30));
         loop {
             interval.tick().await;
+
+            // Re-register host + phones if initial attempts failed (e.g.
+            // auth token wasn't available yet at startup).
+            {
+                let phones = state.phones.read().await;
+                let reg_ids = fleet.registry_ids.lock().await;
+                let missing: Vec<(String, crate::phone::PhoneConfig)> = phones.iter()
+                    .filter(|(id, _)| !reg_ids.contains_key(*id))
+                    .map(|(id, ps)| (id.clone(), ps.config.clone()))
+                    .collect();
+                drop(reg_ids);
+                drop(phones);
+
+                if !missing.is_empty() {
+                    fleet.register_host().await;
+                    for (id, config) in &missing {
+                        fleet.register_phone(id, config).await;
+                    }
+                    // Also retry dongle registration
+                    fleet.report_dongles(&state).await;
+                }
+            }
+
             fleet.heartbeat(&state).await;
         }
     });
