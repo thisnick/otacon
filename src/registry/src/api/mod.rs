@@ -43,7 +43,8 @@ pub struct AppState {
         // Public
         registration::register_host,
         registration::register_client,
-        registration::poll,
+        registration::poll_host,
+        registration::poll_client,
         // Node scope
         hosts::heartbeat,
         phones::register,
@@ -55,8 +56,10 @@ pub struct AppState {
         // Admin — Registration
         registration::list_pending_hosts,
         registration::list_pending_clients,
-        registration::approve,
-        registration::reject,
+        registration::approve_host,
+        registration::approve_client,
+        registration::reject_host,
+        registration::reject_client,
         // Admin — Tokens
         tokens::list,
         tokens::revoke,
@@ -118,9 +121,9 @@ pub fn build_router(state: AppState) -> Router {
     // ── Public routes (no auth) — registration flow ─────────────────
     let public = Router::new()
         .route("/api/v1/hosts/register", post(registration::register_host))
-        .route("/api/v1/hosts/poll/{pending_id}", post(registration::poll))
+        .route("/api/v1/hosts/poll/{pending_id}", post(registration::poll_host))
         .route("/api/v1/clients/register", post(registration::register_client))
-        .route("/api/v1/clients/poll/{pending_id}", post(registration::poll));
+        .route("/api/v1/clients/poll/{pending_id}", post(registration::poll_client));
 
     // ── Node-authenticated routes (`otc_node_*`) ────────────────────
     let node_routes = Router::new()
@@ -138,11 +141,11 @@ pub fn build_router(state: AppState) -> Router {
     let admin_routes = Router::new()
         // Registration management
         .route("/api/v1/admin/hosts/pending", get(registration::list_pending_hosts))
-        .route("/api/v1/admin/hosts/{id}/approve", post(registration::approve))
-        .route("/api/v1/admin/hosts/{id}/reject", post(registration::reject))
+        .route("/api/v1/admin/hosts/{id}/approve", post(registration::approve_host))
+        .route("/api/v1/admin/hosts/{id}/reject", post(registration::reject_host))
         .route("/api/v1/admin/clients/pending", get(registration::list_pending_clients))
-        .route("/api/v1/admin/clients/{id}/approve", post(registration::approve))
-        .route("/api/v1/admin/clients/{id}/reject", post(registration::reject))
+        .route("/api/v1/admin/clients/{id}/approve", post(registration::approve_client))
+        .route("/api/v1/admin/clients/{id}/reject", post(registration::reject_client))
         // Token management
         .route("/api/v1/admin/tokens", get(tokens::list))
         .route("/api/v1/admin/tokens/{id}/revoke", post(tokens::revoke))
