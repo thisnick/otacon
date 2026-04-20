@@ -113,6 +113,35 @@ pub async fn list(
     Json(result)
 }
 
+/// Admin DELETE: forget a host from the registry.
+/// "Forget" semantics — if the host is still alive, the next heartbeat re-registers it.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/admin/hosts/{id}",
+    params(("id" = String, Path, description = "Host ID")),
+    responses(
+        (status = 200, description = "Host forgotten", body = serde_json::Value),
+        (status = 404, description = "Host not found"),
+    ),
+    security(("bearer" = [])),
+    tag = "Admin — Fleet"
+)]
+pub async fn admin_delete(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
+    let store = &state.store;
+
+    let mut hosts = store.hosts.write().await;
+    hosts.remove(&id).ok_or(axum::http::StatusCode::NOT_FOUND)?;
+    drop(hosts);
+    store.save_hosts().await;
+
+    store.add_event("host.admin_deleted", Some(id.clone()), None).await;
+
+    Ok(Json(serde_json::json!({"ok": true})))
+}
+
 /// Get a single host by ID.
 #[utoipa::path(
     get,

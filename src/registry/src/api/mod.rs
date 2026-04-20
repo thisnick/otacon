@@ -71,6 +71,9 @@ pub struct AppState {
         phones::get_config,
         phones::set_config,
         sims::list,
+        phones::admin_delete,
+        hosts::admin_delete,
+        dongles::admin_delete,
         dongles::list,
         events::list,
     ),
@@ -151,11 +154,13 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/admin/tokens/{id}/revoke", post(tokens::revoke))
         // Fleet view
         .route("/api/v1/admin/hosts", get(hosts::list))
+        .route("/api/v1/admin/hosts/{id}", get(hosts::get).delete(hosts::admin_delete))
         .route("/api/v1/admin/phones", get(phones::list))
-        .route("/api/v1/admin/phones/{id}", get(phones::get_detail))
+        .route("/api/v1/admin/phones/{id}", get(phones::get_detail).delete(phones::admin_delete))
         .route("/api/v1/admin/phones/{id}/config", get(phones::get_config).put(phones::set_config))
         .route("/api/v1/admin/sims", get(sims::list))
         .route("/api/v1/admin/dongles", get(dongles::list))
+        .route("/api/v1/admin/dongles/{id}", delete(dongles::admin_delete))
         .route("/api/v1/admin/events", get(events::list))
         // WebSocket
         .route("/ws/fleet/events", get(ws::fleet_events_ws))

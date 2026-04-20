@@ -1,4 +1,4 @@
-use axum::extract::State;
+use axum::extract::{Path, State};
 use axum::Json;
 use chrono::Utc;
 use serde::Deserialize;
@@ -37,6 +37,35 @@ pub async fn list(
     let mut result: Vec<Dongle> = dongles.values().cloned().collect();
     result.sort_by(|a, b| a.id.cmp(&b.id));
     Json(result)
+}
+
+/// Admin DELETE: forget a dongle from the registry.
+/// "Forget" semantics — if the dongle is still alive, the next heartbeat re-registers it.
+#[utoipa::path(
+    delete,
+    path = "/api/v1/admin/dongles/{id}",
+    params(("id" = String, Path, description = "Dongle ID")),
+    responses(
+        (status = 200, description = "Dongle forgotten", body = serde_json::Value),
+        (status = 404, description = "Dongle not found"),
+    ),
+    security(("bearer" = [])),
+    tag = "Admin — Fleet"
+)]
+pub async fn admin_delete(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
+    let store = &state.store;
+
+    let mut dongles = store.dongles.write().await;
+    dongles.remove(&id).ok_or(axum::http::StatusCode::NOT_FOUND)?;
+    drop(dongles);
+    store.save_dongles().await;
+
+    store.add_event("dongle.admin_deleted", Some(id.clone()), None).await;
+
+    Ok(Json(serde_json::json!({"ok": true})))
 }
 
 /// Report dongles from a host (node-scope).
