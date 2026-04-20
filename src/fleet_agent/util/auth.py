@@ -7,7 +7,7 @@ import stat
 
 log = logging.getLogger('fleet-agent')
 
-AUTH_FILE = os.environ.get('OTACON_AUTH_FILE', '/etc/otacon/auth.json')
+AUTH_FILE = os.environ.get('OTACON_AUTH_FILE', '/data/otacon/auth.json')
 
 
 def load_token() -> str | None:

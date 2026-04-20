@@ -11,7 +11,7 @@ use tokio::sync::Mutex;
 use crate::AppState;
 
 /// Path to the auth token file (shared with fleet-agent Python process).
-const AUTH_FILE: &str = "/etc/otacon/auth.json";
+const AUTH_FILE: &str = "/data/otacon/auth.json";
 
 pub struct FleetClient {
     registry_url: String,
