@@ -58,8 +58,10 @@ export async function resolvePhone(
   const hostUrl = `https://${hostAddr}:${apiPort}`;
 
   // Step 2: Query host server for local phone ID
-  // The host stores phones with local IDs (e.g. "phone-r5ct60sd") and maps
-  // them to registry IDs. We need the local ID for API paths.
+  // The host stores phones with local IDs (e.g. "phone-r5ct60sd") that differ
+  // from registry IDs (e.g. "phone-2"). Match by adb_serial (most reliable),
+  // then registry_id, then direct ID match.
+  const registrySerial = detail.adb_serial as string | undefined;
   let localPhoneId: string;
   try {
     const phonesRes = await fetch(`${hostUrl}/phones`, {
@@ -68,23 +70,30 @@ export async function resolvePhone(
     if (phonesRes.ok) {
       const phones = (await phonesRes.json()) as Array<{
         id: string;
+        adb_serial?: string;
         registry_id?: string | null;
       }>;
-      // Match by registry_id first
-      const match = phones.find((p) => p.registry_id === phoneId);
-      if (match) {
-        localPhoneId = match.id;
+      // Match by adb_serial first (most reliable — always populated on both sides)
+      const serialMatch = registrySerial
+        ? phones.find((p) => p.adb_serial === registrySerial)
+        : undefined;
+      if (serialMatch) {
+        localPhoneId = serialMatch.id;
       } else {
-        // Try direct ID match (in case local ID == registry ID)
-        const directMatch = phones.find((p) => p.id === phoneId);
-        localPhoneId = directMatch?.id ?? phoneId;
+        // Fall back to registry_id match
+        const regMatch = phones.find((p) => p.registry_id === phoneId);
+        if (regMatch) {
+          localPhoneId = regMatch.id;
+        } else {
+          // Try direct ID match (in case local ID == registry ID)
+          const directMatch = phones.find((p) => p.id === phoneId);
+          localPhoneId = directMatch?.id ?? phoneId;
+        }
       }
     } else {
-      // Fallback: use registry ID as-is
       localPhoneId = phoneId;
     }
   } catch {
-    // Host unreachable — use registry ID as-is
     localPhoneId = phoneId;
   }
 
