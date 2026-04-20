@@ -26,7 +26,7 @@ async function throwOnError(res: Response): Promise<void> {
 }
 
 export class OtaconClient {
-  constructor(private baseUrl: string) {}
+  constructor(public readonly baseUrl: string) {}
 
   async action(params: Action): Promise<void> {
     const res = await fetch(`${this.baseUrl}/api/action`, {
