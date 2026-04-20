@@ -16,12 +16,28 @@ pub enum RegistrationStatus {
     Rejected,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RegistrationKind {
+    Host,
+    Client,
+}
+
+impl Default for RegistrationKind {
+    fn default() -> Self {
+        RegistrationKind::Host
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingRegistration {
     pub id: String,
+    /// For host registrations this is the host_id; for client registrations a label.
     pub host_id: String,
     pub hostname: Option<String>,
     pub tailnet_node_id: Option<String>,
+    #[serde(default)]
+    pub kind: RegistrationKind,
     pub status: RegistrationStatus,
     pub token_id: Option<String>,
     /// Raw token stashed here temporarily after approval so the polling process can read it.
@@ -96,6 +112,7 @@ impl RegistrationStore {
         host_id: String,
         hostname: Option<String>,
         tailnet_node_id: Option<String>,
+        kind: RegistrationKind,
     ) -> String {
         let id = uuid::Uuid::new_v4().to_string();
 
@@ -104,6 +121,7 @@ impl RegistrationStore {
             host_id,
             hostname,
             tailnet_node_id,
+            kind,
             status: RegistrationStatus::Pending,
             token_id: None,
             raw_token: None,
@@ -114,7 +132,7 @@ impl RegistrationStore {
         self.registrations.write().await.insert(id.clone(), reg);
         self.save().await;
 
-        eprintln!("[auth] New registration pending: {id}");
+        eprintln!("[auth] New {:?} registration pending: {id}", kind);
         id
     }
 
@@ -190,14 +208,22 @@ impl RegistrationStore {
             return Err(format!("registration already {:?}", reg.status));
         }
 
-        // Create node token
-        let (token_id, raw_token) = self
-            .auth_store
-            .create_token(
+        // Create token with scope matching the registration kind
+        let (scope, node_id, note) = match reg.kind {
+            RegistrationKind::Host => (
                 AuthScope::Node,
                 Some(reg.host_id.clone()),
-                Some(format!("Auto-created for host {}", reg.host_id)),
-            )
+                format!("Auto-created for host {}", reg.host_id),
+            ),
+            RegistrationKind::Client => (
+                AuthScope::Admin,
+                None,
+                format!("Auto-created for client {}", reg.host_id),
+            ),
+        };
+        let (token_id, raw_token) = self
+            .auth_store
+            .create_token(scope, node_id, Some(note))
             .await;
 
         reg.status = RegistrationStatus::Approved;
@@ -248,6 +274,19 @@ impl RegistrationStore {
         result
     }
 
+    /// List pending registrations of a specific kind (for admin view).
+    pub async fn list_pending_by_kind(&self, kind: RegistrationKind) -> Vec<PendingRegistration> {
+        self.reload_from_disk().await;
+        let regs = self.registrations.read().await;
+        let mut result: Vec<PendingRegistration> = regs
+            .values()
+            .filter(|r| r.status == RegistrationStatus::Pending && r.kind == kind)
+            .cloned()
+            .collect();
+        result.sort_by(|a, b| b.requested_at.cmp(&a.requested_at));
+        result
+    }
+
     /// List all registrations (for admin view).
     #[allow(dead_code)]
     pub async fn list_all(&self) -> Vec<PendingRegistration> {
@@ -275,7 +314,7 @@ mod tests {
     async fn register_creates_pending_entry() {
         let (_auth, reg, _dir) = test_stores().await;
 
-        let id = reg.register("host-1".into(), Some("mypi".into()), None).await;
+        let id = reg.register("host-1".into(), Some("mypi".into()), None, RegistrationKind::Host).await;
         assert!(!id.is_empty());
 
         let pending = reg.list_pending().await;
@@ -289,7 +328,7 @@ mod tests {
     async fn approve_creates_node_token() {
         let (auth, reg, _dir) = test_stores().await;
 
-        let id = reg.register("host-2".into(), None, None).await;
+        let id = reg.register("host-2".into(), None, None, RegistrationKind::Host).await;
         let raw_token = reg.approve(&id).await.expect("approve should succeed");
 
         assert!(raw_token.starts_with("otc_node_"));
@@ -312,7 +351,7 @@ mod tests {
     async fn reject_marks_registration_rejected() {
         let (_auth, reg, _dir) = test_stores().await;
 
-        let id = reg.register("host-3".into(), None, None).await;
+        let id = reg.register("host-3".into(), None, None, RegistrationKind::Host).await;
         reg.reject(&id).await.expect("reject should succeed");
 
         assert!(reg.list_pending().await.is_empty());
@@ -324,7 +363,7 @@ mod tests {
     async fn cannot_approve_already_approved() {
         let (_auth, reg, _dir) = test_stores().await;
 
-        let id = reg.register("host-4".into(), None, None).await;
+        let id = reg.register("host-4".into(), None, None, RegistrationKind::Host).await;
         reg.approve(&id).await.unwrap();
 
         let err = reg.approve(&id).await.unwrap_err();
@@ -335,7 +374,7 @@ mod tests {
     async fn cannot_reject_already_rejected() {
         let (_auth, reg, _dir) = test_stores().await;
 
-        let id = reg.register("host-5".into(), None, None).await;
+        let id = reg.register("host-5".into(), None, None, RegistrationKind::Host).await;
         reg.reject(&id).await.unwrap();
 
         let err = reg.reject(&id).await.unwrap_err();
@@ -354,7 +393,7 @@ mod tests {
         let (_auth, reg, _dir) = test_stores().await;
         let reg = Arc::new(reg);
 
-        let id = reg.register("host-6".into(), None, None).await;
+        let id = reg.register("host-6".into(), None, None, RegistrationKind::Host).await;
 
         // Spawn a poller — it will re-read the file every 1s
         let reg_clone = reg.clone();
@@ -379,7 +418,7 @@ mod tests {
         let (_auth, reg, _dir) = test_stores().await;
         let reg = Arc::new(reg);
 
-        let id = reg.register("host-7".into(), None, None).await;
+        let id = reg.register("host-7".into(), None, None, RegistrationKind::Host).await;
 
         let reg_clone = reg.clone();
         let id_clone = id.clone();
@@ -400,7 +439,7 @@ mod tests {
         let (_auth, reg, _dir) = test_stores().await;
         let reg = Arc::new(reg);
 
-        let id = reg.register("host-clear".into(), None, None).await;
+        let id = reg.register("host-clear".into(), None, None, RegistrationKind::Host).await;
         reg.approve(&id).await.unwrap();
 
         // Poll picks up the approval and clears raw_token
@@ -417,7 +456,7 @@ mod tests {
     async fn poll_times_out() {
         let (_auth, reg, _dir) = test_stores().await;
 
-        let id = reg.register("host-8".into(), None, None).await;
+        let id = reg.register("host-8".into(), None, None, RegistrationKind::Host).await;
         // Short timeout — shorter than poll interval, so it times out without ever re-reading
         let result = reg.poll(&id, std::time::Duration::from_millis(50)).await;
         assert!(result.is_none(), "poll should return None on timeout");
@@ -438,7 +477,7 @@ mod tests {
         {
             let auth = Arc::new(AuthStore::load(dir.path()).await);
             let reg = RegistrationStore::load(dir.path(), auth).await;
-            id = reg.register("host-persist".into(), None, None).await;
+            id = reg.register("host-persist".into(), None, None, RegistrationKind::Host).await;
         }
 
         // Reload
@@ -470,7 +509,7 @@ mod tests {
         // "Registry process" — creates registration
         let auth1 = Arc::new(AuthStore::load(dir.path()).await);
         let registry = RegistrationStore::load(dir.path(), auth1.clone()).await;
-        let id = registry.register("host-cross".into(), Some("pi".into()), None).await;
+        let id = registry.register("host-cross".into(), Some("pi".into()), None, RegistrationKind::Host).await;
 
         // "Admin process" — loaded after registration was created, but from same data dir
         let auth2 = Arc::new(AuthStore::load(dir.path()).await);

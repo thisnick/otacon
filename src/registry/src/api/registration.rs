@@ -4,31 +4,55 @@ use axum::Json;
 use serde::Deserialize;
 
 use super::AppState;
+use crate::auth::registration::RegistrationKind;
 
 #[derive(Deserialize)]
-pub struct RegisterBody {
+pub struct RegisterHostBody {
     pub host_id: String,
     pub hostname: Option<String>,
     pub tailnet_node_id: Option<String>,
 }
 
-/// POST /api/v1/auth/register — node requests registration (public, no auth)
-pub async fn register(
+#[derive(Deserialize)]
+pub struct RegisterClientBody {
+    pub client_id: String,
+    pub hostname: Option<String>,
+}
+
+/// POST /api/v1/hosts/register — host requests registration (public, no auth)
+pub async fn register_host(
     State(state): State<AppState>,
-    Json(body): Json<RegisterBody>,
+    Json(body): Json<RegisterHostBody>,
 ) -> Json<serde_json::Value> {
     let pending_id = state
         .registration_store
-        .register(body.host_id, body.hostname, body.tailnet_node_id)
+        .register(body.host_id, body.hostname, body.tailnet_node_id, RegistrationKind::Host)
         .await;
 
     Json(serde_json::json!({
         "pending_id": pending_id,
-        "poll_url": format!("/api/v1/auth/poll/{pending_id}"),
+        "poll_url": format!("/api/v1/hosts/poll/{pending_id}"),
     }))
 }
 
-/// POST /api/v1/auth/poll/{pending_id} — node long-polls for approval (public)
+/// POST /api/v1/clients/register — client requests registration (public, no auth)
+pub async fn register_client(
+    State(state): State<AppState>,
+    Json(body): Json<RegisterClientBody>,
+) -> Json<serde_json::Value> {
+    let pending_id = state
+        .registration_store
+        .register(body.client_id, body.hostname, None, RegistrationKind::Client)
+        .await;
+
+    Json(serde_json::json!({
+        "pending_id": pending_id,
+        "poll_url": format!("/api/v1/clients/poll/{pending_id}"),
+    }))
+}
+
+/// POST /api/v1/hosts/poll/{pending_id} or /api/v1/clients/poll/{pending_id}
+/// — long-polls for approval (public)
 pub async fn poll(
     State(state): State<AppState>,
     Path(pending_id): Path<String>,
@@ -51,21 +75,30 @@ pub async fn poll(
             }
         }
         None => {
-            // Timeout — return 408 so node retries
+            // Timeout — return 408 so caller retries
             Err(StatusCode::REQUEST_TIMEOUT)
         }
     }
 }
 
-/// GET /api/v1/auth/registrations/pending — admin lists pending registrations
-pub async fn list_pending(
+/// GET /api/v1/admin/hosts/pending — admin lists pending host registrations
+pub async fn list_pending_hosts(
     State(state): State<AppState>,
 ) -> Json<serde_json::Value> {
-    let pending = state.registration_store.list_pending().await;
+    let pending = state.registration_store.list_pending_by_kind(RegistrationKind::Host).await;
     Json(serde_json::json!(pending))
 }
 
-/// POST /api/v1/auth/registrations/{id}/approve — admin approves a registration
+/// GET /api/v1/admin/clients/pending — admin lists pending client registrations
+pub async fn list_pending_clients(
+    State(state): State<AppState>,
+) -> Json<serde_json::Value> {
+    let pending = state.registration_store.list_pending_by_kind(RegistrationKind::Client).await;
+    Json(serde_json::json!(pending))
+}
+
+/// POST /api/v1/admin/hosts/{id}/approve or /api/v1/admin/clients/{id}/approve
+/// — admin approves a registration
 pub async fn approve(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -82,7 +115,8 @@ pub async fn approve(
     }
 }
 
-/// POST /api/v1/auth/registrations/{id}/reject — admin rejects a registration
+/// POST /api/v1/admin/hosts/{id}/reject or /api/v1/admin/clients/{id}/reject
+/// — admin rejects a registration
 pub async fn reject(
     State(state): State<AppState>,
     Path(id): Path<String>,

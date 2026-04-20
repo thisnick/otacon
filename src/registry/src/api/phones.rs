@@ -24,13 +24,6 @@ pub struct DeregisterPhoneBody {
     pub phone_id: String,
 }
 
-#[derive(Deserialize)]
-pub struct UpdatePhoneBody {
-    pub id: Option<String>,
-    pub phone_number: Option<String>,
-    pub model: Option<String>,
-}
-
 pub async fn register(
     State(state): State<AppState>,
     Json(body): Json<RegisterPhoneBody>,
@@ -155,6 +148,7 @@ pub async fn deregister(
     Json(serde_json::json!({"ok": true}))
 }
 
+/// GET /api/v1/admin/phones — list phones (summary)
 pub async fn list(
     State(state): State<AppState>,
 ) -> Json<Vec<Phone>> {
@@ -164,69 +158,60 @@ pub async fn list(
     Json(result)
 }
 
-pub async fn get(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Result<Json<Phone>, axum::http::StatusCode> {
-    let phones = state.store.phones.read().await;
-    phones.get(&id)
-        .cloned()
-        .map(Json)
-        .ok_or(axum::http::StatusCode::NOT_FOUND)
-}
-
-pub async fn location(
+/// GET /api/v1/admin/phones/{id} — phone detail with host location + SIMs + config
+pub async fn get_detail(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
     let store = &state.store;
     let phones = store.phones.read().await;
-    let phone = phones.get(&id).ok_or(axum::http::StatusCode::NOT_FOUND)?;
-    let host_id = phone.host_id.clone();
+    let phone = phones.get(&id).ok_or(axum::http::StatusCode::NOT_FOUND)?.clone();
     drop(phones);
 
-    let host_id = host_id.ok_or(axum::http::StatusCode::NOT_FOUND)?;
-    let hosts = store.hosts.read().await;
-    let host = hosts.get(&host_id).ok_or(axum::http::StatusCode::NOT_FOUND)?;
+    // Build host info if phone is connected to a host
+    let host_info = if let Some(ref host_id) = phone.host_id {
+        let hosts = store.hosts.read().await;
+        hosts.get(host_id).map(|h| serde_json::json!({
+            "id": h.id,
+            "fqdn": h.fqdn,
+            "tailscale_ip": h.tailscale_ip,
+            "api_port": h.api_port,
+        }))
+    } else {
+        None
+    };
+
+    // Get SIMs for this phone
+    let sims = store.sims.read().await;
+    let phone_sims: Vec<serde_json::Value> = sims.values()
+        .filter(|s| s.phone_id == id)
+        .map(|s| serde_json::json!({
+            "iccid": s.iccid,
+            "phone_number": s.phone_number,
+            "carrier": s.carrier,
+            "slot": s.slot,
+            "is_active": s.is_active,
+            "is_esim": s.is_esim,
+            "profile_name": s.profile_name,
+        }))
+        .collect();
 
     Ok(Json(serde_json::json!({
-        "phone_id": id,
-        "host_id": host_id,
-        "host_fqdn": host.fqdn,
-        "tailscale_ip": host.tailscale_ip,
-        "api_port": host.api_port,
+        "id": phone.id,
+        "adb_serial": phone.adb_serial,
+        "phone_number": phone.phone_number,
+        "model": phone.model,
+        "bt_mac": phone.bt_mac,
+        "imei": phone.imei,
+        "adapter_mac": phone.adapter_mac,
+        "status": phone.status,
+        "host": host_info,
+        "sims": phone_sims,
+        "config": phone.config,
+        "connected_at": phone.connected_at,
+        "created_at": phone.created_at,
+        "updated_at": phone.updated_at,
     })))
-}
-
-pub async fn update(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-    Json(body): Json<UpdatePhoneBody>,
-) -> Result<Json<Phone>, axum::http::StatusCode> {
-    let store = &state.store;
-    let mut phones = store.phones.write().await;
-    let phone = phones.get_mut(&id).ok_or(axum::http::StatusCode::NOT_FOUND)?;
-
-    if let Some(new_id) = body.id {
-        let mut p = phone.clone();
-        p.id = new_id.clone();
-        p.updated_at = Utc::now();
-        if let Some(number) = body.phone_number { p.phone_number = Some(number); }
-        if let Some(model) = body.model { p.model = Some(model); }
-        phones.remove(&id);
-        phones.insert(new_id, p.clone());
-        drop(phones);
-        store.save_phones().await;
-        return Ok(Json(p));
-    }
-
-    if let Some(number) = body.phone_number { phone.phone_number = Some(number); }
-    if let Some(model) = body.model { phone.model = Some(model); }
-    phone.updated_at = Utc::now();
-    let result = phone.clone();
-    drop(phones);
-    store.save_phones().await;
-    Ok(Json(result))
 }
 
 pub async fn get_config(
@@ -268,7 +253,7 @@ pub async fn set_config(
     Ok(Json(serde_json::json!({"ok": true, "pushed": pushed})))
 }
 
-/// DELETE /api/v1/phones/{id} — permanently remove a phone (Pi-initiated).
+/// DELETE /api/v1/hosts/phones/{id} — permanently remove a phone (Pi-initiated).
 ///
 /// Node-scope auth: the calling host must own this phone.
 pub async fn delete(
