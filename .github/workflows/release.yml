@@ -19,7 +19,7 @@ jobs:
         with:
           node-version: 20
 
-      - run: npm ci
+      - run: npm install
 
       - name: Create release PR or publish release
         id: changesets
