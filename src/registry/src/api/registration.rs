@@ -2,24 +2,34 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::Json;
 use serde::Deserialize;
+use utoipa::ToSchema;
 
 use super::AppState;
 use crate::auth::registration::RegistrationKind;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct RegisterHostBody {
     pub host_id: String,
     pub hostname: Option<String>,
     pub tailnet_node_id: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct RegisterClientBody {
     pub client_id: String,
     pub hostname: Option<String>,
 }
 
-/// POST /api/v1/hosts/register — host requests registration (public, no auth)
+/// Host requests registration (public, no auth).
+#[utoipa::path(
+    post,
+    path = "/api/v1/hosts/register",
+    request_body = RegisterHostBody,
+    responses(
+        (status = 200, description = "Registration pending", body = serde_json::Value),
+    ),
+    tag = "Public"
+)]
 pub async fn register_host(
     State(state): State<AppState>,
     Json(body): Json<RegisterHostBody>,
@@ -35,7 +45,16 @@ pub async fn register_host(
     }))
 }
 
-/// POST /api/v1/clients/register — client requests registration (public, no auth)
+/// Client requests registration (public, no auth).
+#[utoipa::path(
+    post,
+    path = "/api/v1/clients/register",
+    request_body = RegisterClientBody,
+    responses(
+        (status = 200, description = "Registration pending", body = serde_json::Value),
+    ),
+    tag = "Public"
+)]
 pub async fn register_client(
     State(state): State<AppState>,
     Json(body): Json<RegisterClientBody>,
@@ -51,13 +70,23 @@ pub async fn register_client(
     }))
 }
 
-/// POST /api/v1/hosts/poll/{pending_id} or /api/v1/clients/poll/{pending_id}
-/// — long-polls for approval (public)
+/// Long-poll for registration approval (public).
+#[utoipa::path(
+    post,
+    path = "/api/v1/hosts/poll/{pending_id}",
+    params(("pending_id" = String, Path, description = "Pending registration ID")),
+    responses(
+        (status = 200, description = "Approved — token returned", body = serde_json::Value),
+        (status = 403, description = "Registration rejected"),
+        (status = 408, description = "Poll timeout — retry"),
+    ),
+    tag = "Public"
+)]
 pub async fn poll(
     State(state): State<AppState>,
     Path(pending_id): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let timeout = std::time::Duration::from_secs(300); // 5 minutes
+    let timeout = std::time::Duration::from_secs(300);
 
     match state.registration_store.poll(&pending_id, timeout).await {
         Some(result) => {
@@ -74,14 +103,20 @@ pub async fn poll(
                 _ => Err(StatusCode::INTERNAL_SERVER_ERROR),
             }
         }
-        None => {
-            // Timeout — return 408 so caller retries
-            Err(StatusCode::REQUEST_TIMEOUT)
-        }
+        None => Err(StatusCode::REQUEST_TIMEOUT),
     }
 }
 
-/// GET /api/v1/admin/hosts/pending — admin lists pending host registrations
+/// List pending host registrations.
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/hosts/pending",
+    responses(
+        (status = 200, description = "Pending host registrations", body = Vec<crate::auth::registration::PendingRegistration>),
+    ),
+    security(("bearer" = [])),
+    tag = "Admin — Registration"
+)]
 pub async fn list_pending_hosts(
     State(state): State<AppState>,
 ) -> Json<serde_json::Value> {
@@ -89,7 +124,16 @@ pub async fn list_pending_hosts(
     Json(serde_json::json!(pending))
 }
 
-/// GET /api/v1/admin/clients/pending — admin lists pending client registrations
+/// List pending client registrations.
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/clients/pending",
+    responses(
+        (status = 200, description = "Pending client registrations", body = Vec<crate::auth::registration::PendingRegistration>),
+    ),
+    security(("bearer" = [])),
+    tag = "Admin — Registration"
+)]
 pub async fn list_pending_clients(
     State(state): State<AppState>,
 ) -> Json<serde_json::Value> {
@@ -97,8 +141,18 @@ pub async fn list_pending_clients(
     Json(serde_json::json!(pending))
 }
 
-/// POST /api/v1/admin/hosts/{id}/approve or /api/v1/admin/clients/{id}/approve
-/// — admin approves a registration
+/// Approve a pending registration.
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/hosts/{id}/approve",
+    params(("id" = String, Path, description = "Registration ID")),
+    responses(
+        (status = 200, description = "Approved", body = serde_json::Value),
+        (status = 400, description = "Registration not found or already resolved"),
+    ),
+    security(("bearer" = [])),
+    tag = "Admin — Registration"
+)]
 pub async fn approve(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -115,8 +169,18 @@ pub async fn approve(
     }
 }
 
-/// POST /api/v1/admin/hosts/{id}/reject or /api/v1/admin/clients/{id}/reject
-/// — admin rejects a registration
+/// Reject a pending registration.
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/hosts/{id}/reject",
+    params(("id" = String, Path, description = "Registration ID")),
+    responses(
+        (status = 200, description = "Rejected", body = serde_json::Value),
+        (status = 400, description = "Registration not found or already resolved"),
+    ),
+    security(("bearer" = [])),
+    tag = "Admin — Registration"
+)]
 pub async fn reject(
     State(state): State<AppState>,
     Path(id): Path<String>,

@@ -3,6 +3,7 @@ use axum::routing::{delete, get, post};
 use axum::Router;
 use axum::response::Html;
 use std::sync::Arc;
+use utoipa::OpenApi;
 
 use crate::auth::middleware::{admin_auth_layer, node_auth_layer};
 use crate::auth::store::AuthStore;
@@ -30,12 +31,79 @@ pub struct AppState {
     pub registration_store: Arc<RegistrationStore>,
 }
 
+#[derive(OpenApi)]
+#[openapi(
+    info(
+        title = "Otacon Registry API",
+        description = "Central registry for managing fleet hosts, phones, dongles, and SIMs.",
+        version = "1.0.0",
+        license(name = "MIT"),
+    ),
+    paths(
+        // Public
+        registration::register_host,
+        registration::register_client,
+        registration::poll,
+        // Node scope
+        hosts::heartbeat,
+        phones::register,
+        phones::deregister,
+        phones::delete,
+        dongles::register,
+        sims::report,
+        events::report,
+        // Admin — Registration
+        registration::list_pending_hosts,
+        registration::list_pending_clients,
+        registration::approve,
+        registration::reject,
+        // Admin — Tokens
+        tokens::list,
+        tokens::revoke,
+        // Admin — Fleet
+        hosts::list,
+        hosts::get,
+        phones::list,
+        phones::get_detail,
+        phones::get_config,
+        phones::set_config,
+        sims::list,
+        dongles::list,
+        events::list,
+    ),
+    components(schemas(
+        // Store types
+        crate::store::Host,
+        crate::store::Phone,
+        crate::store::PhoneConfig,
+        crate::store::Dongle,
+        crate::store::SimCard,
+        crate::store::Event,
+        // Auth types
+        crate::auth::store::Token,
+        crate::auth::store::AuthScope,
+        crate::auth::registration::PendingRegistration,
+        crate::auth::registration::RegistrationStatus,
+        crate::auth::registration::RegistrationKind,
+        // Request bodies
+        registration::RegisterHostBody,
+        registration::RegisterClientBody,
+        hosts::HeartbeatBody,
+        phones::RegisterPhoneBody,
+        phones::DeregisterPhoneBody,
+        dongles::RegisterDonglesBody,
+        dongles::DongleEntry,
+        sims::ReportSimsBody,
+        sims::SimEntry,
+        events::ReportEventBody,
+    )),
+    security(
+        ("bearer" = []),
+    ),
+)]
+pub struct ApiDoc;
+
 /// Build the unified router with scope-based URL hierarchy.
-///
-/// - Public (no auth): `/api/v1/hosts/register`, `/hosts/poll/{id}`,
-///   `/clients/register`, `/clients/poll/{id}`
-/// - Node scope: `/api/v1/hosts/*` (heartbeat, phones, dongles, sims, events)
-/// - Admin scope: `/api/v1/admin/*` (registration mgmt, tokens, fleet views)
 pub fn build_router(state: AppState) -> Router {
     let admin_users: Vec<String> = std::env::var("OTACON_ADMIN_USERS")
         .unwrap_or_default()
@@ -90,9 +158,13 @@ pub fn build_router(state: AppState) -> Router {
         .route("/ws/fleet/events", get(ws::fleet_events_ws))
         .layer(middleware::from_fn(admin_auth));
 
-    // Debug UI at root (served without extra auth)
+    // UI + OpenAPI spec (no auth)
     Router::new()
         .route("/", get(index))
+        .route("/api/docs/openapi.json", get(|| async {
+            let spec = ApiDoc::openapi().to_json().unwrap();
+            ([("content-type", "application/json")], spec)
+        }))
         .merge(public)
         .merge(node_routes)
         .merge(admin_routes)

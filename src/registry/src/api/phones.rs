@@ -2,11 +2,12 @@ use axum::extract::{Path, State};
 use axum::Json;
 use chrono::Utc;
 use serde::Deserialize;
+use utoipa::ToSchema;
 
 use super::AppState;
 use crate::store::{Phone, PhoneConfig};
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct RegisterPhoneBody {
     pub host_id: String,
     pub adb_serial: String,
@@ -17,13 +18,24 @@ pub struct RegisterPhoneBody {
     pub adapter_mac: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct DeregisterPhoneBody {
     #[allow(dead_code)]
     pub host_id: String,
     pub phone_id: String,
 }
 
+/// Register or update a phone (node-scope).
+#[utoipa::path(
+    post,
+    path = "/api/v1/hosts/phones/register",
+    request_body = RegisterPhoneBody,
+    responses(
+        (status = 200, description = "Phone registered", body = serde_json::Value),
+    ),
+    security(("bearer" = [])),
+    tag = "Node"
+)]
 pub async fn register(
     State(state): State<AppState>,
     Json(body): Json<RegisterPhoneBody>,
@@ -32,7 +44,6 @@ pub async fn register(
     let now = Utc::now();
     let mut phones = store.phones.write().await;
 
-    // Match existing phone by IMEI first, then adb_serial
     let existing_id = if let Some(ref imei) = body.imei {
         phones.iter()
             .find(|(_, p)| p.imei.as_deref() == Some(imei))
@@ -46,7 +57,6 @@ pub async fn register(
     });
 
     if let Some(id) = existing_id {
-        // Update existing phone
         let phone = phones.get_mut(&id).unwrap();
         let old_host = phone.host_id.clone();
         phone.host_id = Some(body.host_id.clone());
@@ -61,7 +71,6 @@ pub async fn register(
 
         let config = phone.config.clone();
         let phone_id = id.clone();
-
         let adapter_mac_for_dongle = phone.adapter_mac.clone();
         drop(phones);
         if let Some(ref mac) = adapter_mac_for_dongle {
@@ -93,7 +102,6 @@ pub async fn register(
     } else {
         let phone_id = generate_phone_id(&body, &phones);
         let config = PhoneConfig::default();
-
         let adapter_mac_for_dongle = body.adapter_mac.clone();
         phones.insert(phone_id.clone(), Phone {
             id: phone_id.clone(),
@@ -131,6 +139,17 @@ pub async fn register(
     }
 }
 
+/// Mark a phone as disconnected (node-scope).
+#[utoipa::path(
+    post,
+    path = "/api/v1/hosts/phones/deregister",
+    request_body = DeregisterPhoneBody,
+    responses(
+        (status = 200, description = "Phone deregistered", body = serde_json::Value),
+    ),
+    security(("bearer" = [])),
+    tag = "Node"
+)]
 pub async fn deregister(
     State(state): State<AppState>,
     Json(body): Json<DeregisterPhoneBody>,
@@ -148,7 +167,16 @@ pub async fn deregister(
     Json(serde_json::json!({"ok": true}))
 }
 
-/// GET /api/v1/admin/phones — list phones (summary)
+/// List phones (summary).
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/phones",
+    responses(
+        (status = 200, description = "All phones", body = Vec<Phone>),
+    ),
+    security(("bearer" = [])),
+    tag = "Admin — Fleet"
+)]
 pub async fn list(
     State(state): State<AppState>,
 ) -> Json<Vec<Phone>> {
@@ -158,7 +186,18 @@ pub async fn list(
     Json(result)
 }
 
-/// GET /api/v1/admin/phones/{id} — phone detail with host location + SIMs + config
+/// Phone detail with host location, SIMs, and config.
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/phones/{id}",
+    params(("id" = String, Path, description = "Phone ID")),
+    responses(
+        (status = 200, description = "Phone detail", body = serde_json::Value),
+        (status = 404, description = "Phone not found"),
+    ),
+    security(("bearer" = [])),
+    tag = "Admin — Fleet"
+)]
 pub async fn get_detail(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -168,7 +207,6 @@ pub async fn get_detail(
     let phone = phones.get(&id).ok_or(axum::http::StatusCode::NOT_FOUND)?.clone();
     drop(phones);
 
-    // Build host info if phone is connected to a host
     let host_info = if let Some(ref host_id) = phone.host_id {
         let hosts = store.hosts.read().await;
         hosts.get(host_id).map(|h| serde_json::json!({
@@ -181,7 +219,6 @@ pub async fn get_detail(
         None
     };
 
-    // Get SIMs for this phone
     let sims = store.sims.read().await;
     let phone_sims: Vec<serde_json::Value> = sims.values()
         .filter(|s| s.phone_id == id)
@@ -214,6 +251,18 @@ pub async fn get_detail(
     })))
 }
 
+/// Get phone config.
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/phones/{id}/config",
+    params(("id" = String, Path, description = "Phone ID")),
+    responses(
+        (status = 200, description = "Phone config", body = PhoneConfig),
+        (status = 404, description = "Phone not found"),
+    ),
+    security(("bearer" = [])),
+    tag = "Admin — Fleet"
+)]
 pub async fn get_config(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -224,6 +273,19 @@ pub async fn get_config(
         .ok_or(axum::http::StatusCode::NOT_FOUND)
 }
 
+/// Set phone config (pushes to host).
+#[utoipa::path(
+    put,
+    path = "/api/v1/admin/phones/{id}/config",
+    params(("id" = String, Path, description = "Phone ID")),
+    request_body = PhoneConfig,
+    responses(
+        (status = 200, description = "Config updated", body = serde_json::Value),
+        (status = 404, description = "Phone not found"),
+    ),
+    security(("bearer" = [])),
+    tag = "Admin — Fleet"
+)]
 pub async fn set_config(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -253,23 +315,30 @@ pub async fn set_config(
     Ok(Json(serde_json::json!({"ok": true, "pushed": pushed})))
 }
 
-/// DELETE /api/v1/hosts/phones/{id} — permanently remove a phone (Pi-initiated).
-///
-/// Node-scope auth: the calling host must own this phone.
+/// Permanently remove a phone (Pi-initiated, node-scope).
+#[utoipa::path(
+    delete,
+    path = "/api/v1/hosts/phones/{id}",
+    params(("id" = String, Path, description = "Phone ID")),
+    responses(
+        (status = 200, description = "Phone deleted", body = serde_json::Value),
+        (status = 404, description = "Phone not found"),
+    ),
+    security(("bearer" = [])),
+    tag = "Node"
+)]
 pub async fn delete(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
     let store = &state.store;
 
-    // Remove the phone
     let mut phones = store.phones.write().await;
     let phone = phones.remove(&id).ok_or(axum::http::StatusCode::NOT_FOUND)?;
     let adapter_mac = phone.adapter_mac.clone();
     drop(phones);
     store.save_phones().await;
 
-    // Clear dongle association
     if let Some(ref mac) = adapter_mac {
         let mut dongles = store.dongles.write().await;
         for dongle in dongles.values_mut() {
@@ -281,13 +350,11 @@ pub async fn delete(
         store.save_dongles().await;
     }
 
-    // Remove SIM records for this phone
     let mut sims = store.sims.write().await;
     sims.retain(|_, sim| sim.phone_id != id);
     drop(sims);
     store.save_sims().await;
 
-    // Emit event
     store.add_event("phone.deleted", Some(id.clone()),
         Some(serde_json::json!({
             "adb_serial": phone.adb_serial,

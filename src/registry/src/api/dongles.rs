@@ -2,24 +2,34 @@ use axum::extract::State;
 use axum::Json;
 use chrono::Utc;
 use serde::Deserialize;
+use utoipa::ToSchema;
 
 use super::AppState;
 use crate::store::Dongle;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct RegisterDonglesBody {
     pub host_id: String,
     pub dongles: Vec<DongleEntry>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct DongleEntry {
     pub bt_mac: String,
     pub hci_device: Option<String>,
     pub phone_id: Option<String>,
 }
 
-/// GET /api/v1/dongles — list all dongles
+/// List all dongles.
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/dongles",
+    responses(
+        (status = 200, description = "All dongles", body = Vec<Dongle>),
+    ),
+    security(("bearer" = [])),
+    tag = "Admin — Fleet"
+)]
 pub async fn list(
     State(state): State<AppState>,
 ) -> Json<Vec<Dongle>> {
@@ -29,7 +39,17 @@ pub async fn list(
     Json(result)
 }
 
-/// POST /api/v1/dongles/register — Pi reports its dongles on boot
+/// Report dongles from a host (node-scope).
+#[utoipa::path(
+    post,
+    path = "/api/v1/hosts/dongles/register",
+    request_body = RegisterDonglesBody,
+    responses(
+        (status = 200, description = "Dongles registered", body = serde_json::Value),
+    ),
+    security(("bearer" = [])),
+    tag = "Node"
+)]
 pub async fn register(
     State(state): State<AppState>,
     Json(body): Json<RegisterDonglesBody>,

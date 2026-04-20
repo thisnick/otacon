@@ -2,11 +2,12 @@ use axum::extract::{Path, State};
 use axum::Json;
 use chrono::Utc;
 use serde::Deserialize;
+use utoipa::ToSchema;
 
 use super::AppState;
 use crate::store::Host;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct HeartbeatBody {
     pub host_id: String,
     pub tailscale_ip: Option<String>,
@@ -21,7 +22,17 @@ pub struct HeartbeatBody {
 
 fn default_port() -> u16 { 8080 }
 
-/// POST /api/v1/hosts/heartbeat — heartbeat with host metadata + connected phones/dongles
+/// Heartbeat with host metadata and connected phones/dongles.
+#[utoipa::path(
+    post,
+    path = "/api/v1/hosts/heartbeat",
+    request_body = HeartbeatBody,
+    responses(
+        (status = 200, description = "OK", body = serde_json::Value),
+    ),
+    security(("bearer" = [])),
+    tag = "Node"
+)]
 pub async fn heartbeat(
     State(state): State<AppState>,
     Json(body): Json<HeartbeatBody>,
@@ -29,7 +40,6 @@ pub async fn heartbeat(
     let store = &state.store;
     let now = Utc::now();
 
-    // Upsert host metadata (folded from old register endpoint)
     let mut hosts = store.hosts.write().await;
     let is_new = !hosts.contains_key(&body.host_id);
     let host = hosts.entry(body.host_id.clone()).or_insert_with(|| Host {
@@ -54,7 +64,6 @@ pub async fn heartbeat(
         store.add_event("host.online", Some(body.host_id.clone()), None).await;
     }
 
-    // Update phone statuses based on what the host reports as connected
     let mut phones = store.phones.write().await;
     for phone in phones.values_mut() {
         if phone.host_id.as_deref() == Some(&body.host_id) {
@@ -67,7 +76,6 @@ pub async fn heartbeat(
     }
     drop(phones);
 
-    // Update dongle statuses
     let mut dongles = store.dongles.write().await;
     for dongle in dongles.values_mut() {
         if dongle.host_id.as_deref() == Some(&body.host_id) {
@@ -86,7 +94,16 @@ pub async fn heartbeat(
     Json(serde_json::json!({"ok": true}))
 }
 
-/// GET /api/v1/admin/hosts — list all hosts
+/// List all hosts.
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/hosts",
+    responses(
+        (status = 200, description = "All hosts", body = Vec<Host>),
+    ),
+    security(("bearer" = [])),
+    tag = "Admin — Fleet"
+)]
 pub async fn list(
     State(state): State<AppState>,
 ) -> Json<Vec<Host>> {
@@ -96,7 +113,18 @@ pub async fn list(
     Json(result)
 }
 
-/// GET /api/v1/admin/hosts/{id} — get a single host
+/// Get a single host by ID.
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/hosts/{id}",
+    params(("id" = String, Path, description = "Host ID")),
+    responses(
+        (status = 200, description = "Host details", body = Host),
+        (status = 404, description = "Host not found"),
+    ),
+    security(("bearer" = [])),
+    tag = "Admin — Fleet"
+)]
 pub async fn get(
     State(state): State<AppState>,
     Path(id): Path<String>,

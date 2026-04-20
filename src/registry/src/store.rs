@@ -3,8 +3,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::sync::{broadcast, mpsc, RwLock};
+use utoipa::ToSchema;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Host {
     pub id: String,
     pub tailscale_ip: Option<String>,
@@ -15,7 +16,7 @@ pub struct Host {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Phone {
     pub id: String,
     pub adb_serial: String,
@@ -32,7 +33,7 @@ pub struct Phone {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PhoneConfig {
     pub wifi_enabled: bool,
     pub bluetooth_enabled: bool,
@@ -47,7 +48,7 @@ impl Default for PhoneConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Dongle {
     pub id: String,
     pub bt_mac: String,
@@ -58,7 +59,7 @@ pub struct Dongle {
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SimCard {
     pub id: String,
     pub iccid: String,
@@ -73,7 +74,7 @@ pub struct SimCard {
     pub updated_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Event {
     pub id: u64,
     pub timestamp: DateTime<Utc>,

@@ -1,11 +1,12 @@
 use axum::extract::{Query, State};
 use axum::Json;
 use serde::Deserialize;
+use utoipa::{IntoParams, ToSchema};
 
 use super::AppState;
 use crate::store::Event;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
 pub struct EventQuery {
     pub event_type: Option<String>,
     pub entity_id: Option<String>,
@@ -18,7 +19,17 @@ pub struct EventQuery {
 
 fn default_limit() -> usize { 100 }
 
-/// GET /api/v1/events — query event log
+/// Query event log.
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/events",
+    params(EventQuery),
+    responses(
+        (status = 200, description = "Filtered events", body = Vec<Event>),
+    ),
+    security(("bearer" = [])),
+    tag = "Admin — Fleet"
+)]
 pub async fn list(
     State(state): State<AppState>,
     Query(query): Query<EventQuery>,
@@ -61,7 +72,7 @@ pub async fn list(
     Json(filtered)
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct ReportEventBody {
     pub host_id: Option<String>,
     pub phone_id: Option<String>,
@@ -71,7 +82,17 @@ pub struct ReportEventBody {
     pub data: Option<serde_json::Value>,
 }
 
-/// POST /api/v1/events — report an error/info event from a Pi
+/// Report an event from a host (node-scope).
+#[utoipa::path(
+    post,
+    path = "/api/v1/hosts/events",
+    request_body = ReportEventBody,
+    responses(
+        (status = 200, description = "Event recorded", body = serde_json::Value),
+    ),
+    security(("bearer" = [])),
+    tag = "Node"
+)]
 pub async fn report(
     State(state): State<AppState>,
     Json(body): Json<ReportEventBody>,

@@ -4,11 +4,12 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use utoipa::ToSchema;
 
 use super::store::{AuthScope, AuthStore};
 use crate::store::atomic_write;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RegistrationStatus {
     Pending,
@@ -16,7 +17,7 @@ pub enum RegistrationStatus {
     Rejected,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RegistrationKind {
     Host,
@@ -29,7 +30,7 @@ impl Default for RegistrationKind {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PendingRegistration {
     pub id: String,
     /// For host registrations this is the host_id; for client registrations a label.

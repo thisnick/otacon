@@ -2,21 +2,22 @@ use axum::extract::{Path, Query, State};
 use axum::Json;
 use chrono::Utc;
 use serde::Deserialize;
+use utoipa::{IntoParams, ToSchema};
 
 use super::AppState;
 use crate::store::SimCard;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
 pub struct SimQuery {
     pub phone_number: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct ReportSimsBody {
     pub sims: Vec<SimEntry>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct SimEntry {
     pub iccid: String,
     pub phone_number: Option<String>,
@@ -27,7 +28,17 @@ pub struct SimEntry {
     pub profile_name: Option<String>,
 }
 
-/// GET /api/v1/sims — list all SIMs, optionally filtered by phone_number
+/// List all SIMs, optionally filtered by phone_number.
+#[utoipa::path(
+    get,
+    path = "/api/v1/admin/sims",
+    params(SimQuery),
+    responses(
+        (status = 200, description = "All SIMs", body = Vec<SimCard>),
+    ),
+    security(("bearer" = [])),
+    tag = "Admin — Fleet"
+)]
 pub async fn list(
     State(state): State<AppState>,
     Query(query): Query<SimQuery>,
@@ -45,21 +56,18 @@ pub async fn list(
     Json(result)
 }
 
-/// GET /api/v1/phones/:id/sims — SIMs on a specific phone
-pub async fn list_for_phone(
-    State(state): State<AppState>,
-    Path(phone_id): Path<String>,
-) -> Json<Vec<SimCard>> {
-    let sims = state.store.sims.read().await;
-    let mut result: Vec<SimCard> = sims.values()
-        .filter(|s| s.phone_id == phone_id)
-        .cloned()
-        .collect();
-    result.sort_by(|a, b| a.slot.cmp(&b.slot));
-    Json(result)
-}
-
-/// POST /api/v1/phones/:id/sims — Pi reports SIM inventory
+/// Report SIM inventory for a phone (node-scope).
+#[utoipa::path(
+    post,
+    path = "/api/v1/hosts/phones/{phone_id}/sims",
+    params(("phone_id" = String, Path, description = "Phone ID")),
+    request_body = ReportSimsBody,
+    responses(
+        (status = 200, description = "SIMs updated", body = serde_json::Value),
+    ),
+    security(("bearer" = [])),
+    tag = "Node"
+)]
 pub async fn report(
     State(state): State<AppState>,
     Path(phone_id): Path<String>,
@@ -69,10 +77,8 @@ pub async fn report(
     let now = Utc::now();
     let mut sims = store.sims.write().await;
 
-    // Remove old SIMs for this phone
     sims.retain(|_, s| s.phone_id != phone_id);
 
-    // Insert reported SIMs
     for entry in body.sims {
         let sim_id = format!("sim-{}", &entry.iccid[entry.iccid.len().saturating_sub(6)..]);
         sims.insert(sim_id.clone(), SimCard {
