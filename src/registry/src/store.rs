@@ -147,6 +147,20 @@ impl RegistryStore {
         save_map(&self.data_dir.join("dongles.json"), &*map).await;
     }
 
+    /// Re-read hosts, phones, dongles, and sims from disk.
+    /// Used by the admin process to pick up changes written by the registry process.
+    pub async fn reload_from_disk(&self) {
+        let hosts: HashMap<String, Host> = load_map(&self.data_dir.join("hosts.json")).await;
+        let phones: HashMap<String, Phone> = load_map(&self.data_dir.join("phones.json")).await;
+        let dongles: HashMap<String, Dongle> = load_map(&self.data_dir.join("dongles.json")).await;
+        let sims: HashMap<String, SimCard> = load_map(&self.data_dir.join("sims.json")).await;
+
+        *self.hosts.write().await = hosts;
+        *self.phones.write().await = phones;
+        *self.dongles.write().await = dongles;
+        *self.sims.write().await = sims;
+    }
+
     pub async fn save_sims(&self) {
         let map = self.sims.read().await;
         save_map(&self.data_dir.join("sims.json"), &*map).await;

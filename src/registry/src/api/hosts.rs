@@ -94,6 +94,9 @@ pub async fn heartbeat(
     }
     drop(dongles);
 
+    store.save_phones().await;
+    store.save_dongles().await;
+
     Json(serde_json::json!({"ok": true}))
 }
 

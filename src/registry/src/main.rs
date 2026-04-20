@@ -50,6 +50,16 @@ async fn main() {
         "admin" => {
             eprintln!("[registry] Starting in ADMIN mode (human-facing, port {port})");
 
+            // Periodically reload data from disk so we see registry-written changes
+            let reload_store = store.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+                loop {
+                    interval.tick().await;
+                    reload_store.reload_from_disk().await;
+                }
+            });
+
             // Bootstrap: if no admin tokens exist, create one and print it
             if !auth_store.has_admin_tokens().await {
                 let (token_id, raw_token) = auth_store
