@@ -25,28 +25,7 @@ services:
     network_mode: service:tailscale-registry
     depends_on: [tailscale-registry]
     environment:
-      - OTACON_SERVICE_MODE=registry
       - OTACON_REGISTRY_PORT=9080
-      - OTACON_REGISTRY_DATA=/data/registry
-      - RUST_LOG=${RUST_LOG:-info}
-    volumes:
-      - registry-data:/data/registry
-
-  # ── Admin (human-facing, no Tailscale — host port 9090) ────────────
-  # In production: bind to localhost, fronted by Node.js BFF with user auth.
-  # In dev: bound to 0.0.0.0:9090, reachable via the Pi's existing Tailscale
-  # identity (e.g. http://otacon-pi:9090).
-  otacon-admin:
-    build:
-      context: .
-      dockerfile: Dockerfile.registry
-    image: ghcr.io/thisnick/${OTACON_REPO:-otacon-dev}/registry:latest
-    restart: unless-stopped
-    ports:
-      - "9090:9090"
-    environment:
-      - OTACON_SERVICE_MODE=admin
-      - OTACON_REGISTRY_PORT=9090
       - OTACON_REGISTRY_DATA=/data/registry
       - OTACON_ADMIN_USERS=${OTACON_ADMIN_USERS:-}
       - RUST_LOG=${RUST_LOG:-info}
