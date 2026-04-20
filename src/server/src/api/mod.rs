@@ -44,16 +44,18 @@ pub enum ApiError {
     Adb(String),
     BadRequest(String),
     NotFound(String),
+    Conflict(String, String),
 }
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let (status, message) = match self {
-            ApiError::Adb(msg) => (StatusCode::BAD_GATEWAY, msg),
-            ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
-            ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
+        let (status, body) = match self {
+            ApiError::Adb(msg) => (StatusCode::BAD_GATEWAY, serde_json::json!({"error": msg})),
+            ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, serde_json::json!({"error": msg})),
+            ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, serde_json::json!({"error": msg})),
+            ApiError::Conflict(code, message) => (StatusCode::CONFLICT, serde_json::json!({"error": code, "message": message})),
         };
-        (status, Json(serde_json::json!({"error": message}))).into_response()
+        (status, Json(body)).into_response()
     }
 }
 

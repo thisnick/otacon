@@ -752,6 +752,8 @@
     font-size: 13px;
     margin-bottom: 16px;
     display: none;
+    align-items: center;
+    gap: 8px;
   }
   .disconnect-banner a {
     color: var(--accent);
@@ -787,6 +789,7 @@
   <div class="disconnect-banner" id="disconnectBanner">
     This phone is currently disconnected. Actions will fail.
     <a onclick="switchToConnected()">Switch to a connected phone</a>
+    <button class="pill danger" style="margin-left:auto;font-size:12px;padding:4px 12px" onclick="showDeletePhoneModal()">Delete permanently</button>
   </div>
 
   <div class="audio-strip">
@@ -947,6 +950,20 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="deletePhoneModal">
+  <div class="modal-box">
+    <h3>Delete Phone</h3>
+    <p>Permanently delete <strong id="deletePhoneIdLabel"></strong> (<span id="deletePhoneSerialLabel"></span>)? This removes the phone from phones.json, wipes its Bluetooth bond, and releases its dongle. This cannot be undone.</p>
+    <p style="margin-bottom:8px">Type <strong id="deletePhoneIdConfirmLabel"></strong> to confirm:</p>
+    <input type="text" id="deleteConfirmInput" autocomplete="off" spellcheck="false" oninput="checkDeleteInput()" style="width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:4px;font-family:'JetBrains Mono',monospace;font-size:12px;margin-bottom:14px">
+    <p id="deleteErrorMsg" style="color:var(--red);font-size:12px;margin-bottom:8px;display:none"></p>
+    <div class="modal-actions">
+      <button class="pill" onclick="hideDeletePhoneModal()">Cancel</button>
+      <button class="pill danger" id="deleteConfirmBtn" disabled onclick="confirmDeletePhone()">Delete Phone</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // --- Phone scoping ---
 // All REST/WS calls are namespaced under /phones/{phoneId}/...
@@ -989,7 +1006,7 @@ async function loadPhoneList() {
     phoneMeta = phones.find(p => p.id === phoneId) || {};
     phoneDisconnected = phoneMeta.status === 'disconnected';
     document.getElementById('disconnectBanner').style.display =
-      phoneDisconnected ? 'block' : 'none';
+      phoneDisconnected ? 'flex' : 'none';
     updateDangerZoneState();
   } catch (e) {
     console.error('loadPhoneList failed', e);
@@ -1946,6 +1963,55 @@ async function confirmFactoryReset() {
     alert('Request failed: ' + e.message);
   } finally {
     btn.textContent = 'Confirm Reset';
+    btn.disabled = false;
+  }
+}
+
+// --- Delete Phone ---
+function showDeletePhoneModal() {
+  document.getElementById('deletePhoneIdLabel').textContent = phoneId;
+  document.getElementById('deletePhoneSerialLabel').textContent = phoneMeta.adb_serial || '';
+  document.getElementById('deletePhoneIdConfirmLabel').textContent = phoneId;
+  document.getElementById('deleteConfirmInput').value = '';
+  document.getElementById('deleteConfirmBtn').disabled = true;
+  document.getElementById('deleteErrorMsg').style.display = 'none';
+  document.getElementById('deletePhoneModal').classList.add('active');
+}
+function hideDeletePhoneModal() {
+  document.getElementById('deletePhoneModal').classList.remove('active');
+}
+function checkDeleteInput() {
+  const match = document.getElementById('deleteConfirmInput').value === phoneId;
+  document.getElementById('deleteConfirmBtn').disabled = !match;
+}
+async function confirmDeletePhone() {
+  if (!phoneId) return;
+  if (document.getElementById('deleteConfirmInput').value !== phoneId) return;
+  const btn = document.getElementById('deleteConfirmBtn');
+  const errMsg = document.getElementById('deleteErrorMsg');
+  btn.textContent = 'Deleting...';
+  btn.disabled = true;
+  errMsg.style.display = 'none';
+  try {
+    const res = await fetch(`/phones/${phoneId}`, { method: 'DELETE' });
+    const data = await res.json();
+    if (res.ok && data.deleted) {
+      hideDeletePhoneModal();
+      localStorage.removeItem('otacon.phoneId');
+      phoneId = '';
+      location.reload();
+    } else if (res.status === 409) {
+      errMsg.textContent = data.message || 'Unplug the phone first.';
+      errMsg.style.display = 'block';
+    } else {
+      errMsg.textContent = 'Error: ' + (data.error || res.statusText);
+      errMsg.style.display = 'block';
+    }
+  } catch(e) {
+    errMsg.textContent = 'Request failed: ' + e.message;
+    errMsg.style.display = 'block';
+  } finally {
+    btn.textContent = 'Delete Phone';
     btn.disabled = false;
   }
 }

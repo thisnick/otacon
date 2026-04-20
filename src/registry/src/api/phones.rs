@@ -268,6 +268,50 @@ pub async fn set_config(
     Ok(Json(serde_json::json!({"ok": true, "pushed": pushed})))
 }
 
+/// DELETE /api/v1/phones/{id} — permanently remove a phone (Pi-initiated).
+///
+/// Node-scope auth: the calling host must own this phone.
+pub async fn delete(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, axum::http::StatusCode> {
+    let store = &state.store;
+
+    // Remove the phone
+    let mut phones = store.phones.write().await;
+    let phone = phones.remove(&id).ok_or(axum::http::StatusCode::NOT_FOUND)?;
+    let adapter_mac = phone.adapter_mac.clone();
+    drop(phones);
+    store.save_phones().await;
+
+    // Clear dongle association
+    if let Some(ref mac) = adapter_mac {
+        let mut dongles = store.dongles.write().await;
+        for dongle in dongles.values_mut() {
+            if dongle.bt_mac.eq_ignore_ascii_case(mac) {
+                dongle.phone_id = None;
+            }
+        }
+        drop(dongles);
+        store.save_dongles().await;
+    }
+
+    // Remove SIM records for this phone
+    let mut sims = store.sims.write().await;
+    sims.retain(|_, sim| sim.phone_id != id);
+    drop(sims);
+    store.save_sims().await;
+
+    // Emit event
+    store.add_event("phone.deleted", Some(id.clone()),
+        Some(serde_json::json!({
+            "adb_serial": phone.adb_serial,
+            "adapter_mac": adapter_mac,
+        }))).await;
+
+    Ok(Json(serde_json::json!({"deleted": true, "phone_id": id})))
+}
+
 fn generate_phone_id(body: &RegisterPhoneBody, phones: &std::collections::HashMap<String, Phone>) -> String {
     if let Some(ref model) = body.model {
         let slug: String = model.chars()

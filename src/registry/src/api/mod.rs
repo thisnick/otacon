@@ -1,5 +1,5 @@
 use axum::middleware;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::Router;
 use axum::response::Html;
 use std::sync::Arc;
@@ -45,6 +45,7 @@ pub fn registry_router(state: AppState) -> Router {
         .route("/api/v1/hosts/heartbeat", post(hosts::heartbeat))
         .route("/api/v1/phones/register", post(phones::register))
         .route("/api/v1/phones/deregister", post(phones::deregister))
+        .route("/api/v1/phones/{id}", delete(phones::delete))
         .route("/api/v1/dongles/register", post(dongles::register))
         .route("/api/v1/phones/{id}/sims", post(sims::report))
         .route("/api/v1/events", post(events::report))
@@ -76,7 +77,7 @@ pub fn admin_router(state: AppState) -> Router {
         .route("/api/v1/hosts", get(hosts::list))
         .route("/api/v1/hosts/{id}", get(hosts::get))
         .route("/api/v1/phones", get(phones::list))
-        .route("/api/v1/phones/{id}", get(phones::get).patch(phones::update))
+        .route("/api/v1/phones/{id}", get(phones::get).patch(phones::update).delete(phones::delete))
         .route("/api/v1/phones/{id}/location", get(phones::location))
         .route("/api/v1/phones/{id}/config", get(phones::get_config).put(phones::set_config))
         .route("/api/v1/sims", get(sims::list))

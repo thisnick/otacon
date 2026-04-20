@@ -203,24 +203,160 @@ pub async fn register(
     }))
 }
 
-/// DELETE /phones/{id} — remove a phone.
+/// DELETE /phones/{id} — permanently remove a phone.
+///
+/// Returns 409 if the phone is currently connected (bridge health checks pass).
+/// On success: wipes BlueZ bond, releases dongle, removes from phones.json,
+/// notifies registry, drops PhoneState, emits phone.deleted event.
 pub async fn remove(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let mut phones = state.phones.write().await;
-    if phones.remove(&id).is_none() {
-        return Err(ApiError::NotFound(format!("phone '{id}' not found")));
+    let ps = phones.get(&id)
+        .ok_or_else(|| ApiError::NotFound(format!("phone '{id}' not found")))?;
+
+    // 1. Verify phone is disconnected
+    let connected = ps.bridge.is_device_owner_available()
+        || ps.bridge.is_snapshot_available();
+    if connected {
+        return Err(ApiError::Conflict(
+            "phone_connected".into(),
+            "Unplug the phone first.".into(),
+        ));
     }
 
-    // Persist to disk
+    let config = ps.config.clone();
+    let registry_id = config.registry_id.clone();
+    phones.remove(&id);
+
+    // 2. Persist removal to phones.json — remove the entry for this serial
     let configs: Vec<PhoneConfig> = phones.values().map(|p| p.config.clone()).collect();
     drop(phones);
     crate::phone::save_phones(&state.config_path, &configs).await.ok();
 
-    // Broadcast system event
-    let event = serde_json::json!({"event": "phone.removed", "data": {"id": id}});
+    // Also remove from the on-disk phones.json directly (the merge-aware
+    // save_phones above writes our in-memory set, but the serial may also
+    // exist in fleet-agent's copy — remove it explicitly).
+    remove_serial_from_phones_json(&state.config_path, &config.adb_serial).await;
+
+    // 3. Wipe BlueZ bond directory
+    if let (Some(ref adapter_mac), Some(ref phone_bt_mac)) =
+        (&config.adapter_mac, &config.phone_bt_mac)
+    {
+        let adapter_dir = adapter_mac.replace(':', "").to_uppercase();
+        let adapter_dir_colon = adapter_mac.to_uppercase();
+        let phone_dir = phone_bt_mac.replace(':', "").to_uppercase();
+        let phone_dir_colon = phone_bt_mac.to_uppercase();
+        // Try both formats: with and without colons
+        for adapter in [&adapter_dir_colon, &adapter_dir] {
+            for phone in [&phone_dir_colon, &phone_dir] {
+                let path = format!("/var/lib/bluetooth/{adapter}/{phone}");
+                tokio::fs::remove_dir_all(&path).await.ok();
+            }
+        }
+        eprintln!("[delete] Wiped BlueZ bond for {}/{}", adapter_mac, phone_bt_mac);
+    }
+
+    // 4. Release dongle to spare pool (via fleet-agent's phones.json —
+    //    already handled by removing the entry above; the dongle's adapter_mac
+    //    is no longer associated with any phone)
+
+    // 5. Notify registry (best-effort)
+    if let Some(ref reg_id) = registry_id {
+        notify_registry_delete(reg_id).await;
+    }
+
+    // 6. Emit local event
+    let event = serde_json::json!({
+        "event": "phone.deleted",
+        "data": {
+            "id": id,
+            "adb_serial": config.adb_serial,
+            "registry_id": registry_id,
+        }
+    });
     let _ = state.system_events_tx.send(event.to_string());
 
-    Ok(Json(serde_json::json!({"ok": true})))
+    eprintln!("[delete] Phone '{id}' (serial: {}) permanently removed", config.adb_serial);
+
+    Ok(Json(serde_json::json!({
+        "deleted": true,
+        "phone_id": id,
+    })))
+}
+
+/// Remove a specific serial from the on-disk phones.json, regardless of
+/// what the in-memory state contains.
+async fn remove_serial_from_phones_json(path: &std::path::Path, serial: &str) {
+    use tokio::io::AsyncWriteExt;
+
+    let on_disk: Vec<PhoneConfig> = match tokio::fs::read_to_string(path).await {
+        Ok(data) => serde_json::from_str(&data).unwrap_or_default(),
+        Err(_) => return,
+    };
+
+    let filtered: Vec<&PhoneConfig> = on_disk.iter()
+        .filter(|p| p.adb_serial != serial)
+        .collect();
+
+    if filtered.len() == on_disk.len() {
+        return; // nothing to remove
+    }
+
+    let data = match serde_json::to_string_pretty(&filtered) {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+
+    let dir = path.parent().unwrap_or(std::path::Path::new("."));
+    let tmp_path = dir.join(format!(".phones_tmp_{}", std::process::id()));
+    if let Ok(mut f) = tokio::fs::File::create(&tmp_path).await {
+        if f.write_all(data.as_bytes()).await.is_ok()
+            && f.sync_all().await.is_ok()
+        {
+            tokio::fs::rename(&tmp_path, path).await.ok();
+        } else {
+            tokio::fs::remove_file(&tmp_path).await.ok();
+        }
+    }
+}
+
+/// Best-effort DELETE to registry to mirror phone removal.
+async fn notify_registry_delete(registry_id: &str) {
+    let registry_url = match std::env::var("REGISTRY_URL") {
+        Ok(url) => url.trim_end_matches('/').to_string(),
+        Err(_) => return,
+    };
+
+    let token = match std::fs::read_to_string(crate::fleet::AUTH_FILE)
+        .ok()
+        .and_then(|data| serde_json::from_str::<serde_json::Value>(&data).ok())
+        .and_then(|json| json.get("token")?.as_str().map(|s| s.to_string()))
+    {
+        Some(t) => t,
+        None => return,
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap_or_default();
+
+    let url = format!("{registry_url}/api/v1/phones/{registry_id}");
+    match client.delete(&url)
+        .header("Authorization", format!("Bearer {token}"))
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => {
+            eprintln!("[delete] Registry notified: deleted {registry_id}");
+        }
+        Ok(resp) => {
+            eprintln!("[delete] Registry delete failed for {registry_id}: {}", resp.status());
+        }
+        Err(e) => {
+            eprintln!("[delete] Registry delete error for {registry_id}: {e}");
+        }
+    }
 }
