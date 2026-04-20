@@ -160,13 +160,22 @@ pub async fn register(
         (8081..).find(|p| !used.contains(p)).unwrap()
     });
 
+    let display_num = {
+        let used: Vec<u16> = phones.values().map(|p| p.config.display_num).collect();
+        (50..).find(|p| !used.contains(p)).unwrap()
+    };
+    let vnc_port = {
+        let used: Vec<u16> = phones.values().map(|p| p.config.vnc_port).collect();
+        (5900..).find(|p| !used.contains(p)).unwrap()
+    };
+
     let config = PhoneConfig {
         id: id.clone(),
         adb_serial: body.adb_serial.clone(),
         adapter_mac: body.adapter_mac,
         phone_bt_mac: body.phone_bt_mac,
-        display_num: 50 + phones.len() as u16,
-        vnc_port: 5900 + phones.len() as u16,
+        display_num,
+        vnc_port,
         snapshot_port,
         internal_port,
         audio_backend: body.audio_backend.unwrap_or_else(|| "alsa".into()),

@@ -63,6 +63,7 @@ services:
       - WATCHTOWER_POLL_INTERVAL=${WATCHTOWER_POLL_INTERVAL:-300}
       - WATCHTOWER_INCLUDE_STOPPED=false
       - DOCKER_CONFIG=/config.json
+      - DOCKER_API_VERSION=1.40
 
 volumes:
   bt-data:
