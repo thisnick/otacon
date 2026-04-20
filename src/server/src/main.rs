@@ -131,6 +131,8 @@ pub struct AppState {
     pub system_events_tx: broadcast::Sender<String>,
     /// Path to phones.json config file
     pub config_path: std::path::PathBuf,
+    /// Fleet client for registry communication (None in standalone mode)
+    pub fleet_client: Option<Arc<fleet::FleetClient>>,
 }
 
 /// Create a PhoneState from a PhoneConfig.
@@ -228,10 +230,13 @@ async fn main() {
 
     let (system_events_tx, _) = broadcast::channel::<String>(64);
 
+    let fleet_client = fleet::FleetClient::from_env().map(Arc::new);
+
     let state = Arc::new(AppState {
         phones: tokio::sync::RwLock::new(phones),
         system_events_tx,
         config_path,
+        fleet_client: fleet_client.clone(),
     });
 
     // Start lazy VNC proxy listeners for each phone
@@ -240,10 +245,9 @@ async fn main() {
     }
 
     // Start fleet client if REGISTRY_URL is set
-    if let Some(fleet_client) = fleet::FleetClient::from_env() {
-        let fleet_client = Arc::new(fleet_client);
+    if let Some(ref fleet_client) = fleet_client {
         fleet::spawn_heartbeat(fleet_client.clone(), state.clone());
-        fleet::spawn_config_ws(fleet_client, state.clone());
+        fleet::spawn_config_ws(fleet_client.clone(), state.clone());
         eprintln!("Fleet client enabled");
     } else {
         eprintln!("Fleet client disabled (no REGISTRY_URL)");

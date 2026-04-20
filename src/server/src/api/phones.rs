@@ -262,9 +262,9 @@ pub async fn remove(
     //    already handled by removing the entry above; the dongle's adapter_mac
     //    is no longer associated with any phone)
 
-    // 5. Notify registry (best-effort)
-    if let Some(ref reg_id) = registry_id {
-        notify_registry_delete(reg_id).await;
+    // 5. Notify registry (best-effort) — use fleet client's registry_ids mapping
+    if let Some(ref fleet) = state.fleet_client {
+        fleet.delete_phone(&id).await;
     }
 
     // 6. Emit local event
@@ -322,41 +322,3 @@ async fn remove_serial_from_phones_json(path: &std::path::Path, serial: &str) {
     }
 }
 
-/// Best-effort DELETE to registry to mirror phone removal.
-async fn notify_registry_delete(registry_id: &str) {
-    let registry_url = match std::env::var("REGISTRY_URL") {
-        Ok(url) => url.trim_end_matches('/').to_string(),
-        Err(_) => return,
-    };
-
-    let token = match std::fs::read_to_string(crate::fleet::AUTH_FILE)
-        .ok()
-        .and_then(|data| serde_json::from_str::<serde_json::Value>(&data).ok())
-        .and_then(|json| json.get("token")?.as_str().map(|s| s.to_string()))
-    {
-        Some(t) => t,
-        None => return,
-    };
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-        .unwrap_or_default();
-
-    let url = format!("{registry_url}/api/v1/phones/{registry_id}");
-    match client.delete(&url)
-        .header("Authorization", format!("Bearer {token}"))
-        .send()
-        .await
-    {
-        Ok(resp) if resp.status().is_success() => {
-            eprintln!("[delete] Registry notified: deleted {registry_id}");
-        }
-        Ok(resp) => {
-            eprintln!("[delete] Registry delete failed for {registry_id}: {}", resp.status());
-        }
-        Err(e) => {
-            eprintln!("[delete] Registry delete error for {registry_id}: {e}");
-        }
-    }
-}

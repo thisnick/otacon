@@ -258,6 +258,33 @@ impl FleetClient {
         }
     }
 
+    /// Permanently delete a phone from the registry.
+    /// Looks up the registry ID from the local→registry mapping, then sends
+    /// a DELETE request to the registry.
+    pub async fn delete_phone(&self, local_id: &str) {
+        let reg_id = self.registry_ids.lock().await
+            .remove(local_id)
+            .unwrap_or_else(|| local_id.to_string());
+
+        let url = format!("{}/api/v1/phones/{reg_id}", self.registry_url);
+        let mut req = self.client.delete(&url);
+        if let Some(token) = load_auth_token() {
+            req = req.header("Authorization", format!("Bearer {token}"));
+        }
+
+        match req.send().await {
+            Ok(resp) if resp.status().is_success() => {
+                eprintln!("[fleet] Registry phone '{reg_id}' deleted");
+            }
+            Ok(resp) => {
+                eprintln!("[fleet] Registry phone delete failed for '{reg_id}': {}", resp.status());
+            }
+            Err(e) => {
+                eprintln!("[fleet] Registry phone delete error for '{reg_id}': {e}");
+            }
+        }
+    }
+
     /// Build the WebSocket URL for the host config channel.
     pub fn config_ws_url(&self) -> String {
         let base = self.registry_url
