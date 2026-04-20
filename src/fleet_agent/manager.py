@@ -92,7 +92,7 @@ class FleetAgent:
             })
         from .registry.client import _http_post
         try:
-            _http_post(f'{registry_url}/api/v1/dongles/register', {
+            _http_post(f'{registry_url}/api/v1/hosts/dongles/register', {
                 'host_id': host_id,
                 'dongles': dongle_list,
             })

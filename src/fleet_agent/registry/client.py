@@ -65,8 +65,8 @@ def ensure_registered() -> bool:
     """Ensure this node is registered and has a valid auth token.
 
     If no token exists, initiates the registration flow:
-    1. POST /api/v1/auth/register
-    2. Long-poll /api/v1/auth/poll/{pending_id} until approved
+    1. POST /api/v1/hosts/register
+    2. Long-poll /api/v1/hosts/poll/{pending_id} until approved
     3. Save token to disk
 
     Returns True if a valid token is available (existing or newly obtained).
@@ -87,7 +87,7 @@ def ensure_registered() -> bool:
     # Step 1: Register
     try:
         req = Request(
-            f'{registry_url}/api/v1/auth/register',
+            f'{registry_url}/api/v1/hosts/register',
             data=json.dumps({
                 'host_id': host_id,
                 'hostname': hostname,
@@ -105,7 +105,7 @@ def ensure_registered() -> bool:
         log.error('Registration response missing pending_id')
         return False
 
-    poll_url = f'{registry_url}/api/v1/auth/poll/{pending_id}'
+    poll_url = f'{registry_url}/api/v1/hosts/poll/{pending_id}'
     log.info(f'Registration pending (id={pending_id}). Waiting for admin approval...')
 
     # Step 2: Long-poll until approved or rejected
@@ -158,7 +158,7 @@ def register_with_registry(identity: dict, adapter_mac: str | None = None,
     if adapter_mac:
         payload['adapter_mac'] = adapter_mac
     try:
-        result = _http_post(f'{registry_url}/api/v1/phones/register', payload)
+        result = _http_post(f'{registry_url}/api/v1/hosts/phones/register', payload)
     except HTTPError:
         return (None, None)
     if result:
@@ -174,7 +174,7 @@ def deregister_from_registry(registry_id: str | None):
         return
     host_id = os.environ.get('HOST_ID', '')
     try:
-        _http_post(f'{registry_url}/api/v1/phones/deregister', {
+        _http_post(f'{registry_url}/api/v1/hosts/phones/deregister', {
             'host_id': host_id,
             'phone_id': registry_id,
         })
@@ -201,7 +201,7 @@ def report_error(category: str, message: str, phone_id: str | None = None,
     if data:
         payload['data'] = data
     try:
-        _http_post(f'{registry_url}/api/v1/events', payload)
+        _http_post(f'{registry_url}/api/v1/hosts/events', payload)
     except HTTPError:
         pass
     log.error(f'[{category}] {message}')
@@ -214,7 +214,7 @@ def update_registry_dongle(adapter_mac: str, phone_id: str | None) -> None:
         return
     host_id = os.environ.get('HOST_ID', '')
     try:
-        _http_post(f'{registry_url}/api/v1/dongles/register', {
+        _http_post(f'{registry_url}/api/v1/hosts/dongles/register', {
             'host_id': host_id,
             'dongles': [{
                 'bt_mac': adapter_mac,
@@ -244,7 +244,7 @@ def emit_event(event_type: str, data: dict | None = None) -> None:
     if data:
         payload['data'] = data
     try:
-        _http_post(f'{registry_url}/api/v1/events', payload)
+        _http_post(f'{registry_url}/api/v1/hosts/events', payload)
     except HTTPError:
         pass
     log.info(f'[event] {event_type}: {data}')
