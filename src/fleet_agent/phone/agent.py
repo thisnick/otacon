@@ -14,7 +14,7 @@ from ..bluetooth.pair import allocate_and_pair_bluetooth, run_pair_dialog_watche
 from ..registry.identity import gather_identity
 from ..registry.client import (register_with_registry, deregister_from_registry,
                                 report_error, emit_event, update_registry_dongle)
-from ..registry.server import register_with_server, deregister_from_server
+from ..registry.server import register_with_server
 
 log = logging.getLogger('fleet-agent')
 
@@ -323,7 +323,9 @@ class PhoneAgent:
 
         self.status.phase = 'stopped'
         self.log.info('Disconnected')
-        deregister_from_server(self.phone_id)
+        # Don't deregister from local Rust server — leave phone in the
+        # /phones list so the UI can show it as "disconnected" (the bridge
+        # health checker will flip status automatically).
         deregister_from_registry(self.registry_id)
 
     def stop(self):
