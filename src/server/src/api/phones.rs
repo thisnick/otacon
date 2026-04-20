@@ -18,6 +18,8 @@ pub struct PhoneSummary {
     internal_port: u16,
     #[serde(skip_serializing_if = "Option::is_none")]
     registry_id: Option<String>,
+    /// "connected" when bridge health checks pass, "disconnected" otherwise.
+    status: String,
 }
 
 /// GET /phones — list all registered phones.
@@ -27,15 +29,20 @@ pub async fn list(
     let phones = state.phones.read().await;
     let mut result: Vec<PhoneSummary> = phones
         .values()
-        .map(|ps| PhoneSummary {
-            id: ps.config.id.clone(),
-            adb_serial: ps.config.adb_serial.clone(),
-            adapter_mac: ps.config.adapter_mac.clone(),
-            phone_bt_mac: ps.config.phone_bt_mac.clone(),
-            vnc_port: ps.config.vnc_port,
-            snapshot_port: ps.config.snapshot_port,
-            internal_port: ps.config.internal_port,
-            registry_id: ps.config.registry_id.clone(),
+        .map(|ps| {
+            let connected = ps.bridge.is_device_owner_available()
+                || ps.bridge.is_snapshot_available();
+            PhoneSummary {
+                id: ps.config.id.clone(),
+                adb_serial: ps.config.adb_serial.clone(),
+                adapter_mac: ps.config.adapter_mac.clone(),
+                phone_bt_mac: ps.config.phone_bt_mac.clone(),
+                vnc_port: ps.config.vnc_port,
+                snapshot_port: ps.config.snapshot_port,
+                internal_port: ps.config.internal_port,
+                registry_id: ps.config.registry_id.clone(),
+                status: if connected { "connected" } else { "disconnected" }.into(),
+            }
         })
         .collect();
     result.sort_by(|a, b| a.id.cmp(&b.id));
@@ -50,6 +57,8 @@ pub async fn get(
     let phones = state.phones.read().await;
     let ps = phones.get(&id)
         .ok_or_else(|| ApiError::NotFound(format!("phone '{id}' not found")))?;
+    let connected = ps.bridge.is_device_owner_available()
+        || ps.bridge.is_snapshot_available();
     Ok(Json(PhoneSummary {
         id: ps.config.id.clone(),
         adb_serial: ps.config.adb_serial.clone(),
@@ -59,6 +68,7 @@ pub async fn get(
         snapshot_port: ps.config.snapshot_port,
         internal_port: ps.config.internal_port,
         registry_id: ps.config.registry_id.clone(),
+        status: if connected { "connected" } else { "disconnected" }.into(),
     }))
 }
 
@@ -136,6 +146,7 @@ pub async fn register(
             snapshot_port: config.snapshot_port,
             internal_port: config.internal_port,
             registry_id: config.registry_id,
+            status: "connected".into(),
         }));
     }
 
@@ -188,6 +199,7 @@ pub async fn register(
         snapshot_port: config.snapshot_port,
         internal_port: config.internal_port,
         registry_id: config.registry_id,
+        status: "connected".into(),
     }))
 }
 

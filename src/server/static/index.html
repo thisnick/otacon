@@ -742,6 +742,27 @@
   }
   .collapsible-toggle:hover { color: var(--text-dim); }
 
+  /* --- Disconnect status --- */
+  .disconnect-banner {
+    background: rgba(212, 84, 84, 0.15);
+    border: 1px solid var(--red);
+    color: var(--red);
+    padding: 10px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    margin-bottom: 16px;
+    display: none;
+  }
+  .disconnect-banner a {
+    color: var(--accent);
+    cursor: pointer;
+    text-decoration: underline;
+    margin-left: 8px;
+  }
+  #phoneSelector option.s-disconnected {
+    color: var(--text-dim);
+  }
+
   @media (max-width: 800px) {
     .main-panel { flex-direction: column; }
     .screen-col { width: 100%; }
@@ -762,6 +783,11 @@
     </select>
     <div class="dot" id="statusDot"></div>
   </header>
+
+  <div class="disconnect-banner" id="disconnectBanner">
+    This phone is currently disconnected. Actions will fail.
+    <a onclick="switchToConnected()">Switch to a connected phone</a>
+  </div>
 
   <div class="audio-strip">
     <div class="audio-ch">
@@ -934,6 +960,7 @@ function wsBase() {
   return phoneId ? `${proto}//${location.host}/phones/${phoneId}/ws`
                  : `${proto}//${location.host}/ws`;
 }
+let phoneDisconnected = false;
 async function loadPhoneList() {
   try {
     const res = await fetch('/phones');
@@ -947,7 +974,11 @@ async function loadPhoneList() {
     phones.forEach(p => {
       const opt = document.createElement('option');
       opt.value = p.id;
-      opt.textContent = `${p.id} (${p.adb_serial})`;
+      const disc = p.status === 'disconnected';
+      opt.textContent = disc
+        ? `${p.id} (${p.adb_serial}) \u26A0 disconnected`
+        : `${p.id} (${p.adb_serial})`;
+      if (disc) opt.className = 's-disconnected';
       sel.appendChild(opt);
     });
     if (!phoneId || !phones.find(p => p.id === phoneId)) {
@@ -956,8 +987,22 @@ async function loadPhoneList() {
     }
     sel.value = phoneId;
     phoneMeta = phones.find(p => p.id === phoneId) || {};
+    phoneDisconnected = phoneMeta.status === 'disconnected';
+    document.getElementById('disconnectBanner').style.display =
+      phoneDisconnected ? 'block' : 'none';
+    updateDangerZoneState();
   } catch (e) {
     console.error('loadPhoneList failed', e);
+  }
+}
+function switchToConnected() {
+  const sel = document.getElementById('phoneSelector');
+  for (const opt of sel.options) {
+    if (!opt.classList.contains('s-disconnected') && opt.value) {
+      sel.value = opt.value;
+      onPhoneChange();
+      return;
+    }
   }
 }
 function onPhoneChange() {
@@ -1853,6 +1898,13 @@ let dangerExpanded = false;
 function toggleDangerZone() {
   dangerExpanded = !dangerExpanded;
   document.getElementById('dangerBody').className = 'sim-body' + (dangerExpanded ? '' : ' collapsed');
+}
+function updateDangerZoneState() {
+  const btn = document.querySelector('#dangerBody .pill.danger');
+  if (btn) {
+    btn.disabled = phoneDisconnected;
+    btn.title = phoneDisconnected ? 'Phone disconnected' : '';
+  }
 }
 
 // --- Factory Reset ---
