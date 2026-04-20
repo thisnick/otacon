@@ -327,15 +327,21 @@ pub fn spawn_config_ws(fleet: Arc<FleetClient>, state: Arc<AppState>) {
             eprintln!("[fleet] Connecting to config WS: {url}");
 
             // Build a WS request with auth header so the upgrade passes
-            // the registry's node_auth middleware.  Only set Authorization;
-            // let tungstenite handle all WS handshake headers (Connection,
-            // Upgrade, Sec-WebSocket-*).
+            // the registry's node_auth middleware.  Use IntoClientRequest
+            // to get tungstenite's fully-formed request, then append auth.
             let connect_result = {
-                let mut builder = axum::http::Request::builder().uri(&url);
-                if let Some(token) = load_auth_token() {
-                    builder = builder.header("Authorization", format!("Bearer {token}"));
-                }
-                match builder.body(()) {
+                use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+                let ws_req = url.as_str().into_client_request()
+                    .map(|mut req| {
+                        if let Some(token) = load_auth_token() {
+                            req.headers_mut().insert(
+                                "Authorization",
+                                format!("Bearer {token}").parse().unwrap(),
+                            );
+                        }
+                        req
+                    });
+                match ws_req {
                     Ok(req) => tokio_tungstenite::connect_async(req).await,
                     Err(_) => tokio_tungstenite::connect_async(&url).await,
                 }
