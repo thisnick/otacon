@@ -120,10 +120,10 @@ def api_delete(url: str, token: Optional[str] = None,
 # ---------------------------------------------------------------------------
 
 def register_node(registry_url: str, node: NodeIdentity) -> bool:
-    """POST /api/v1/auth/register -> capture pending_id."""
+    """POST /api/v1/hosts/register -> capture pending_id."""
     log.info("Registering node %s ...", node.host_id)
     resp = api_post(
-        f"{registry_url}/api/v1/auth/register",
+        f"{registry_url}/api/v1/hosts/register",
         {"host_id": node.host_id},
     )
     if resp.status_code not in (200, 201):
@@ -140,11 +140,11 @@ def register_node(registry_url: str, node: NodeIdentity) -> bool:
 
 def poll_for_token(registry_url: str, node: NodeIdentity,
                    timeout: int = 60) -> bool:
-    """POST /api/v1/auth/poll/{pending_id} -- long-poll for approval."""
+    """POST /api/v1/hosts/poll/{pending_id} -- long-poll for approval."""
     log.info("Long-polling for approval (timeout=%ds) ...", timeout)
     try:
         resp = api_post(
-            f"{registry_url}/api/v1/auth/poll/{node.pending_id}",
+            f"{registry_url}/api/v1/hosts/poll/{node.pending_id}",
             {},
             timeout=timeout,
         )
@@ -173,10 +173,10 @@ def poll_for_token(registry_url: str, node: NodeIdentity,
 
 def admin_approve(admin_url: str, pending_id: str,
                   admin_token: str) -> bool:
-    """POST /api/v1/auth/registrations/{id}/approve via admin service."""
+    """POST /api/v1/admin/hosts/{id}/approve via admin service."""
     log.info("Admin approving registration %s ...", pending_id)
     resp = api_post(
-        f"{admin_url}/api/v1/auth/registrations/{pending_id}/approve",
+        f"{admin_url}/api/v1/admin/hosts/{pending_id}/approve",
         {},
         token=admin_token,
     )
@@ -189,10 +189,10 @@ def admin_approve(admin_url: str, pending_id: str,
 
 def admin_reject(admin_url: str, pending_id: str,
                  admin_token: str) -> bool:
-    """POST /api/v1/auth/registrations/{id}/reject via admin service."""
+    """POST /api/v1/admin/hosts/{id}/reject via admin service."""
     log.info("Admin rejecting registration %s ...", pending_id)
     resp = api_post(
-        f"{admin_url}/api/v1/auth/registrations/{pending_id}/reject",
+        f"{admin_url}/api/v1/admin/hosts/{pending_id}/reject",
         {},
         token=admin_token,
     )
@@ -221,7 +221,7 @@ def admin_revoke_token(admin_url: str, token_id: str,
     """Revoke a token via admin service (POST .../revoke)."""
     log.info("Admin revoking token %s ...", token_id)
     resp = api_post(
-        f"{admin_url}/api/v1/auth/tokens/{token_id}/revoke",
+        f"{admin_url}/api/v1/admin/tokens/{token_id}/revoke",
         {},
         token=admin_token,
     )
@@ -233,8 +233,8 @@ def admin_revoke_token(admin_url: str, token_id: str,
 
 
 def admin_list_tokens(admin_url: str, admin_token: str) -> Optional[list]:
-    """GET /api/v1/auth/tokens -- list all tokens (admin-scoped)."""
-    resp = api_get(f"{admin_url}/api/v1/auth/tokens", token=admin_token)
+    """GET /api/v1/admin/tokens -- list all tokens (admin-scoped)."""
+    resp = api_get(f"{admin_url}/api/v1/admin/tokens", token=admin_token)
     if resp.status_code == 200:
         return resp.json()
     log.warning("List tokens returned %d", resp.status_code)
@@ -242,8 +242,8 @@ def admin_list_tokens(admin_url: str, admin_token: str) -> Optional[list]:
 
 
 def admin_list_registrations(admin_url: str, admin_token: str) -> Optional[list]:
-    """GET /api/v1/auth/registrations/pending -- list pending registrations."""
-    resp = api_get(f"{admin_url}/api/v1/auth/registrations/pending", token=admin_token)
+    """GET /api/v1/admin/hosts/pending -- list pending host registrations."""
+    resp = api_get(f"{admin_url}/api/v1/admin/hosts/pending", token=admin_token)
     if resp.status_code == 200:
         return resp.json()
     log.warning("List registrations returned %d", resp.status_code)
@@ -404,7 +404,7 @@ def test_node_token_cant_call_admin(registry_url: str, admin_url: str,
         # Try admin endpoints with node token
         # 1. Approve endpoint
         resp = api_post(
-            f"{admin_url}/api/v1/auth/registrations/fake-id/approve",
+            f"{admin_url}/api/v1/admin/hosts/fake-id/approve",
             {},
             token=node.token,
         )
@@ -415,7 +415,7 @@ def test_node_token_cant_call_admin(registry_url: str, admin_url: str,
         ))
 
         # 2. List tokens
-        resp = api_get(f"{admin_url}/api/v1/auth/tokens", token=node.token)
+        resp = api_get(f"{admin_url}/api/v1/admin/tokens", token=node.token)
         results.append(TestResult(
             "node_token_list_tokens_blocked",
             resp.status_code == 403,
@@ -591,7 +591,7 @@ def test_long_poll_timeout(registry_url: str) -> list[TestResult]:
     log.info("Waiting for long-poll timeout (this may take a while) ...")
     try:
         resp = api_post(
-            f"{registry_url}/api/v1/auth/poll/{node.pending_id}",
+            f"{registry_url}/api/v1/hosts/poll/{node.pending_id}",
             {},
             timeout=120,  # give generous client timeout
         )
@@ -624,7 +624,7 @@ def test_long_poll_rejection(registry_url: str, admin_url: str,
     def poll():
         try:
             resp = api_post(
-                f"{registry_url}/api/v1/auth/poll/{node.pending_id}",
+                f"{registry_url}/api/v1/hosts/poll/{node.pending_id}",
                 {},
                 timeout=30,
             )

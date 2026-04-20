@@ -50,7 +50,7 @@ class TestUpdateRegistryDongle:
         update_registry_dongle('AA:BB:CC:DD:EE:01', None)
 
         mock_post.assert_called_once_with(
-            'http://registry:8080/api/v1/dongles/register',
+            'http://registry:8080/api/v1/hosts/dongles/register',
             {
                 'host_id': 'pi-01',
                 'dongles': [{
@@ -67,7 +67,7 @@ class TestUpdateRegistryDongle:
         update_registry_dongle('FF:FF:FF:FF:FF:01', 'phone-42')
 
         mock_post.assert_called_once_with(
-            'http://registry:8080/api/v1/dongles/register',
+            'http://registry:8080/api/v1/hosts/dongles/register',
             {
                 'host_id': 'pi-01',
                 'dongles': [{

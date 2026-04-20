@@ -69,13 +69,13 @@ impl FleetClient {
             .unwrap_or(8080);
 
         let body = serde_json::json!({
-            "id": self.host_id,
+            "host_id": self.host_id,
             "tailscale_ip": tailscale_ip,
             "fqdn": fqdn,
             "api_port": api_port,
         });
 
-        match self.authed_post(&format!("{}/api/v1/hosts/register", self.registry_url))
+        match self.authed_post(&format!("{}/api/v1/hosts/heartbeat", self.registry_url))
             .json(&body)
             .send()
             .await
@@ -121,7 +121,7 @@ impl FleetClient {
             "dongles": dongles,
         });
 
-        match self.authed_post(&format!("{}/api/v1/dongles/register", self.registry_url))
+        match self.authed_post(&format!("{}/api/v1/hosts/dongles/register", self.registry_url))
             .json(&body)
             .send()
             .await
@@ -189,7 +189,7 @@ impl FleetClient {
             "adapter_mac": config.adapter_mac,
         });
 
-        match self.authed_post(&format!("{}/api/v1/phones/register", self.registry_url))
+        match self.authed_post(&format!("{}/api/v1/hosts/phones/register", self.registry_url))
             .json(&body)
             .send()
             .await
@@ -229,7 +229,7 @@ impl FleetClient {
             "message": message,
         });
 
-        if let Err(e) = self.authed_post(&format!("{}/api/v1/events", self.registry_url))
+        if let Err(e) = self.authed_post(&format!("{}/api/v1/hosts/events", self.registry_url))
             .json(&body)
             .send()
             .await
@@ -249,7 +249,7 @@ impl FleetClient {
             "phone_id": reg_id,
         });
 
-        if let Err(e) = self.authed_post(&format!("{}/api/v1/phones/deregister", self.registry_url))
+        if let Err(e) = self.authed_post(&format!("{}/api/v1/hosts/phones/deregister", self.registry_url))
             .json(&body)
             .send()
             .await
@@ -266,7 +266,7 @@ impl FleetClient {
             .remove(local_id)
             .unwrap_or_else(|| local_id.to_string());
 
-        let url = format!("{}/api/v1/phones/{reg_id}", self.registry_url);
+        let url = format!("{}/api/v1/hosts/phones/{reg_id}", self.registry_url);
         let mut req = self.client.delete(&url);
         if let Some(token) = load_auth_token() {
             req = req.header("Authorization", format!("Bearer {token}"));
