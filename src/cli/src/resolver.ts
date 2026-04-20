@@ -1,4 +1,5 @@
 import { RegistryClient } from "./registry-client.js";
+import { tsFqdn } from "./tailscale.js";
 
 export interface ResolvedPhone {
   /** Base URL of the host server (https://fqdn:port) */
@@ -35,14 +36,21 @@ export async function resolvePhone(
   // Step 1: Get phone detail from registry (includes host info)
   const detail = await client.getPhone(phoneId);
   const host = detail.host as
-    | { fqdn?: string | null; tailscale_ip?: string | null; api_port?: number }
+    | { id?: string; fqdn?: string | null; tailscale_ip?: string | null; api_port?: number }
     | null
     | undefined;
 
-  const hostAddr = host?.fqdn || host?.tailscale_ip;
-  if (!hostAddr) {
+  if (!host) {
     throw new Error(
       `Phone ${phoneId} has no connected host (status: ${detail.status})`
+    );
+  }
+
+  // Resolve host address: fqdn > tailscale_ip > tsFqdn(host.id)
+  const hostAddr = host.fqdn || host.tailscale_ip || (host.id ? tsFqdn(host.id) : null);
+  if (!hostAddr) {
+    throw new Error(
+      `Phone ${phoneId}: host has no FQDN, tailscale IP, or resolvable ID`
     );
   }
 
