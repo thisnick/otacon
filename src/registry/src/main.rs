@@ -9,6 +9,14 @@ mod ws;
 
 #[tokio::main]
 async fn main() {
+    // --export-openapi: dump the OpenAPI spec and exit (no data dir or auth needed)
+    if std::env::args().any(|a| a == "--export-openapi") {
+        use utoipa::OpenApi;
+        let spec = api::ApiDoc::openapi().to_pretty_json().unwrap();
+        println!("{spec}");
+        return;
+    }
+
     let data_dir = std::env::var("OTACON_REGISTRY_DATA")
         .or_else(|_| std::env::var("REGISTRY_DATA_DIR"))
         .map(PathBuf::from)

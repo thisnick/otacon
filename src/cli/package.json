@@ -8,6 +8,7 @@
   },
   "scripts": {
     "generate": "openapi-typescript ../../docs/api/openapi.json -o src/api-types.ts",
+    "generate:registry": "openapi-typescript ../../docs/openapi/registry.json -o src/registry-types.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
     "dev": "tsx src/index.ts"
