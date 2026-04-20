@@ -13,6 +13,7 @@
     "dev": "tsx src/index.ts"
   },
   "dependencies": {
+    "@iarna/toml": "^2.2.5",
     "commander": "^13.0.0"
   },
   "devDependencies": {
