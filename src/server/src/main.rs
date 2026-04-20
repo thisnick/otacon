@@ -249,6 +249,31 @@ async fn main() {
         eprintln!("Fleet client disabled (no REGISTRY_URL)");
     }
 
+    // Periodically reload phones.json to pick up new phones added by fleet-agent
+    {
+        let reload_state = state.clone();
+        let audio_config_reload = audio_config.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+            loop {
+                interval.tick().await;
+                let configs = phone::load_phones(&reload_state.config_path).await;
+                let mut phones = reload_state.phones.write().await;
+                let existing_serials: std::collections::HashSet<String> = phones.values()
+                    .map(|ps| ps.config.adb_serial.clone())
+                    .collect();
+                for config in configs {
+                    if !config.adb_serial.is_empty() && !existing_serials.contains(&config.adb_serial) {
+                        eprintln!("[reload] New phone detected: '{}' (serial: {})", config.id, config.adb_serial);
+                        let phone_state = create_phone_state(config.clone(), &audio_config_reload);
+                        spawn_vnc_proxy(phone_state.clone());
+                        phones.insert(config.id.clone(), phone_state);
+                    }
+                }
+            }
+        });
+    }
+
     let app = api::router(state.clone());
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));

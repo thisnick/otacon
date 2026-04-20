@@ -297,12 +297,46 @@ pub async fn load_phones(path: &std::path::Path) -> Vec<PhoneConfig> {
 }
 
 /// Save phone configs to a JSON file.
+///
+/// Merges with on-disk content to avoid truncating entries added by other
+/// processes (e.g. fleet-agent Python). Entries are matched by adb_serial;
+/// in-memory values take precedence for known serials, but disk-only entries
+/// are preserved. Writes atomically via tmp+rename.
 pub async fn save_phones(path: &std::path::Path, phones: &[PhoneConfig]) -> std::io::Result<()> {
-    let data = serde_json::to_string_pretty(phones)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-    // Ensure parent directory exists
-    if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent).await.ok();
+    use std::collections::HashSet;
+    use tokio::io::AsyncWriteExt;
+
+    // Read existing on-disk entries
+    let on_disk: Vec<PhoneConfig> = match tokio::fs::read_to_string(path).await {
+        Ok(data) => serde_json::from_str(&data).unwrap_or_default(),
+        Err(_) => Vec::new(),
+    };
+
+    // Build set of serials we're writing
+    let known_serials: HashSet<&str> = phones.iter()
+        .map(|p| p.adb_serial.as_str())
+        .collect();
+
+    // Start with our in-memory phones, then append disk-only entries
+    let mut merged: Vec<PhoneConfig> = phones.to_vec();
+    for disk_phone in on_disk {
+        if !disk_phone.adb_serial.is_empty() && !known_serials.contains(disk_phone.adb_serial.as_str()) {
+            merged.push(disk_phone);
+        }
     }
-    tokio::fs::write(path, data).await
+
+    let data = serde_json::to_string_pretty(&merged)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+
+    // Ensure parent directory exists
+    let dir = path.parent().unwrap_or(std::path::Path::new("."));
+    tokio::fs::create_dir_all(dir).await.ok();
+
+    // Atomic write: tmp file + fsync + rename
+    let tmp_path = dir.join(format!(".phones_tmp_{}", std::process::id()));
+    let mut f = tokio::fs::File::create(&tmp_path).await?;
+    f.write_all(data.as_bytes()).await?;
+    f.sync_all().await?;
+    tokio::fs::rename(&tmp_path, path).await?;
+    Ok(())
 }

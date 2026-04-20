@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+import tempfile
 import threading
 
 PHONES_JSON_PATH = os.environ.get('PHONES_CONFIG', '/data/otacon/phones.json')
@@ -10,6 +11,28 @@ log = logging.getLogger('fleet-agent')
 
 # Reject test/fake serials as defense in depth (feedback_test_cleanup.md)
 _REJECT_SERIAL_RE = re.compile(r'^(TEST|FAKE|PHANTOM|.*ABC)$', re.IGNORECASE)
+
+
+def _atomic_write_json(path: str, data) -> None:
+    """Write JSON atomically: write to temp file, fsync, rename."""
+    dir_path = os.path.dirname(path)
+    os.makedirs(dir_path, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=dir_path, prefix='.phones_tmp_')
+    try:
+        with os.fdopen(fd, 'w') as f:
+            json.dump(data, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+    except Exception:
+        os.unlink(tmp_path)
+        raise
+
+
+def _generate_phone_id(serial: str) -> str:
+    """Generate a local phone ID from the serial (e.g. 'phone-r5ct60sd')."""
+    slug = ''.join(c for c in serial if c.isalnum()).lower()
+    return f'phone-{slug[:8]}' if slug else 'phone-unknown'
 
 
 class PortAllocator:
@@ -53,8 +76,7 @@ class PortAllocator:
                     clean.append(p)
 
             if len(clean) < original_count:
-                with open(PHONES_JSON_PATH, 'w') as f:
-                    json.dump(clean, f, indent=2)
+                _atomic_write_json(PHONES_JSON_PATH, clean)
                 removed = original_count - len(clean)
                 log.info(f'Purged {removed} poisoned entries from phones.json')
         except OSError as e:
@@ -79,7 +101,7 @@ class PortAllocator:
             return {}
 
     def _save_assignment(self, serial: str, idx: int):
-        """Persist port assignment to phones.json."""
+        """Persist port assignment to phones.json (atomic write)."""
         snapshot_port = self._snapshot_start + idx
         internal_port = self._internal_start + idx
         display_num = self._display_start + idx
@@ -98,19 +120,20 @@ class PortAllocator:
                     p['internal_port'] = internal_port
                     p['display_num'] = display_num
                     p['vnc_port'] = vnc_port
+                    if not p.get('id'):
+                        p['id'] = _generate_phone_id(serial)
                     found = True
                     break
             if not found:
                 phones.append({
+                    'id': _generate_phone_id(serial),
                     'adb_serial': serial,
                     'snapshot_port': snapshot_port,
                     'internal_port': internal_port,
                     'display_num': display_num,
                     'vnc_port': vnc_port,
                 })
-            os.makedirs(os.path.dirname(PHONES_JSON_PATH), exist_ok=True)
-            with open(PHONES_JSON_PATH, 'w') as f:
-                json.dump(phones, f, indent=2)
+            _atomic_write_json(PHONES_JSON_PATH, phones)
         except OSError as e:
             log.warning(f'Failed to persist port assignment for {serial}: {e}')
 
@@ -171,8 +194,7 @@ class PortAllocator:
                         changed = True
                         break
                 if changed:
-                    with open(PHONES_JSON_PATH, 'w') as f:
-                        json.dump(phones, f, indent=2)
+                    _atomic_write_json(PHONES_JSON_PATH, phones)
                     log.info(f'Released dongle {adapter_mac} back to spare pool')
             except OSError as e:
                 log.warning(f'Failed to release dongle {adapter_mac}: {e}')

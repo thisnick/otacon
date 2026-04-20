@@ -7,7 +7,7 @@ import threading
 import time
 
 from ..util.adb import run_cmd
-from ..util.ports import PHONES_JSON_PATH
+from ..util.ports import PHONES_JSON_PATH, _atomic_write_json
 
 log = logging.getLogger('fleet-agent')
 
@@ -118,9 +118,7 @@ def save_dongle_assignment(serial: str, adapter_mac: str, phone_bt_mac: str | No
                 entry['phone_bt_mac'] = phone_bt_mac
             phones.append(entry)
 
-        os.makedirs(os.path.dirname(PHONES_JSON_PATH), exist_ok=True)
-        with open(PHONES_JSON_PATH, 'w') as f:
-            json.dump(phones, f, indent=2)
+        _atomic_write_json(PHONES_JSON_PATH, phones)
     except OSError as e:
         log.warning(f'Could not persist dongle assignment: {e}')
 
