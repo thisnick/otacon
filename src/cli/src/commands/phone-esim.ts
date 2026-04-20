@@ -1,25 +1,18 @@
 import { Command } from "commander";
 import { getHostClient } from "../host-client.js";
-import { resolveConfig } from "../config.js";
 
 /**
- * Build the base URL for eSIM endpoints on the host server.
- * The host server routes eSIM endpoints at /phones/{id}/api/esim/...
+ * Fetch an eSIM endpoint on the host server.
+ * getHostClient() already includes the /phones/{localId} prefix,
+ * so we just append /api/esim/... to the client's baseUrl.
  */
 async function esimFetch(
   opts: { host?: string; phone?: string; registry?: string },
   path: string,
   init?: RequestInit
 ): Promise<Response> {
-  const resolved = resolveConfig({ registry: opts.registry, phone: opts.phone });
-  const phoneId = resolved.activePhone;
-  if (!phoneId) {
-    throw new Error("No active phone. Set OTACON_PHONE or run `otacon phone use <id>`");
-  }
-
   const client = await getHostClient(opts);
-  const baseUrl = client.baseUrl;
-  const url = `${baseUrl}/phones/${encodeURIComponent(phoneId)}/api/esim${path}`;
+  const url = `${client.baseUrl}/api/esim${path}`;
   const res = await fetch(url, init);
   if (!res.ok) {
     const body = await res.text().catch(() => "");

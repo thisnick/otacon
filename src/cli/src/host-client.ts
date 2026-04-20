@@ -9,8 +9,11 @@ import { piUrl } from "./tailscale.js";
  *
  * Resolution order:
  * 1. --host flag / OTACON_HOST env var (direct mode, no registry)
- * 2. Registry resolver: phone ID → host FQDN + port
+ * 2. Registry resolver: phone ID → host FQDN + port + local phone ID
  * 3. Fallback: Tailscale FQDN discovery (legacy)
+ *
+ * In registry mode, the baseUrl includes the /phones/{localId} prefix
+ * so all OtaconClient methods hit the correct multi-phone paths.
  */
 export async function getHostClient(opts: {
   host?: string;
@@ -23,7 +26,7 @@ export async function getHostClient(opts: {
     return new OtaconClient(directHost);
   }
 
-  // Registry mode: resolve phone → host
+  // Registry mode: resolve phone → host + local ID
   const resolved = resolveConfig({ registry: opts.registry, phone: opts.phone });
 
   if (resolved.registryUrl && resolved.token) {
@@ -35,8 +38,10 @@ export async function getHostClient(opts: {
     }
 
     const client = new RegistryClient(resolved.registryUrl, resolved.token);
-    const baseUrl = await resolvePhone(client, phoneId);
-    return new OtaconClient(baseUrl);
+    const { hostUrl, localPhoneId } = await resolvePhone(client, phoneId);
+    // Include /phones/{localId} prefix so OtaconClient's /api/... paths
+    // map to the host server's /phones/{id}/api/... routes
+    return new OtaconClient(`${hostUrl}/phones/${encodeURIComponent(localPhoneId)}`);
   }
 
   // Legacy fallback: Tailscale FQDN

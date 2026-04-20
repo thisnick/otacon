@@ -1,4 +1,4 @@
-import { loadConfig, saveConfig } from "./config.js";
+import { loadConfig, saveConfig, resolveConfig } from "./config.js";
 
 /**
  * Register with a registry: POST /api/v1/clients/register, then long-poll
@@ -10,7 +10,7 @@ export async function registerClient(registryUrl: string): Promise<string> {
   const regRes = await fetch(`${registryUrl}/api/v1/clients/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: hostname }),
+    body: JSON.stringify({ client_id: hostname, hostname }),
   });
   if (!regRes.ok) {
     const body = await regRes.text();
@@ -71,10 +71,10 @@ export function whoami(): {
   tokenPrefix?: string;
   activePhone?: string;
 } {
-  const config = loadConfig();
+  const resolved = resolveConfig({});
   return {
-    registryUrl: config.registry_url,
-    tokenPrefix: config.token ? config.token.slice(0, 16) + "..." : undefined,
-    activePhone: config.active_phone,
+    registryUrl: resolved.registryUrl,
+    tokenPrefix: resolved.token ? resolved.token.slice(0, 16) + "..." : undefined,
+    activePhone: resolved.activePhone,
   };
 }

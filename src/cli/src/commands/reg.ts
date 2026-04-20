@@ -11,6 +11,22 @@ function getRegistryClient(opts: { registry?: string }): RegistryClient {
   return new RegistryClient(resolved.registryUrl, resolved.token);
 }
 
+/**
+ * Find the kind of a pending registration by searching both host and client lists.
+ */
+async function findRegistrationKind(
+  client: RegistryClient,
+  id: string
+): Promise<"host" | "client" | null> {
+  const [hosts, clients] = await Promise.all([
+    client.listPendingHosts(),
+    client.listPendingClients(),
+  ]);
+  if (hosts.some((r) => r.id === id)) return "host";
+  if (clients.some((r) => r.id === id)) return "client";
+  return null;
+}
+
 export function regCommands(parentOpts: () => { registry?: string }): Command {
   const reg = new Command("reg").description("Registration management");
 
@@ -36,17 +52,18 @@ export function regCommands(parentOpts: () => { registry?: string }): Command {
     .argument("<id>", "registration ID")
     .action(async (id: string) => {
       const client = getRegistryClient(parentOpts());
-      // Try host first, then client
-      try {
-        await client.approveHost(id);
-        console.error(`Approved host registration ${id}`);
-        return;
-      } catch {
-        // Not a host registration — try client
+      const kind = await findRegistrationKind(client, id);
+      if (!kind) {
+        console.error(`No pending registration found with id ${id}`);
+        process.exit(1);
       }
       try {
-        await client.approveClient(id);
-        console.error(`Approved client registration ${id}`);
+        if (kind === "host") {
+          await client.approveHost(id);
+        } else {
+          await client.approveClient(id);
+        }
+        console.error(`Approved ${kind} registration ${id}`);
       } catch (err) {
         console.error(`Failed to approve ${id}: ${(err as Error).message}`);
         process.exit(1);
@@ -59,16 +76,18 @@ export function regCommands(parentOpts: () => { registry?: string }): Command {
     .argument("<id>", "registration ID")
     .action(async (id: string) => {
       const client = getRegistryClient(parentOpts());
-      try {
-        await client.rejectHost(id);
-        console.error(`Rejected host registration ${id}`);
-        return;
-      } catch {
-        // Not a host registration — try client
+      const kind = await findRegistrationKind(client, id);
+      if (!kind) {
+        console.error(`No pending registration found with id ${id}`);
+        process.exit(1);
       }
       try {
-        await client.rejectClient(id);
-        console.error(`Rejected client registration ${id}`);
+        if (kind === "host") {
+          await client.rejectHost(id);
+        } else {
+          await client.rejectClient(id);
+        }
+        console.error(`Rejected ${kind} registration ${id}`);
       } catch (err) {
         console.error(`Failed to reject ${id}: ${(err as Error).message}`);
         process.exit(1);
