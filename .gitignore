@@ -37,3 +37,6 @@ __pycache__/
 .DS_Store
 *.swp
 nohup.out
+
+# Local-only working files (downloaded APKs, scratch, etc.)
+.local/
