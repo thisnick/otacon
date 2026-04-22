@@ -81,7 +81,7 @@ pub async fn start_handler(
             &format!("--serial={serial}"),
             "--no-window",
             "--no-playback",
-            "--lock-video-orientation=0",
+            "--capture-orientation=@0",
             "--audio-source=output",
             &format!("--time-limit={max_duration}"),
             &format!("--record={RECORD_PATH}"),

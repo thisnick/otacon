@@ -179,7 +179,7 @@ impl PhoneState {
             .args([
                 "--serial", &config.adb_serial,
                 "--no-audio",
-                "--lock-video-orientation=0",
+                "--capture-orientation=@0",
                 "--max-fps", &max_fps,
                 "-b", &bitrate,
                 // 1s keyframe interval — recovers from frame drops in <1s
