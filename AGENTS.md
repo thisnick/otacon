@@ -89,11 +89,16 @@ observation generates events to bring the registry into agreement.
 ## Tooling and conventions
 
 ### CLI commands
-- New top-level subcommand groups: `auth`, `reg`, `phone`, `phone esim`, `host`,
-  `dongle`, `client`. Per-phone actions (`screenshot`, `tap`, etc.) stay
-  top-level for daily use.
+- Subcommand groups (all singular for consistency): `auth`, `reg`, `phone`,
+  `phone esim`, `host`, `dongle`, `client`, `app`. Per-phone actions
+  (`screenshot`, `snapshot`, `tap`, `sms`, `call`, `notifications`,
+  `clipboard`, `contacts`, `record`, `open`, `info`, `key`, `swipe`, etc.)
+  stay top-level for daily use.
 - Config at `~/.otacon/config.toml`, all values overridable via `OTACON_*`
   env vars. Precedence: env > flag > file.
+- Deployed binary is `otacon`; in-repo dev wrapper is `pnpm cli`.
+- List/status commands default to column-aligned tables; `--json` opt-in
+  for raw JSON.
 
 ### OpenAPI
 - Both servers use code-first OpenAPI via `utoipa`. Spec served at
@@ -118,7 +123,21 @@ observation generates events to bring the registry into agreement.
 - **Built-in BT (hci0)** is allocatable as a dongle — no exclusion. Pi onboard
   BT is treated like a USB dongle.
 - **Watchtower can revert containers** to the ghcr.io image if local builds
-  aren't pushed. `make registry-deploy` handles the push.
+  aren't pushed. `make registry-deploy` and `make push` handle the push.
 - **Admin token recovery is hard** — bootstrap token only printed once on
   first run. Generate replacements by editing `tokens.json` directly + restart
   if lost.
+- **Host `address` is transport-agnostic** — populated by the host on
+  identity registration as `${HOST_ID}.<tailnet domain from REGISTRY_URL>`.
+  The CLI uses this directly to make per-phone HTTPS calls; no Tailscale
+  binary or magic DNS lookup needed.
+- **Phone `screen_state`** (from `/api/info`) tells callers if the phone
+  is `unlocked`/`locked`/`asleep`/`dozing`/`dreaming`/`unknown`. Per-phone
+  endpoints that depend on a foreground app (`apps/running`, etc.) wrap
+  empty results with `screen_state` so callers can explain why.
+- **`pnpm cli` shifts cwd to `src/cli/`** — relative file paths break.
+  Use absolute paths (`$PWD/...`) when passing files to commands like
+  `app install`. Doesn't affect the deployed `otacon` binary.
+- **`.apkm` bundles** (APKMirror's AAB-derived format) install transparently
+  via `otacon app install <file.apkm>` — server detects ZIP magic, extracts
+  splits, runs `adb install-multiple`.

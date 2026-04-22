@@ -172,10 +172,17 @@ otacon swipe 540 1500 540 500                  # swipe up to dismiss lock
 
 ```bash
 otacon info                                    # check screen_state, activity FIRST
+otacon info --monitor                          # also include verbose fleet-agent monitor blob
 otacon screenshot -o screen.png                # PNG of current screen
 otacon snapshot                                # accessibility tree as indented text
 otacon snapshot --json                         # accessibility tree as JSON
 ```
+
+`info` returns: model, resolution, `screen_state`, current `activity` and
+`window`, `wifi`, `bt_connected`, `vnc_port` (the host port to VNC into),
+phone stats (CPU/mem/battery/temp), and `phone_number`. The
+`monitor` field (verbose fleet-agent setup/health blob) is hidden by
+default; pass `--monitor` to include it.
 
 The accessibility tree assigns ref IDs (`e0`, `e1`, ...) to interactive elements. Refs are monotonic, stable for the same UI state, and only assigned to interactive elements. **Prefer ref-based actions over raw coordinates.**
 
@@ -265,12 +272,17 @@ otacon clipboard set "copied text"
 ### Apps
 
 ```bash
-otacon app list                               # installed apps
+otacon app list                               # installed apps (with versionCode)
 otacon app running                            # foreground / running
 otacon app launch com.android.chrome
 otacon app stop com.android.chrome
-otacon app install /path/to/app.apk           # sideload APK
+otacon app install /path/to/app.apk           # sideload .apk (single file)
+otacon app install /path/to/app.apkm          # sideload .apkm (APKMirror AAB bundle — auto-extracts splits)
 ```
+
+`app running` returns both the apps list AND the current `screen_state`,
+so when the list is empty you'll see e.g. `(no running apps — phone is
+dozing. Wake with: otacon key wake)` instead of just an empty result.
 
 ### Open URI / deep link
 
@@ -306,9 +318,9 @@ Records video + audio (mp4). Max duration 180s. Only one recording at a time. Au
 
 ## Architecture quick reference
 
-- **Registry** (`http://otacon-registry.<tailnet>.ts.net:9080`) — central index of fleet state. Mirrors host state via reliable events. CLI talks here for fleet queries.
-- **Host** (`http://otacon-pi.<tailnet>.ts.net:8080`) — Pi running phones. CLI talks here directly for per-phone actions, after looking up the address from the registry.
-- **Resolution flow**: CLI calls `GET /admin/phones/{id}` → extracts `host.fqdn` + maps registry phone ID to host-local ID via `adb_serial` → makes direct HTTPS call.
+- **Registry** (`http://otacon-registry.<tailnet>.ts.net:9080`) — central index of fleet state. Mirrors host state via reliable events (outbox + reconciler — see AGENTS.md). CLI talks here for fleet queries.
+- **Host** (`https://otacon-pi.<tailnet>.ts.net:8080`) — Pi running phones. CLI talks here directly for per-phone actions, after looking up the address from the registry.
+- **Resolution flow**: CLI calls `GET /admin/phones/{id}` → extracts `host.address` + `host.api_port` + maps registry phone ID to host-local ID via `adb_serial` → makes direct HTTPS call to `https://{address}:{port}/phones/{local_id}/api/...`.
 
 ## Tips for AI agents
 
