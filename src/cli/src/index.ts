@@ -326,9 +326,9 @@ clipboard
 
 // --- Apps ---
 
-const apps = program.command("apps").description("App commands");
+const app = program.command("app").description("App commands");
 
-apps
+app
   .command("list")
   .description("List installed apps (default: table; use --json for raw JSON)")
   .option("--json", "output as JSON")
@@ -342,7 +342,7 @@ apps
     ], { json: opts.json });
   });
 
-apps
+app
   .command("running")
   .description("List running/foreground apps (default: table; use --json for raw JSON)")
   .option("--json", "output as JSON")
@@ -355,7 +355,7 @@ apps
     ], { json: opts.json });
   });
 
-apps
+app
   .command("launch")
   .description("Launch an app")
   .argument("<package>", "package name")
@@ -364,7 +364,7 @@ apps
     await client.appLaunch(pkg);
   });
 
-apps
+app
   .command("stop")
   .description("Force stop an app")
   .argument("<package>", "package name")
@@ -373,7 +373,7 @@ apps
     await client.appStop(pkg);
   });
 
-apps
+app
   .command("install")
   .description("Install an APK")
   .argument("<apk>", "path to APK file")

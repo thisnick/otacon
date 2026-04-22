@@ -239,11 +239,11 @@ otacon clipboard set "copied text"
 ### Apps
 
 ```bash
-otacon apps list                               # installed apps
-otacon apps running                            # foreground / running
-otacon apps launch com.android.chrome
-otacon apps stop com.android.chrome
-otacon apps install /path/to/app.apk           # sideload APK
+otacon app list                               # installed apps
+otacon app running                            # foreground / running
+otacon app launch com.android.chrome
+otacon app stop com.android.chrome
+otacon app install /path/to/app.apk           # sideload APK
 ```
 
 ### Open URI / deep link
