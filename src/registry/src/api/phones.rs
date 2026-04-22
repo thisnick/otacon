@@ -213,8 +213,7 @@ pub async fn get_detail(
         let hosts = store.hosts.read().await;
         hosts.get(host_id).map(|h| serde_json::json!({
             "id": h.id,
-            "fqdn": h.fqdn,
-            "tailscale_ip": h.tailscale_ip,
+            "address": h.address,
             "api_port": h.api_port,
         }))
     } else {

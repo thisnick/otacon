@@ -34,6 +34,23 @@ pub fn load_auth_token() -> Option<String> {
     json.get("token")?.as_str().map(|s| s.to_string())
 }
 
+/// Compute this host's reachable address by combining HOST_ID with the
+/// network suffix from REGISTRY_URL. Both host and registry are typically
+/// in the same tailnet, so the suffix matches.
+///
+/// Examples:
+///   host_id="otacon-pi", registry_url="http://otacon-registry.tail0437b8.ts.net:9080"
+///     → Some("otacon-pi.tail0437b8.ts.net")
+///   host_id="otacon-pi", registry_url="http://localhost:9080"
+///     → None (no domain suffix to use)
+pub fn compute_address(host_id: &str, registry_url: &str) -> Option<String> {
+    let url = url::Url::parse(registry_url).ok()?;
+    let registry_host = url.host_str()?;
+    let dot_idx = registry_host.find('.')?;
+    let domain_suffix = &registry_host[dot_idx..];
+    Some(format!("{host_id}{domain_suffix}"))
+}
+
 impl FleetClient {
     pub fn from_env() -> Option<Self> {
         let registry_url = std::env::var("REGISTRY_URL").ok()?;
@@ -101,8 +118,11 @@ impl FleetClient {
             .and_then(|v| v.parse().ok())
             .unwrap_or(8080);
 
+        let address = compute_address(&self.host_id, &self.registry_url);
+
         let body = serde_json::json!({
             "host_id": self.host_id,
+            "address": address,
             "api_port": api_port,
         });
 

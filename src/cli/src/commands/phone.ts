@@ -76,9 +76,9 @@ export function phoneCommands(parentOpts: () => { registry?: string }): Command 
       }
       const client = getRegistryClient(parentOpts());
       const detail = await client.getPhone(phoneId);
-      const host = detail.host as { fqdn?: string; api_port?: number } | null;
-      if (host?.fqdn) {
-        printDetail({ fqdn: host.fqdn, api_port: host.api_port }, { json: opts.json });
+      const host = detail.host as { address?: string; api_port?: number } | null;
+      if (host?.address) {
+        printDetail({ address: host.address, api_port: host.api_port }, { json: opts.json });
       } else {
         console.error(`Phone ${phoneId} has no connected host`);
         process.exit(1);

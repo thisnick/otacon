@@ -13,8 +13,8 @@ const HEARTBEAT_GRACE_SECS: i64 = 60;
 #[derive(Deserialize, ToSchema)]
 pub struct HostIdentityBody {
     pub host_id: String,
-    pub tailscale_ip: Option<String>,
-    pub fqdn: Option<String>,
+    /// Network address (FQDN or IP) where the CLI can reach this host.
+    pub address: Option<String>,
     #[serde(default = "default_port")]
     pub api_port: u16,
 }
@@ -22,8 +22,7 @@ pub struct HostIdentityBody {
 #[derive(Deserialize, ToSchema)]
 pub struct HeartbeatBody {
     pub host_id: String,
-    pub tailscale_ip: Option<String>,
-    pub fqdn: Option<String>,
+    pub address: Option<String>,
     #[serde(default = "default_port")]
     pub api_port: u16,
     #[serde(default)]
@@ -35,20 +34,22 @@ pub struct HeartbeatBody {
 fn default_port() -> u16 { 8080 }
 
 /// Upsert host metadata (identity only, no phone/dongle status side-effects).
-fn upsert_host(hosts: &mut std::collections::HashMap<String, Host>, host_id: &str, body_ip: Option<String>, body_fqdn: Option<String>, body_port: u16) -> bool {
+/// Only overwrites address if caller provides Some (prevents heartbeat from
+/// clobbering identity values reported earlier).
+fn upsert_host(hosts: &mut std::collections::HashMap<String, Host>, host_id: &str, body_address: Option<String>, body_port: u16) -> bool {
     let now = Utc::now();
     let is_new = !hosts.contains_key(host_id);
     let host = hosts.entry(host_id.to_string()).or_insert_with(|| Host {
         id: host_id.to_string(),
-        tailscale_ip: None,
-        fqdn: None,
+        address: None,
         api_port: 8080,
         status: "online".into(),
         last_heartbeat: None,
         created_at: now,
     });
-    host.tailscale_ip = body_ip;
-    host.fqdn = body_fqdn;
+    if let Some(addr) = body_address {
+        host.address = Some(addr);
+    }
     host.api_port = body_port;
     host.status = "online".into();
     host.last_heartbeat = Some(now);
@@ -74,7 +75,7 @@ pub async fn identity(
     let store = &state.store;
 
     let mut hosts = store.hosts.write().await;
-    let is_new = upsert_host(&mut hosts, &body.host_id, body.tailscale_ip, body.fqdn, body.api_port);
+    let is_new = upsert_host(&mut hosts, &body.host_id, body.address, body.api_port);
     drop(hosts);
     store.save_hosts().await;
 
@@ -104,7 +105,7 @@ pub async fn heartbeat(
     let now = Utc::now();
 
     let mut hosts = store.hosts.write().await;
-    let is_new = upsert_host(&mut hosts, &body.host_id, body.tailscale_ip, body.fqdn, body.api_port);
+    let is_new = upsert_host(&mut hosts, &body.host_id, body.address, body.api_port);
     drop(hosts);
     store.save_hosts().await;
 

@@ -19,9 +19,9 @@ export interface Phone {
 
 export interface Host {
   id: string;
+  /** Network address (FQDN or IP) the CLI uses to reach this host. */
+  address?: string | null;
   api_port: number;
-  fqdn?: string | null;
-  tailscale_ip?: string | null;
   status: string;
   last_heartbeat?: string | null;
   created_at: string;

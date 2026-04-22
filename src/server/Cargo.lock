@@ -1070,6 +1070,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite 0.26.2",
  "tower-http",
+ "url",
  "urlencoding",
  "utoipa",
  "zbus",

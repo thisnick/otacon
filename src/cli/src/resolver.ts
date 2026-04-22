@@ -1,5 +1,4 @@
 import { RegistryClient } from "./registry-client.js";
-import { tsFqdn } from "./tailscale.js";
 
 export interface ResolvedPhone {
   /** Base URL of the host server (https://fqdn:port) */
@@ -36,7 +35,7 @@ export async function resolvePhone(
   // Step 1: Get phone detail from registry (includes host info)
   const detail = await client.getPhone(phoneId);
   const host = detail.host as
-    | { id?: string; fqdn?: string | null; tailscale_ip?: string | null; api_port?: number }
+    | { id?: string; address?: string | null; api_port?: number }
     | null
     | undefined;
 
@@ -46,16 +45,16 @@ export async function resolvePhone(
     );
   }
 
-  // Resolve host address: fqdn > tailscale_ip > tsFqdn(host.id)
-  const hostAddr = host.fqdn || host.tailscale_ip || (host.id ? tsFqdn(host.id) : null);
-  if (!hostAddr) {
+  if (!host.address) {
     throw new Error(
-      `Phone ${phoneId}: host has no FQDN, tailscale IP, or resolvable ID`
+      `Phone ${phoneId}: host '${host.id ?? "?"}' has no registered address. ` +
+        `The host needs to call POST /api/v1/hosts/identity with its address. ` +
+        `Try restarting the host's otacon container so it re-registers.`
     );
   }
 
-  const apiPort = host?.api_port ?? 8080;
-  const hostUrl = `https://${hostAddr}:${apiPort}`;
+  const apiPort = host.api_port ?? 8080;
+  const hostUrl = `https://${host.address}:${apiPort}`;
 
   // Step 2: Query host server for local phone ID
   // The host stores phones with local IDs (e.g. "phone-r5ct60sd") that differ

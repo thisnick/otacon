@@ -76,7 +76,7 @@ tr:hover { background: #161b22; }
   <div class="panel">
     <h2>Hosts</h2>
     <table>
-      <thead><tr><th>ID</th><th>Status</th><th>Last Heartbeat</th><th>Tailscale IP</th></tr></thead>
+      <thead><tr><th>ID</th><th>Status</th><th>Last Heartbeat</th><th>Address</th></tr></thead>
       <tbody id="hosts-body"></tbody>
     </table>
   </div>
@@ -223,7 +223,7 @@ async function poll() {
           <td>${esc(h.id)}</td>
           <td class="${sc(h.status)}">${esc(h.status)}</td>
           <td>${relTime(h.last_heartbeat)}</td>
-          <td>${esc(h.tailscale_ip)}</td>
+          <td>${esc(h.address)}</td>
         </tr>`).join('');
 
     // Phones

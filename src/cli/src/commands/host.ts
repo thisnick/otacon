@@ -25,8 +25,7 @@ export function hostCommands(parentOpts: () => { registry?: string }): Command {
       printList(hosts, [
         { header: "ID", get: (h) => h.id },
         { header: "STATUS", get: (h) => colorStatus(h.status) },
-        { header: "FQDN", get: (h) => h.fqdn },
-        { header: "IP", get: (h) => h.tailscale_ip },
+        { header: "ADDRESS", get: (h) => h.address },
         { header: "PORT", get: (h) => h.api_port },
         { header: "LAST HEARTBEAT", get: (h) => h.last_heartbeat },
       ], { json: opts.json });

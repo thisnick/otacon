@@ -8,8 +8,11 @@ use utoipa::ToSchema;
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Host {
     pub id: String,
-    pub tailscale_ip: Option<String>,
-    pub fqdn: Option<String>,
+    /// Network address (FQDN or IP) the CLI uses to reach this host.
+    /// Transport-agnostic: could be tailnet FQDN, public hostname, plain IP, etc.
+    /// Default None for backwards compat with old hosts.json (pre-rename from fqdn).
+    #[serde(default)]
+    pub address: Option<String>,
     pub api_port: u16,
     pub status: String,
     pub last_heartbeat: Option<DateTime<Utc>>,
