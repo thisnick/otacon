@@ -93,6 +93,13 @@ tr:hover { background: #161b22; }
       <tbody id="dongles-body"></tbody>
     </table>
   </div>
+  <div class="panel">
+    <h2>Tokens</h2>
+    <table>
+      <thead><tr><th>Prefix</th><th>Scope</th><th>Owner</th><th>Note</th><th>Last Seen</th><th>Actions</th></tr></thead>
+      <tbody id="tokens-body"></tbody>
+    </table>
+  </div>
 </div>
 
 <div class="events-panel">
@@ -155,6 +162,15 @@ $('reg-section').addEventListener('click', function(e) {
   if (url) regAction(url, btn);
 });
 
+// Token revoke via event delegation on the body (tokens table is in main tables)
+document.body.addEventListener('click', function(e) {
+  const btn = e.target.closest('[data-token-revoke]');
+  if (!btn) return;
+  const tokenId = btn.dataset.tokenRevoke;
+  if (!confirm('Revoke this token? The client/host will lose access immediately.')) return;
+  regAction('/api/v1/admin/tokens/' + tokenId + '/revoke', btn);
+});
+
 function relTime(iso) {
   if (!iso) return '-';
   const diff = (Date.now() - new Date(iso).getTime()) / 1000;
@@ -189,13 +205,14 @@ let pollOk = true;
 
 async function poll() {
   try {
-    const [hosts, phones, dongles, events, pendingHosts, pendingClients] = await Promise.all([
+    const [hosts, phones, dongles, events, pendingHosts, pendingClients, tokens] = await Promise.all([
       authFetch('/api/v1/admin/hosts').then(r => r.json()),
       authFetch('/api/v1/admin/phones').then(r => r.json()),
       authFetch('/api/v1/admin/dongles').then(r => r.json()),
       authFetch('/api/v1/admin/events?limit=20').then(r => r.json()),
       authFetch('/api/v1/admin/hosts/pending').then(r => r.json()),
       authFetch('/api/v1/admin/clients/pending').then(r => r.json()),
+      authFetch('/api/v1/admin/tokens').then(r => r.json()),
     ]);
 
     // Hosts
@@ -231,6 +248,21 @@ async function poll() {
           <td>${esc(d.host_id)}</td>
           <td>${d.phone_id ? esc(d.phone_id) : '<span style="color:#484f58">spare</span>'}</td>
           <td class="${sc(d.status)}">${esc(d.status)}</td>
+        </tr>`).join('');
+
+    // Tokens — show only active (non-revoked) tokens, newest first
+    const activeTokens = tokens
+      .filter(t => !t.revoked_at)
+      .sort((a, b) => (b.last_seen_at || b.created_at || '').localeCompare(a.last_seen_at || a.created_at || ''));
+    $('tokens-body').innerHTML = activeTokens.length === 0
+      ? '<tr><td colspan="6" class="empty">No active tokens</td></tr>'
+      : activeTokens.map(t => `<tr>
+          <td><code>${esc(t.token_prefix)}</code></td>
+          <td>${esc(t.scope)}</td>
+          <td>${esc(t.node_id || '-')}</td>
+          <td>${esc(t.note || '')}</td>
+          <td>${relTime(t.last_seen_at)}</td>
+          <td><button class="btn btn-reject" data-token-revoke="${esc(t.id)}">Revoke</button></td>
         </tr>`).join('');
 
     // Events
