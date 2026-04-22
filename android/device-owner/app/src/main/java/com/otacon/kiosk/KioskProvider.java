@@ -10,6 +10,7 @@ import android.net.Uri;
 import android.telephony.SmsManager;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
+import android.telephony.TelephonyManager;
 import android.telephony.euicc.DownloadableSubscription;
 import android.telephony.euicc.EuiccManager;
 import android.util.Log;
@@ -111,6 +112,11 @@ public class KioskProvider extends ContentProvider {
                 return notificationsAction(uri);
             }
 
+            // --- Device identity ---
+            if (path.equals("device/identity")) {
+                return deviceIdentity();
+            }
+
             // --- eSIM (install/delete only — enable/disable/profiles/defaults moved to snapshot server) ---
             if (path.equals("esim/install")) {
                 return esimInstall(uri);
@@ -143,6 +149,32 @@ public class KioskProvider extends ContentProvider {
         EuiccManager em = getContext().getSystemService(EuiccManager.class);
         MatrixCursor cursor = new MatrixCursor(new String[]{"ok", "esim_supported"});
         cursor.addRow(new Object[]{true, em != null && em.isEnabled()});
+        return cursor;
+    }
+
+    // ==================== Device Identity ====================
+
+    private Cursor deviceIdentity() {
+        TelephonyManager tm = getContext().getSystemService(TelephonyManager.class);
+        EuiccManager em = getContext().getSystemService(EuiccManager.class);
+        int slotCount = tm != null ? tm.getActiveModemCount() : 0;
+
+        String imei = null;
+        String imei2 = null;
+        String eid = null;
+
+        if (tm != null) {
+            try { imei = tm.getImei(0); } catch (Exception e) { Log.w(TAG, "getImei(0): " + e); }
+            if (slotCount > 1) {
+                try { imei2 = tm.getImei(1); } catch (Exception e) { Log.w(TAG, "getImei(1): " + e); }
+            }
+        }
+        if (em != null && em.isEnabled()) {
+            try { eid = em.getEid(); } catch (Exception e) { Log.w(TAG, "getEid: " + e); }
+        }
+
+        MatrixCursor cursor = new MatrixCursor(new String[]{"imei", "imei2", "eid", "slot_count"});
+        cursor.addRow(new Object[]{imei, imei2, eid, slotCount});
         return cursor;
     }
 

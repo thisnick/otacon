@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { resolveConfig, loadConfig, saveConfig } from "../config.js";
 import { RegistryClient } from "../registry-client.js";
+import { getHostClient } from "../host-client.js";
 import { printList, printDetail, colorStatus } from "../format.js";
 
 function getRegistryClient(opts: { registry?: string }): RegistryClient {
@@ -42,6 +43,23 @@ export function phoneCommands(parentOpts: () => { registry?: string }): Command 
         { header: "HOST", get: (p) => p.host_id },
         { header: "ADAPTER", get: (p) => p.adapter_mac },
       ], { json: opts.json });
+    });
+
+  phone
+    .command("info")
+    .description("Show device identity (IMEI, EID, model, etc.)")
+    .argument("[id]", "phone ID (defaults to active phone)")
+    .option("--json", "output as JSON")
+    .action(async (id: string | undefined, opts: { json?: boolean }) => {
+      const resolved = resolveConfig({ registry: parentOpts().registry, phone: id });
+      const phoneId = id || resolved.activePhone;
+      if (!phoneId) {
+        console.error("No phone specified. Pass an ID or run `otacon phone use <id>`");
+        process.exit(1);
+      }
+      const client = await getHostClient({ ...parentOpts(), phone: phoneId });
+      const info = await client.info();
+      printDetail(info, { json: opts.json });
     });
 
   phone

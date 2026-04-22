@@ -20,6 +20,14 @@ pub struct DeviceInfo {
     resolution: Option<String>,
     /// SIM phone number (e.g. "+15551234567")
     phone_number: Option<String>,
+    /// IMEI (International Mobile Equipment Identity) — slot 0
+    imei: Option<String>,
+    /// IMEI for second SIM slot (dual-SIM devices)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    imei2: Option<String>,
+    /// EID (eUICC Identifier) for eSIM
+    #[serde(skip_serializing_if = "Option::is_none")]
+    eid: Option<String>,
     /// Device owner app connected
     bridge: bool,
     /// Snapshot server (app_process) connected
@@ -100,12 +108,13 @@ pub async fn info_handler(state: Arc<PhoneState>) -> Result<Json<DeviceInfo>, Ap
     let phone_bt_mac = state.config.phone_bt_mac.clone();
     let adapter_mac = state.config.adapter_mac.clone();
 
-    let (activity, window, model, resolution, phone_number, wifi, bt_connected, stats, screen_state) = tokio::join!(
+    let (activity, window, model, resolution, phone_number, device_id, wifi, bt_connected, stats, screen_state) = tokio::join!(
         get_current_activity(serial),
         get_focused_window(serial),
         adb_shell(serial, "getprop ro.product.model"),
         adb_shell(serial, "wm size"),
         get_phone_number(serial),
+        get_device_identity(&state),
         get_wifi_status(serial),
         get_bt_connected(adapter_mac.as_deref(), phone_bt_mac.as_deref()),
         get_phone_stats(serial),
@@ -122,6 +131,9 @@ pub async fn info_handler(state: Arc<PhoneState>) -> Result<Json<DeviceInfo>, Ap
             .ok()
             .and_then(|s| s.split(':').last().map(|s| s.trim().to_string())),
         phone_number: phone_number.ok(),
+        imei: device_id.imei,
+        imei2: device_id.imei2,
+        eid: device_id.eid,
         bridge: state.bridge.is_device_owner_available(),
         snapshot_server: state.bridge.is_snapshot_available(),
         adb_serial: serial.clone(),
@@ -253,6 +265,40 @@ async fn get_phone_number(serial: &str) -> Result<String, ApiError> {
         return Err(ApiError::Adb("no phone number found".into()));
     }
     Ok(format!("+{}", number.trim_start_matches('+')))
+}
+
+/// Device identity from kiosk app bridge (IMEI, EID)
+#[derive(Default)]
+struct DeviceIdentity {
+    imei: Option<String>,
+    imei2: Option<String>,
+    eid: Option<String>,
+}
+
+async fn get_device_identity(state: &PhoneState) -> DeviceIdentity {
+    if !state.bridge.is_device_owner_available() {
+        return DeviceIdentity::default();
+    }
+    let serial = &state.config.adb_serial;
+    let Ok(output) = state.bridge.device_query(serial, "device/identity").await else {
+        return DeviceIdentity::default();
+    };
+    // ContentProvider returns "Row: 0 imei=..., imei2=..., eid=..., slot_count=..."
+    let mut id = DeviceIdentity::default();
+    for part in output.split(", ") {
+        let part = part.trim();
+        if let Some(val) = part.strip_prefix("imei=") {
+            let v = val.trim();
+            if v != "NULL" && !v.is_empty() { id.imei = Some(v.to_string()); }
+        } else if let Some(val) = part.strip_prefix("imei2=") {
+            let v = val.trim();
+            if v != "NULL" && !v.is_empty() { id.imei2 = Some(v.to_string()); }
+        } else if let Some(val) = part.strip_prefix("eid=") {
+            let v = val.trim();
+            if v != "NULL" && !v.is_empty() { id.eid = Some(v.to_string()); }
+        }
+    }
+    id
 }
 
 async fn get_current_activity(serial: &str) -> Result<String, ApiError> {

@@ -109,10 +109,15 @@ export function phoneEsimCommands(
         const res = await esimFetch(parentOpts(), "/defaults");
         console.log(JSON.stringify(await res.json(), null, 2));
       } else if (action === "set" && kv.length > 0) {
-        const obj: Record<string, string> = {};
+        const obj: Record<string, string | number | boolean> = {};
         for (const pair of kv) {
           const [k, ...v] = pair.split("=");
-          obj[k] = v.join("=");
+          const raw = v.join("=");
+          // Auto-parse numbers and booleans for JSON body
+          if (/^-?\d+$/.test(raw)) obj[k] = parseInt(raw, 10);
+          else if (raw === "true") obj[k] = true;
+          else if (raw === "false") obj[k] = false;
+          else obj[k] = raw;
         }
         const res = await esimFetch(parentOpts(), "/defaults", {
           method: "PUT",
