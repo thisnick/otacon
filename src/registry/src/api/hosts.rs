@@ -35,6 +35,8 @@ pub struct HeartbeatBody {
 fn default_port() -> u16 { 8080 }
 
 /// Upsert host metadata (identity only, no phone/dongle status side-effects).
+/// Only overwrites tailscale_ip/fqdn if the caller provides Some values
+/// (heartbeat omits them, identity provides them).
 fn upsert_host(hosts: &mut std::collections::HashMap<String, Host>, host_id: &str, body_ip: Option<String>, body_fqdn: Option<String>, body_port: u16) -> bool {
     let now = Utc::now();
     let is_new = !hosts.contains_key(host_id);
@@ -47,8 +49,12 @@ fn upsert_host(hosts: &mut std::collections::HashMap<String, Host>, host_id: &st
         last_heartbeat: None,
         created_at: now,
     });
-    host.tailscale_ip = body_ip;
-    host.fqdn = body_fqdn;
+    if body_ip.is_some() {
+        host.tailscale_ip = body_ip;
+    }
+    if body_fqdn.is_some() {
+        host.fqdn = body_fqdn;
+    }
     host.api_port = body_port;
     host.status = "online".into();
     host.last_heartbeat = Some(now);
