@@ -7,7 +7,8 @@ use std::time::Duration;
 
 use crate::phone::PhoneState;
 
-use super::snapshot::A11yNode;
+use super::adb::adb_shell;
+use super::snapshot::{A11yNode, Bounds};
 
 /// Spawn a background task that polls the a11y tree for a clickable button
 /// whose text matches one of `targets` (case-insensitive) and taps it.
@@ -45,18 +46,30 @@ pub fn spawn_auto_tap(
 
             match find_button(&state, targets, context_keywords).await {
                 Some(m) => {
-                    let body = serde_json::json!({"action": "click", "ref": m.ref_id}).to_string();
-                    match state.bridge.snapshot_post("/action", &body).await {
+                    // Use `input tap` (real touch event) instead of a11y
+                    // ACTION_CLICK — system dialogs (e.g. eSIM confirmation
+                    // from the LPA app) often don't honor a11y clicks.
+                    let Some(bounds) = m.bounds.as_ref() else {
+                        eprintln!(
+                            "[{}] auto-tap: button '{}' has no bounds, skipping",
+                            serial, m.text
+                        );
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        continue;
+                    };
+                    let cx = (bounds.x1 + bounds.x2) / 2;
+                    let cy = (bounds.y1 + bounds.y2) / 2;
+                    match adb_shell(&serial, &format!("input tap {cx} {cy}")).await {
                         Ok(_) => {
                             eprintln!(
-                                "[{}] auto-tap: tapped '{}' (ref={}) on iter {}",
-                                serial, m.text, m.ref_id, iters
+                                "[{}] auto-tap: tapped '{}' (ref={}) at ({},{}) on iter {}",
+                                serial, m.text, m.ref_id, cx, cy, iters
                             );
                             return true;
                         }
                         Err(e) => {
                             eprintln!(
-                                "[{}] auto-tap: tap failed on iter {}: {:?}",
+                                "[{}] auto-tap: input tap failed on iter {}: {:?}",
                                 serial, iters, e
                             );
                         }
@@ -88,6 +101,7 @@ pub fn spawn_auto_tap(
 struct ButtonMatch {
     ref_id: String,
     text: String,
+    bounds: Option<Bounds>,
 }
 
 async fn find_button(
@@ -141,6 +155,7 @@ fn walk_for_button(node: &A11yNode, targets: &[&str]) -> Option<ButtonMatch> {
                     return Some(ButtonMatch {
                         ref_id: ref_id.clone(),
                         text: text.clone(),
+                        bounds: node.bounds.clone(),
                     });
                 }
             }
