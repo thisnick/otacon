@@ -19,6 +19,10 @@ def configure_screen(serial: str):
     adb_shell(serial, 'settings put system screen_brightness_mode 1')
     adb_shell(serial, 'settings put system accelerometer_rotation 0')
     adb_shell(serial, 'settings put system user_rotation 0')
+    # Lock rotation at the WindowManager level — `settings put` alone is
+    # insufficient on Samsung One UI (the QS tile reads WM state, not the
+    # settings provider, and apps can still call setRequestedOrientation).
+    adb_shell(serial, 'cmd window user-rotation lock 0')
     adb_shell(serial, 'locksettings set-password-quality 0')
     adb_shell(serial, 'svc data disable')
     adb_shell(serial, 'pm disable-user --user 0 com.google.android.apps.messaging')
