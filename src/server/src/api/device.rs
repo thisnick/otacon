@@ -267,7 +267,7 @@ async fn get_phone_number(serial: &str) -> Result<String, ApiError> {
     Ok(format!("+{}", number.trim_start_matches('+')))
 }
 
-/// Device identity from kiosk app bridge (IMEI, EID)
+/// Device identity (IMEI via adb service call, EID via kiosk bridge)
 #[derive(Default)]
 struct DeviceIdentity {
     imei: Option<String>,
@@ -276,29 +276,47 @@ struct DeviceIdentity {
 }
 
 async fn get_device_identity(state: &PhoneState) -> DeviceIdentity {
+    let serial = &state.config.adb_serial;
+    let (imei, imei2, eid) = tokio::join!(
+        get_imei_via_service_call(serial, 1),
+        get_imei_via_service_call(serial, 2),
+        get_eid_via_bridge(state),
+    );
+    DeviceIdentity { imei, imei2, eid }
+}
+
+/// Parse IMEI from `service call iphonesubinfo` parcel output.
+/// index=1 for slot 0 IMEI, index=2 for slot 1 IMEI (dual-SIM).
+async fn get_imei_via_service_call(serial: &str, index: u32) -> Option<String> {
+    let out = adb_shell(serial,
+        &format!("service call iphonesubinfo {index} s16 com.android.shell")
+    ).await.ok()?;
+    let digits: String = out
+        .split('\'')
+        .enumerate()
+        .filter(|(i, _)| i % 2 == 1)
+        .flat_map(|(_, s)| s.chars())
+        .filter(|c| c.is_ascii_digit())
+        .collect();
+    if digits.len() >= 14 { Some(digits) } else { None }
+}
+
+/// Try to get EID via kiosk app bridge (needs EuiccManager access).
+async fn get_eid_via_bridge(state: &PhoneState) -> Option<String> {
     if !state.bridge.is_device_owner_available() {
-        return DeviceIdentity::default();
+        return None;
     }
     let serial = &state.config.adb_serial;
-    let Ok(output) = state.bridge.device_query(serial, "device/identity").await else {
-        return DeviceIdentity::default();
-    };
-    // ContentProvider returns "Row: 0 imei=..., imei2=..., eid=..., slot_count=..."
-    let mut id = DeviceIdentity::default();
+    let output = state.bridge.device_query(serial, "device/identity").await.ok()?;
     for part in output.split(", ") {
-        let part = part.trim();
-        if let Some(val) = part.strip_prefix("imei=") {
+        if let Some(val) = part.trim().strip_prefix("eid=") {
             let v = val.trim();
-            if v != "NULL" && !v.is_empty() { id.imei = Some(v.to_string()); }
-        } else if let Some(val) = part.strip_prefix("imei2=") {
-            let v = val.trim();
-            if v != "NULL" && !v.is_empty() { id.imei2 = Some(v.to_string()); }
-        } else if let Some(val) = part.strip_prefix("eid=") {
-            let v = val.trim();
-            if v != "NULL" && !v.is_empty() { id.eid = Some(v.to_string()); }
+            if v != "NULL" && !v.is_empty() {
+                return Some(v.to_string());
+            }
         }
     }
-    id
+    None
 }
 
 async fn get_current_activity(serial: &str) -> Result<String, ApiError> {
