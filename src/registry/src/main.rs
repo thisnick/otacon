@@ -4,6 +4,7 @@ use tower_http::cors::CorsLayer;
 
 mod api;
 mod auth;
+mod ingestion;
 mod store;
 mod ws;
 

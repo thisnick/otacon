@@ -54,6 +54,7 @@ pub struct AppState {
         dongles::register,
         sims::report,
         events::report,
+        events::ingest,
         // Admin — Registration
         registration::list_pending_hosts,
         registration::list_pending_clients,
@@ -104,6 +105,7 @@ pub struct AppState {
         sims::ReportSimsBody,
         sims::SimEntry,
         events::ReportEventBody,
+        events::FleetEventBody,
     )),
     security(
         ("bearer" = []),
@@ -140,6 +142,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/api/v1/hosts/dongles/register", post(dongles::register))
         .route("/api/v1/hosts/phones/{id}/sims", post(sims::report))
         .route("/api/v1/hosts/events", post(events::report))
+        .route("/api/v1/hosts/events/ingest", post(events::ingest))
         .route("/ws/host/config", get(ws::host_config_ws))
         .layer(middleware::from_fn(node_auth));
 

@@ -52,7 +52,7 @@ impl Flusher {
             match self.store.next_unsent() {
                 Ok(Some(row)) => {
                     let url = format!(
-                        "{}/api/v1/hosts/events",
+                        "{}/api/v1/hosts/events/ingest",
                         self.registry_url
                     );
 
