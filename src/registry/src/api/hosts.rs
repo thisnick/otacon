@@ -7,6 +7,18 @@ use utoipa::ToSchema;
 use super::AppState;
 use crate::store::Host;
 
+/// Grace period before marking a phone unreachable: 2 missed heartbeats (60s).
+const HEARTBEAT_GRACE_SECS: i64 = 60;
+
+#[derive(Deserialize, ToSchema)]
+pub struct HostIdentityBody {
+    pub host_id: String,
+    pub tailscale_ip: Option<String>,
+    pub fqdn: Option<String>,
+    #[serde(default = "default_port")]
+    pub api_port: u16,
+}
+
 #[derive(Deserialize, ToSchema)]
 pub struct HeartbeatBody {
     pub host_id: String,
@@ -21,6 +33,57 @@ pub struct HeartbeatBody {
 }
 
 fn default_port() -> u16 { 8080 }
+
+/// Upsert host metadata (identity only, no phone/dongle status side-effects).
+fn upsert_host(hosts: &mut std::collections::HashMap<String, Host>, host_id: &str, body_ip: Option<String>, body_fqdn: Option<String>, body_port: u16) -> bool {
+    let now = Utc::now();
+    let is_new = !hosts.contains_key(host_id);
+    let host = hosts.entry(host_id.to_string()).or_insert_with(|| Host {
+        id: host_id.to_string(),
+        tailscale_ip: None,
+        fqdn: None,
+        api_port: 8080,
+        status: "online".into(),
+        last_heartbeat: None,
+        created_at: now,
+    });
+    host.tailscale_ip = body_ip;
+    host.fqdn = body_fqdn;
+    host.api_port = body_port;
+    host.status = "online".into();
+    host.last_heartbeat = Some(now);
+    is_new
+}
+
+/// Register/update host identity without affecting phone/dongle status.
+/// Use this on startup; use heartbeat for periodic state sync.
+#[utoipa::path(
+    post,
+    path = "/api/v1/hosts/identity",
+    request_body = HostIdentityBody,
+    responses(
+        (status = 200, description = "OK", body = serde_json::Value),
+    ),
+    security(("bearer" = [])),
+    tag = "Node"
+)]
+pub async fn identity(
+    State(state): State<AppState>,
+    Json(body): Json<HostIdentityBody>,
+) -> Json<serde_json::Value> {
+    let store = &state.store;
+
+    let mut hosts = store.hosts.write().await;
+    let is_new = upsert_host(&mut hosts, &body.host_id, body.tailscale_ip, body.fqdn, body.api_port);
+    drop(hosts);
+    store.save_hosts().await;
+
+    if is_new {
+        store.add_event("host.online", Some(body.host_id.clone()), None).await;
+    }
+
+    Json(serde_json::json!({"ok": true}))
+}
 
 /// Heartbeat with host metadata and connected phones/dongles.
 #[utoipa::path(
@@ -41,22 +104,7 @@ pub async fn heartbeat(
     let now = Utc::now();
 
     let mut hosts = store.hosts.write().await;
-    let is_new = !hosts.contains_key(&body.host_id);
-    let host = hosts.entry(body.host_id.clone()).or_insert_with(|| Host {
-        id: body.host_id.clone(),
-        tailscale_ip: None,
-        fqdn: None,
-        api_port: 8080,
-        status: "online".into(),
-        last_heartbeat: None,
-        created_at: now,
-    });
-
-    host.tailscale_ip = body.tailscale_ip;
-    host.fqdn = body.fqdn;
-    host.api_port = body.api_port;
-    host.status = "online".into();
-    host.last_heartbeat = Some(now);
+    let is_new = upsert_host(&mut hosts, &body.host_id, body.tailscale_ip, body.fqdn, body.api_port);
     drop(hosts);
     store.save_hosts().await;
 
@@ -67,10 +115,18 @@ pub async fn heartbeat(
     let mut phones = store.phones.write().await;
     for phone in phones.values_mut() {
         if phone.host_id.as_deref() == Some(&body.host_id) {
-            if !body.phones.contains(&phone.id) {
-                phone.status = "unreachable".into();
-            } else {
+            if body.phones.contains(&phone.id) {
                 phone.status = "connected".into();
+                phone.last_seen_in_heartbeat = Some(now);
+            } else {
+                // Grace period: only mark unreachable if phone has been missing
+                // for longer than HEARTBEAT_GRACE_SECS since last seen.
+                let grace_expired = phone.last_seen_in_heartbeat
+                    .map(|last| (now - last).num_seconds() >= HEARTBEAT_GRACE_SECS)
+                    .unwrap_or(false); // never seen → don't mark unreachable (newly registered)
+                if grace_expired {
+                    phone.status = "unreachable".into();
+                }
             }
         }
     }

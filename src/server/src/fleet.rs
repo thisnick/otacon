@@ -13,6 +13,9 @@ use crate::AppState;
 /// Path to the auth token file (shared with fleet-agent Python process).
 pub const AUTH_FILE: &str = "/data/otacon/auth.json";
 
+/// Path to the persistent registry_ids cache.
+const REGISTRY_IDS_FILE: &str = "/data/otacon/registry_ids.json";
+
 pub struct FleetClient {
     registry_url: String,
     host_id: String,
@@ -38,6 +41,18 @@ impl FleetClient {
             gethostname().unwrap_or_else(|| "unknown".into())
         });
 
+        // Load persisted registry_ids from disk (survives restarts)
+        let registry_ids = match std::fs::read_to_string(REGISTRY_IDS_FILE) {
+            Ok(data) => {
+                let ids: HashMap<String, String> = serde_json::from_str(&data).unwrap_or_default();
+                if !ids.is_empty() {
+                    eprintln!("[fleet] Loaded {} registry_ids from disk", ids.len());
+                }
+                ids
+            }
+            Err(_) => HashMap::new(),
+        };
+
         Some(Self {
             registry_url: registry_url.trim_end_matches('/').to_string(),
             host_id,
@@ -45,9 +60,19 @@ impl FleetClient {
                 .timeout(Duration::from_secs(10))
                 .build()
                 .unwrap_or_default(),
-            registry_ids: Mutex::new(HashMap::new()),
+            registry_ids: Mutex::new(registry_ids),
             dongle_ids: Mutex::new(Vec::new()),
         })
+    }
+
+    /// Persist the registry_ids cache to disk.
+    async fn save_registry_ids(&self) {
+        let ids = self.registry_ids.lock().await;
+        if let Ok(data) = serde_json::to_string_pretty(&*ids) {
+            if let Err(e) = tokio::fs::write(REGISTRY_IDS_FILE, data).await {
+                eprintln!("[fleet] Failed to save registry_ids: {e}");
+            }
+        }
     }
 
     /// Build a POST request with auth header (if token is available).
@@ -59,7 +84,7 @@ impl FleetClient {
         req
     }
 
-    /// Register this host with the registry.
+    /// Register this host with the registry (identity only, no phone status side-effects).
     pub async fn register_host(&self) {
         let tailscale_ip = get_tailscale_ip().await;
         let fqdn = get_tailscale_fqdn().await;
@@ -75,7 +100,7 @@ impl FleetClient {
             "api_port": api_port,
         });
 
-        match self.authed_post(&format!("{}/api/v1/hosts/heartbeat", self.registry_url))
+        match self.authed_post(&format!("{}/api/v1/hosts/identity", self.registry_url))
             .json(&body)
             .send()
             .await
@@ -199,6 +224,7 @@ impl FleetClient {
                     if let Some(reg_id) = data.get("phone_id").and_then(|v| v.as_str()) {
                         self.registry_ids.lock().await
                             .insert(local_id.to_string(), reg_id.to_string());
+                        self.save_registry_ids().await;
                         eprintln!("[fleet] Registered phone '{local_id}' as '{reg_id}' in registry");
                     }
                 } else {
@@ -206,7 +232,11 @@ impl FleetClient {
                 }
             }
             Ok(resp) => {
-                eprintln!("[fleet] Phone registration failed for '{local_id}': {}", resp.status());
+                let status = resp.status();
+                eprintln!("[fleet] Phone registration failed for '{local_id}': {status}");
+                if status.is_client_error() {
+                    eprintln!("[fleet] Phone '{local_id}' got {status} — will not retry until next heartbeat tick");
+                }
             }
             Err(e) => {
                 eprintln!("[fleet] Phone registration error for '{local_id}': {e}");
@@ -243,6 +273,7 @@ impl FleetClient {
         let reg_id = self.registry_ids.lock().await
             .remove(local_id)
             .unwrap_or_else(|| local_id.to_string());
+        self.save_registry_ids().await;
 
         let body = serde_json::json!({
             "host_id": self.host_id,
@@ -265,6 +296,7 @@ impl FleetClient {
         let reg_id = self.registry_ids.lock().await
             .remove(local_id)
             .unwrap_or_else(|| local_id.to_string());
+        self.save_registry_ids().await;
 
         let url = format!("{}/api/v1/hosts/phones/{reg_id}", self.registry_url);
         let mut req = self.client.delete(&url);

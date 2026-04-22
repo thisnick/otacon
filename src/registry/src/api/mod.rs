@@ -46,6 +46,7 @@ pub struct AppState {
         registration::poll_host,
         registration::poll_client,
         // Node scope
+        hosts::identity,
         hosts::heartbeat,
         phones::register,
         phones::deregister,
@@ -94,6 +95,7 @@ pub struct AppState {
         // Request bodies
         registration::RegisterHostBody,
         registration::RegisterClientBody,
+        hosts::HostIdentityBody,
         hosts::HeartbeatBody,
         phones::RegisterPhoneBody,
         phones::DeregisterPhoneBody,
@@ -130,6 +132,7 @@ pub fn build_router(state: AppState) -> Router {
 
     // ── Node-authenticated routes (`otc_node_*`) ────────────────────
     let node_routes = Router::new()
+        .route("/api/v1/hosts/identity", post(hosts::identity))
         .route("/api/v1/hosts/heartbeat", post(hosts::heartbeat))
         .route("/api/v1/hosts/phones/register", post(phones::register))
         .route("/api/v1/hosts/phones/deregister", post(phones::deregister))

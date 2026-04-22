@@ -31,6 +31,9 @@ pub struct Phone {
     pub connected_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+    /// Last time this phone appeared in a heartbeat (for grace period).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_seen_in_heartbeat: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

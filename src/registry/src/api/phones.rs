@@ -62,6 +62,7 @@ pub async fn register(
         phone.host_id = Some(body.host_id.clone());
         phone.status = "connected".into();
         phone.connected_at = Some(now);
+        phone.last_seen_in_heartbeat = Some(now);
         phone.updated_at = now;
         if body.phone_number.is_some() { phone.phone_number = body.phone_number; }
         if body.model.is_some() { phone.model = body.model; }
@@ -117,6 +118,7 @@ pub async fn register(
             connected_at: Some(now),
             created_at: now,
             updated_at: now,
+            last_seen_in_heartbeat: Some(now),
         });
         drop(phones);
         if let Some(ref mac) = adapter_mac_for_dongle {
