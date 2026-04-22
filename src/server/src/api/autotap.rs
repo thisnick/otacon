@@ -22,7 +22,7 @@ pub fn spawn_auto_tap(
     tokio::spawn(async move {
         let deadline = tokio::time::Instant::now() + timeout;
         // Brief initial delay — let the dialog appear
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
 
         loop {
             if tokio::time::Instant::now() >= deadline {

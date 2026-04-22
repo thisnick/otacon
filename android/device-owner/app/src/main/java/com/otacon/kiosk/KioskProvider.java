@@ -881,12 +881,28 @@ public class KioskProvider extends ContentProvider {
             resolveActivity.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             getContext().startActivity(resolveActivity);
 
-            // Wait for resolution result
-            try {
-                boolean completed = esimLatch.await(120, TimeUnit.SECONDS);
-                if (!completed) return errorCursor("timeout waiting for resolution");
-            } catch (InterruptedException e) {
-                return errorCursor("interrupted during resolution");
+            // Wait for resolution result — the system may fire RESOLVABLE_ERROR
+            // again before the user confirms. Keep waiting until we get OK/ERROR
+            // or timeout.
+            long deadline = System.currentTimeMillis() + 120_000;
+            while (true) {
+                long remaining = deadline - System.currentTimeMillis();
+                if (remaining <= 0) return errorCursor("timeout waiting for resolution");
+                try {
+                    boolean completed = esimLatch.await(remaining, TimeUnit.MILLISECONDS);
+                    if (!completed) return errorCursor("timeout waiting for resolution");
+                } catch (InterruptedException e) {
+                    return errorCursor("interrupted during resolution");
+                }
+                // If we got RESOLVABLE_ERROR again, the system re-fired the
+                // callback before user confirmed — reset and keep waiting
+                if (esimResultCode == EuiccManager.EMBEDDED_SUBSCRIPTION_RESULT_RESOLVABLE_ERROR) {
+                    Log.i(TAG, "Resolution got RESOLVABLE_ERROR again, continuing to wait...");
+                    esimLatch = new CountDownLatch(1);
+                    esimResultCode = -1;
+                    continue;
+                }
+                break; // Got OK or real ERROR — proceed
             }
         }
 
