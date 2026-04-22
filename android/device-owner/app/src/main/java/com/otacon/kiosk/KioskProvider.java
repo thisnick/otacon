@@ -544,8 +544,21 @@ public class KioskProvider extends ContentProvider {
                         intent.getParcelableExtra(android.bluetooth.BluetoothDevice.EXTRA_DEVICE);
                     if (dev != null && dev.getAddress().equalsIgnoreCase(targetMac)) {
                         Log.i(TAG, "Auto-confirming pairing with " + targetMac);
-                        dev.setPairingConfirmation(true);
-                        abortBroadcast();
+                        try {
+                            dev.setPairingConfirmation(true);
+                            abortBroadcast();
+                        } catch (SecurityException e) {
+                            // BLUETOOTH_PRIVILEGED is signature|privileged and not
+                            // grantable to a Device Owner app. Log and let the
+                            // broadcast propagate so the system pair dialog handles
+                            // it (or fleet-agent retries via createBond). Do NOT
+                            // crash the receiver — that surfaces a "kiosk keeps
+                            // stopping" popup that blocks the user-side flow.
+                            Log.w(TAG, "setPairingConfirmation denied (no BLUETOOTH_PRIVILEGED): "
+                                + e.getMessage());
+                        } catch (Exception e) {
+                            Log.w(TAG, "setPairingConfirmation failed: " + e.getMessage());
+                        }
                     }
                 }
             }
