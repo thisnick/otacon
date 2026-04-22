@@ -39,10 +39,31 @@ make health            # Verify everything is running
 ```bash
 make pigen                             # Build image
 make pigen-flash DEVICE=/dev/sdX       # Flash to SD card
-make pigen-config DEVICE=/Volumes/bootfs  # Write Tailscale auth to boot partition
+make pigen-config DEVICE=/Volumes/bootfs  # Write startup.conf to boot partition
 # Boot Pi — it auto-joins Tailscale and is reachable as otacon-pi
 make push                              # Deploy everything
 ```
+
+#### How `startup.conf` is generated
+
+`make pigen-config` reads environment variables (typically loaded from `.env`
+via direnv) and writes them to `$DEVICE/otacon/startup.conf` on the SD card's
+boot partition. On first boot, the Pi consumes this file (then securely
+deletes it) to bootstrap Tailscale, the kiosk hostname, etc.
+
+Variables read by `pigen-config` (and where they end up):
+
+| Variable in `.env` | Required | Written to `startup.conf` if set |
+|---|---|---|
+| `TS_AUTH_KEY` | yes (errors if missing) | always |
+| `TS_HOSTNAME` | no (defaults to `otacon-pi`) | only if set |
+| `VNC_PASSWORD` | no | only if set |
+| `OTACON_REPO` | no | only if set |
+| `WIFI_AP_SSID` | no | only if set |
+| `WIFI_AP_PASSWORD` | no | only if set |
+
+So the typical flow is: edit `.env`, then run `make pigen-config DEVICE=/Volumes/bootfs`.
+See `pigen/otacon/startup.conf.example` for the full format and inline docs.
 
 ### Set up a phone
 
