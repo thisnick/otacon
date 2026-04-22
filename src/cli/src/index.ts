@@ -442,7 +442,7 @@ program
 const record = program
   .command("record")
   .description("Screen recording (interactive: holds TTY, Ctrl+C to stop)")
-  .option("-d, --duration <seconds>", "max recording duration", "30")
+  .option("-d, --duration <seconds>", "max recording duration", "300")
   .option("-o, --output <path>", "output file path (default: recording.mp4)")
   .action(async (opts: { duration: string; output?: string }) => {
     const client = await getClient();
@@ -488,7 +488,7 @@ const record = program
 record
   .command("start")
   .description("Start recording (headless, for agents)")
-  .option("-d, --duration <seconds>", "max recording duration", "30")
+  .option("-d, --duration <seconds>", "max recording duration", "300")
   .action(async (opts: { duration: string }) => {
     const client = await getClient();
     await client.recordStart(parseInt(opts.duration));

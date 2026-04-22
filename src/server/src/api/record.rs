@@ -11,8 +11,8 @@ use utoipa::ToSchema;
 use crate::phone::PhoneState;
 
 const RECORD_PATH: &str = "/tmp/otacon_rec.mp4";
-const MAX_DURATION_LIMIT: u32 = 180;
-const DEFAULT_MAX_DURATION: u32 = 30;
+const MAX_DURATION_LIMIT: u32 = 600;
+const DEFAULT_MAX_DURATION: u32 = 300;
 
 pub struct RecordingInfo {
     pub child: tokio::process::Child,
@@ -24,7 +24,7 @@ pub type RecordingState = Arc<Mutex<Option<RecordingInfo>>>;
 
 #[derive(Deserialize, Serialize, ToSchema)]
 pub struct StartRecordBody {
-    /// Max recording duration in seconds (default 30, max 180)
+    /// Max recording duration in seconds (default 300, max 600)
     #[serde(default = "default_max_duration")]
     pub max_duration: u32,
 }

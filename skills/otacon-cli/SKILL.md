@@ -302,19 +302,19 @@ otacon contacts search "John"
 
 ```bash
 # Interactive (holds TTY, Ctrl+C to stop)
-otacon record                                  # 30s max, saves to recording.mp4
+otacon record                                  # 5min max, saves to recording.mp4
 otacon record -d 60                            # 60s max
 otacon record -d 60 -o video.mp4
 
 # Headless (for agents)
-otacon record start                            # start (30s max)
+otacon record start                            # start (5min max)
 otacon record start -d 60                      # start (60s max)
 otacon record status                           # check if recording + elapsed
 otacon record stop                             # stop and save to recording.mp4
 otacon record stop -o video.mp4
 ```
 
-Records video + audio (mp4). Max duration 180s. Only one recording at a time. Auto-stops at max — call `record stop` to retrieve the file.
+Records video + audio (mp4). Default 5min, max 10min. Only one recording at a time. Auto-stops at max — call `record stop` to retrieve the file.
 
 ## Architecture quick reference
 
