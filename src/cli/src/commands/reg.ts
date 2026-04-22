@@ -94,5 +94,91 @@ export function regCommands(parentOpts: () => { registry?: string }): Command {
       }
     });
 
+  reg
+    .command("approve-all")
+    .description("Approve all pending registrations (hosts + clients)")
+    .option("--hosts-only", "only approve pending hosts")
+    .option("--clients-only", "only approve pending clients")
+    .action(async (opts: { hostsOnly?: boolean; clientsOnly?: boolean }) => {
+      const client = getRegistryClient(parentOpts());
+      const [hosts, clients] = await Promise.all([
+        client.listPendingHosts(),
+        client.listPendingClients(),
+      ]);
+      const targets: { id: string; kind: "host" | "client" }[] = [];
+      if (!opts.clientsOnly) {
+        for (const r of hosts.filter((r) => r.status === "pending")) {
+          targets.push({ id: r.id, kind: "host" });
+        }
+      }
+      if (!opts.hostsOnly) {
+        for (const r of clients.filter((r) => r.status === "pending")) {
+          targets.push({ id: r.id, kind: "client" });
+        }
+      }
+      if (targets.length === 0) {
+        console.error("No pending registrations to approve");
+        return;
+      }
+      let ok = 0;
+      let failed = 0;
+      for (const t of targets) {
+        try {
+          if (t.kind === "host") await client.approveHost(t.id);
+          else await client.approveClient(t.id);
+          console.error(`Approved ${t.kind} ${t.id}`);
+          ok++;
+        } catch (err) {
+          console.error(`Failed to approve ${t.kind} ${t.id}: ${(err as Error).message}`);
+          failed++;
+        }
+      }
+      console.error(`\nDone: ${ok} approved, ${failed} failed`);
+      if (failed > 0) process.exit(1);
+    });
+
+  reg
+    .command("reject-all")
+    .description("Reject all pending registrations (hosts + clients)")
+    .option("--hosts-only", "only reject pending hosts")
+    .option("--clients-only", "only reject pending clients")
+    .action(async (opts: { hostsOnly?: boolean; clientsOnly?: boolean }) => {
+      const client = getRegistryClient(parentOpts());
+      const [hosts, clients] = await Promise.all([
+        client.listPendingHosts(),
+        client.listPendingClients(),
+      ]);
+      const targets: { id: string; kind: "host" | "client" }[] = [];
+      if (!opts.clientsOnly) {
+        for (const r of hosts.filter((r) => r.status === "pending")) {
+          targets.push({ id: r.id, kind: "host" });
+        }
+      }
+      if (!opts.hostsOnly) {
+        for (const r of clients.filter((r) => r.status === "pending")) {
+          targets.push({ id: r.id, kind: "client" });
+        }
+      }
+      if (targets.length === 0) {
+        console.error("No pending registrations to reject");
+        return;
+      }
+      let ok = 0;
+      let failed = 0;
+      for (const t of targets) {
+        try {
+          if (t.kind === "host") await client.rejectHost(t.id);
+          else await client.rejectClient(t.id);
+          console.error(`Rejected ${t.kind} ${t.id}`);
+          ok++;
+        } catch (err) {
+          console.error(`Failed to reject ${t.kind} ${t.id}: ${(err as Error).message}`);
+          failed++;
+        }
+      }
+      console.error(`\nDone: ${ok} rejected, ${failed} failed`);
+      if (failed > 0) process.exit(1);
+    });
+
   return reg;
 }

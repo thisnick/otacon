@@ -33,5 +33,15 @@ export function hostCommands(parentOpts: () => { registry?: string }): Command {
       console.log(JSON.stringify(host, null, 2));
     });
 
+  host
+    .command("delete")
+    .description("Forget a host (re-registered on next heartbeat if alive)")
+    .argument("<id>", "host ID")
+    .action(async (id: string) => {
+      const client = getRegistryClient(parentOpts());
+      await client.deleteHost(id);
+      console.log(`Deleted host ${id}`);
+    });
+
   return host;
 }

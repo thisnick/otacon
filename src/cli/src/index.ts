@@ -11,6 +11,7 @@ import { regCommands } from "./commands/reg.js";
 import { phoneCommands } from "./commands/phone.js";
 import { phoneEsimCommands } from "./commands/phone-esim.js";
 import { hostCommands } from "./commands/host.js";
+import { dongleCommands } from "./commands/dongle.js";
 
 program
   .name("otacon")
@@ -32,6 +33,7 @@ const getParentOpts = () => program.opts() as { host?: string; phone?: string; r
 program.addCommand(authCommands());
 program.addCommand(regCommands(getParentOpts));
 program.addCommand(hostCommands(getParentOpts));
+program.addCommand(dongleCommands(getParentOpts));
 
 const phone = phoneCommands(getParentOpts);
 phone.addCommand(phoneEsimCommands(getParentOpts));
