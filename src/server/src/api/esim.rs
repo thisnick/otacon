@@ -178,11 +178,15 @@ pub async fn install_handler(state: Arc<PhoneState>, Json(body): Json<InstallBod
     let encoded = urlencoding::encode(&body.activation_code);
 
     // Spawn background auto-tapper for the carrier confirmation dialog
-    // ("Allow your carrier to set up eSIM?" → tap "Yes")
+    // ("Allow your carrier to set up eSIM?" → tap "Yes"). The context
+    // keywords ensure we only tap when the eSIM dialog is actually visible —
+    // not a random button elsewhere in the UI.
     static ESIM_CONFIRM_BUTTONS: &[&str] = &["yes", "allow", "ok", "confirm"];
+    static ESIM_CONFIRM_CONTEXT: &[&str] = &["esim", "carrier", "set up"];
     let tap_handle = autotap::spawn_auto_tap(
         state.clone(),
         ESIM_CONFIRM_BUTTONS,
+        ESIM_CONFIRM_CONTEXT,
         Duration::from_secs(120),
     );
 

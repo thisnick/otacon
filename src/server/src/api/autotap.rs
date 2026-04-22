@@ -12,11 +12,17 @@ use super::snapshot::A11yNode;
 /// Spawn a background task that polls the a11y tree for a clickable button
 /// whose text matches one of `targets` (case-insensitive) and taps it.
 ///
+/// If `context_keywords` is non-empty, only taps when one of those keywords
+/// is found somewhere in the same a11y tree (case-insensitive substring match
+/// on text/content_desc).  This scopes the tap to a specific dialog so we
+/// don't accidentally tap a "Yes" button in the foreground app.
+///
 /// Returns a `JoinHandle` that resolves to `true` if a button was tapped.
 /// The task stops after the first successful tap or after `timeout`.
 pub fn spawn_auto_tap(
     state: Arc<PhoneState>,
     targets: &'static [&'static str],
+    context_keywords: &'static [&'static str],
     timeout: Duration,
 ) -> tokio::task::JoinHandle<bool> {
     tokio::spawn(async move {
@@ -37,7 +43,7 @@ pub fn spawn_auto_tap(
             }
             iters += 1;
 
-            match find_button(&state, targets).await {
+            match find_button(&state, targets, context_keywords).await {
                 Some(ref_id) => {
                     let body = serde_json::json!({"action": "click", "ref": ref_id}).to_string();
                     match state.bridge.snapshot_post("/action", &body).await {
@@ -58,9 +64,14 @@ pub fn spawn_auto_tap(
                 }
                 None => {
                     if iters == 1 || iters % 5 == 0 {
+                        let reason = if context_keywords.is_empty() {
+                            "no matching button"
+                        } else {
+                            "no context+button match"
+                        };
                         eprintln!(
-                            "[{}] auto-tap: no matching button on iter {}",
-                            serial, iters
+                            "[{}] auto-tap: {} on iter {}",
+                            serial, reason, iters
                         );
                     }
                 }
@@ -72,19 +83,44 @@ pub fn spawn_auto_tap(
 }
 
 /// Walk the a11y tree and find a clickable button whose text matches one of
-/// `targets` (case-insensitive).  Returns the ref ID if found.
-async fn find_button(state: &PhoneState, targets: &[&str]) -> Option<String> {
+/// `targets` (case-insensitive).  If `context_keywords` is non-empty, the
+/// keyword must appear somewhere in the tree (in any text/content_desc).
+async fn find_button(
+    state: &PhoneState,
+    targets: &[&str],
+    context_keywords: &[&str],
+) -> Option<String> {
     if !state.bridge.is_snapshot_available() {
         return None;
     }
     let json_str = state.bridge.snapshot_get("/snapshot?format=json").await.ok()?;
     let nodes: Vec<A11yNode> = serde_json::from_str(&json_str).ok()?;
+
+    // Context check: if context_keywords specified, verify at least one
+    // appears somewhere in the tree before tapping anything
+    if !context_keywords.is_empty() {
+        let context_present = nodes.iter().any(|n| has_context(n, context_keywords));
+        if !context_present {
+            return None;
+        }
+    }
+
     for node in &nodes {
         if let Some(ref_id) = walk_for_button(node, targets) {
             return Some(ref_id);
         }
     }
     None
+}
+
+fn has_context(node: &A11yNode, keywords: &[&str]) -> bool {
+    let check = |s: &str| {
+        let lower = s.to_lowercase();
+        keywords.iter().any(|k| lower.contains(*k))
+    };
+    if let Some(ref t) = node.text { if check(t) { return true; } }
+    if let Some(ref d) = node.content_desc { if check(d) { return true; } }
+    node.children.iter().any(|c| has_context(c, keywords))
 }
 
 fn walk_for_button(node: &A11yNode, targets: &[&str]) -> Option<String> {
