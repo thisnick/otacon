@@ -49,6 +49,7 @@ tr:hover { background: #161b22; }
   <h1>Otacon Registry</h1>
   <span class="pulse" id="pulse"></span>
   <span class="stats" id="stats">loading...</span>
+  <span class="stats" id="current-token" style="margin-left:auto"></span>
 </div>
 
 <div class="reg-section" id="reg-section" style="display:none">
@@ -251,19 +252,30 @@ async function poll() {
         </tr>`).join('');
 
     // Tokens — show only active (non-revoked) tokens, newest first
+    const currentPrefix = adminToken ? adminToken.slice(0, 12) : null;
     const activeTokens = tokens
       .filter(t => !t.revoked_at)
       .sort((a, b) => (b.last_seen_at || b.created_at || '').localeCompare(a.last_seen_at || a.created_at || ''));
     $('tokens-body').innerHTML = activeTokens.length === 0
       ? '<tr><td colspan="6" class="empty">No active tokens</td></tr>'
-      : activeTokens.map(t => `<tr>
-          <td><code>${esc(t.token_prefix)}</code></td>
-          <td>${esc(t.scope)}</td>
-          <td>${esc(t.node_id || '-')}</td>
-          <td>${esc(t.note || '')}</td>
-          <td>${relTime(t.last_seen_at)}</td>
-          <td><button class="btn btn-reject" data-token-revoke="${esc(t.id)}">Revoke</button></td>
-        </tr>`).join('');
+      : activeTokens.map(t => {
+          const isCurrent = t.token_prefix === currentPrefix;
+          const youBadge = isCurrent ? ' <span style="background:#1f6feb;color:#fff;padding:1px 6px;border-radius:3px;font-size:11px;margin-left:6px">YOU</span>' : '';
+          return `<tr${isCurrent ? ' style="background:rgba(31,111,235,0.08)"' : ''}>
+            <td><code>${esc(t.token_prefix)}</code>${youBadge}</td>
+            <td>${esc(t.scope)}</td>
+            <td>${esc(t.node_id || '-')}</td>
+            <td>${esc(t.note || '')}</td>
+            <td>${relTime(t.last_seen_at)}</td>
+            <td>${isCurrent ? '<span style="color:#7d8590;font-size:12px">in use</span>' : `<button class="btn btn-reject" data-token-revoke="${esc(t.id)}">Revoke</button>`}</td>
+          </tr>`;
+        }).join('');
+
+    // Show current token prefix in header
+    if (currentPrefix) {
+      const me = activeTokens.find(t => t.token_prefix === currentPrefix);
+      $('current-token').innerHTML = `Logged in as <code>${esc(currentPrefix)}</code>${me && me.note ? ` (${esc(me.note)})` : ''}`;
+    }
 
     // Events
     $('events-list').innerHTML = events.length === 0
