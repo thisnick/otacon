@@ -24,6 +24,8 @@ export function phoneCommands(parentOpts: () => { registry?: string }): Command 
     .option("--json", "output as JSON instead of a table")
     .action(async (opts: { all?: boolean; connected?: boolean; host?: string; json?: boolean }) => {
       const client = getRegistryClient(parentOpts());
+      const resolved = resolveConfig({ registry: parentOpts().registry });
+      const activePhone = resolved.activePhone;
       let phones = await client.listPhones();
       if (opts.connected) {
         phones = phones.filter((p) => p.status === "connected");
@@ -32,6 +34,7 @@ export function phoneCommands(parentOpts: () => { registry?: string }): Command 
         phones = phones.filter((p) => p.host_id === opts.host);
       }
       printList(phones, [
+        { header: " ", get: (p) => (p.id === activePhone ? "*" : " ") },
         { header: "ID", get: (p) => p.id },
         { header: "MODEL", get: (p) => p.model },
         { header: "SERIAL", get: (p) => p.adb_serial },

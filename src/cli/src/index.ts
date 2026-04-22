@@ -12,6 +12,7 @@ import { phoneCommands } from "./commands/phone.js";
 import { phoneEsimCommands } from "./commands/phone-esim.js";
 import { hostCommands } from "./commands/host.js";
 import { dongleCommands } from "./commands/dongle.js";
+import { printList } from "./format.js";
 import { clientCommands } from "./commands/client.js";
 
 program
@@ -329,20 +330,28 @@ const apps = program.command("apps").description("App commands");
 
 apps
   .command("list")
-  .description("List installed apps")
-  .action(async () => {
+  .description("List installed apps (default: table; use --json for raw JSON)")
+  .option("--json", "output as JSON")
+  .action(async (opts: { json?: boolean }) => {
     const client = await getClient();
     const list = await client.apps();
-    console.log(JSON.stringify(list, null, 2));
+    printList(list, [
+      { header: "PACKAGE", get: (a) => a.package },
+      { header: "LABEL", get: (a) => a.label },
+    ], { json: opts.json });
   });
 
 apps
   .command("running")
-  .description("List running/foreground apps")
-  .action(async () => {
+  .description("List running/foreground apps (default: table; use --json for raw JSON)")
+  .option("--json", "output as JSON")
+  .action(async (opts: { json?: boolean }) => {
     const client = await getClient();
     const list = await client.appsRunning();
-    console.log(JSON.stringify(list, null, 2));
+    printList(list, [
+      { header: "PACKAGE", get: (a) => a.package },
+      { header: "LABEL", get: (a) => a.label },
+    ], { json: opts.json });
   });
 
 apps
