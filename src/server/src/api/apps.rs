@@ -58,10 +58,15 @@ pub async fn list_handler(serial: &str) -> Result<Json<Vec<App>>, ApiError> {
     responses((status = 200, body = Vec<App>))
 )]
 pub async fn running_handler(serial: &str) -> Result<Json<Vec<App>>, ApiError> {
-    // Get recently used / running apps
+    // Get recently used / running apps. When the phone is asleep dumpsys
+    // sometimes fails or returns nothing — treat that as "no running apps"
+    // rather than a 502, since asking for the running list on a sleeping
+    // phone is a reasonable observation.
     let out = adb_shell(serial,
         "dumpsys activity activities | grep -E 'mResumedActivity|topResumedActivity|realActivity'"
-    ).await?;
+    )
+    .await
+    .unwrap_or_default();
 
     let mut packages = Vec::new();
     let mut seen = std::collections::HashSet::new();

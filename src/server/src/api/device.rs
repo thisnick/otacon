@@ -35,6 +35,10 @@ pub struct DeviceInfo {
     /// VNC port on the host that proxies this phone's screen
     /// (connect with vnc://{host_address}:{vnc_port})
     vnc_port: u16,
+    /// Current screen state — agents should check this before issuing
+    /// per-phone actions like screenshot/tap/etc.
+    /// Values: "unlocked", "locked", "asleep", "dozing", "dreaming", "unknown"
+    screen_state: String,
     /// WiFi connection state
     wifi: WifiStatus,
     /// Lightweight system stats (CPU/mem/battery/temp)
@@ -96,7 +100,7 @@ pub async fn info_handler(state: Arc<PhoneState>) -> Result<Json<DeviceInfo>, Ap
     let phone_bt_mac = state.config.phone_bt_mac.clone();
     let adapter_mac = state.config.adapter_mac.clone();
 
-    let (activity, window, model, resolution, phone_number, wifi, bt_connected, stats) = tokio::join!(
+    let (activity, window, model, resolution, phone_number, wifi, bt_connected, stats, screen_state) = tokio::join!(
         get_current_activity(serial),
         get_focused_window(serial),
         adb_shell(serial, "getprop ro.product.model"),
@@ -105,6 +109,7 @@ pub async fn info_handler(state: Arc<PhoneState>) -> Result<Json<DeviceInfo>, Ap
         get_wifi_status(serial),
         get_bt_connected(adapter_mac.as_deref(), phone_bt_mac.as_deref()),
         get_phone_stats(serial),
+        get_screen_state(serial),
     );
 
     let monitor = state.monitor_status.lock().await.clone();
@@ -124,6 +129,7 @@ pub async fn info_handler(state: Arc<PhoneState>) -> Result<Json<DeviceInfo>, Ap
         adapter_mac,
         bt_connected,
         vnc_port: state.config.vnc_port,
+        screen_state,
         wifi,
         stats,
         monitor,
@@ -277,6 +283,46 @@ async fn get_focused_window(serial: &str) -> Result<String, ApiError> {
                 .map(|s| s.trim_end_matches('}').to_string())
         })
         .unwrap_or_else(|| out.to_string()))
+}
+
+/// Determine the current screen/lock state by combining mWakefulness
+/// (dumpsys power) with isKeyguardShowing (dumpsys window).
+///
+/// Returns one of:
+///   "unlocked" — awake, no keyguard (regular foreground app)
+///   "locked"   — awake, keyguard showing (lock screen)
+///   "asleep"   — display off, fully asleep
+///   "dozing"   — ambient/low-power display
+///   "dreaming" — screensaver / always-on display dream
+///   "unknown"  — couldn't determine (adb errors, etc.)
+async fn get_screen_state(serial: &str) -> String {
+    let (power_out, window_out) = tokio::join!(
+        adb_shell(serial, "dumpsys power | grep mWakefulness="),
+        adb_shell(serial, "dumpsys window | grep -i isKeyguardShowing"),
+    );
+
+    let wakefulness = power_out
+        .ok()
+        .and_then(|s| {
+            s.split("mWakefulness=")
+                .nth(1)
+                .map(|rest| rest.split_whitespace().next().unwrap_or("").to_string())
+        })
+        .unwrap_or_default();
+
+    let keyguard_showing = window_out
+        .ok()
+        .map(|s| s.contains("isKeyguardShowing=true"))
+        .unwrap_or(false);
+
+    match wakefulness.as_str() {
+        "Asleep" => "asleep".into(),
+        "Dozing" => "dozing".into(),
+        "Dreaming" => "dreaming".into(),
+        "Awake" if keyguard_showing => "locked".into(),
+        "Awake" => "unlocked".into(),
+        _ => "unknown".into(),
+    }
 }
 
 #[utoipa::path(

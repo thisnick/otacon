@@ -142,13 +142,39 @@ otacon auth whoami                             # show registry, token fingerprin
 
 These operate on the active phone (set via `phone use`) or `--phone <id>`.
 
+### Always check screen state first
+
+Before taking a screenshot, snapshot, or interacting with UI, run `otacon info`
+and check `screen_state`. Possible values:
+
+| `screen_state` | Meaning | Can you interact? |
+|---|---|---|
+| `unlocked` | Awake, no keyguard, foreground app visible | Yes — proceed |
+| `locked` | Awake but lock screen showing | Snapshot/screenshot work but show lock screen, not your app |
+| `asleep` | Display off, deep sleep | No — wake first |
+| `dozing` | Ambient/AOD low-power display | No — wake first |
+| `dreaming` | Screensaver running | No — wake first |
+| `unknown` | Couldn't determine (ADB error) | Treat as asleep |
+
+Also useful from `info`: `activity` (current foreground activity) and
+`window` (focused window). When `activity` is empty/null, the phone is
+likely asleep.
+
+To wake a phone:
+
+```bash
+otacon key wake                                # power-on the screen
+# Then unlock if needed (lock pattern, PIN, swipe-up — varies)
+otacon swipe 540 1500 540 500                  # swipe up to dismiss lock
+```
+
 ### Core observation loop
 
 ```bash
+otacon info                                    # check screen_state, activity FIRST
 otacon screenshot -o screen.png                # PNG of current screen
 otacon snapshot                                # accessibility tree as indented text
 otacon snapshot --json                         # accessibility tree as JSON
-otacon info                                    # device info (model, activity, resolution)
 ```
 
 The accessibility tree assigns ref IDs (`e0`, `e1`, ...) to interactive elements. Refs are monotonic, stable for the same UI state, and only assigned to interactive elements. **Prefer ref-based actions over raw coordinates.**
