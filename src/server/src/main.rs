@@ -3,6 +3,7 @@ mod dbus_monitor;
 pub mod fleet;
 pub mod outbox;
 pub mod phone;
+pub mod reconciler;
 
 use axum::{
     Router,
@@ -269,11 +270,18 @@ async fn main() {
         spawn_vnc_proxy(phone_state.clone());
     }
 
-    // Start fleet client if REGISTRY_URL is set
+    // Start fleet client and reconciler if REGISTRY_URL is set
     if let Some(ref fleet_client) = fleet_client {
         fleet::spawn_heartbeat(fleet_client.clone(), state.clone());
         fleet::spawn_config_ws(fleet_client.clone(), state.clone());
         eprintln!("Fleet client enabled");
+
+        // Start reconciler if outbox is available
+        if let Some(ref outbox) = state.outbox {
+            let reconciler_notify = reconciler::trigger();
+            reconciler::spawn(state.clone(), outbox.clone(), reconciler_notify);
+            eprintln!("Reconciler enabled");
+        }
     } else {
         eprintln!("Fleet client disabled (no REGISTRY_URL)");
     }
