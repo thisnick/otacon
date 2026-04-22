@@ -42,7 +42,7 @@ export function phoneEsimCommands(
       const res = await esimFetch(parentOpts(), "/install", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ activation_code: activationCode }),
+        body: JSON.stringify({ activationCode }),
       });
       console.log(JSON.stringify(await res.json(), null, 2));
     });
