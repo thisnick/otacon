@@ -328,7 +328,7 @@ async fn phone_apps_list(
 
 async fn phone_apps_running(
     State(state): State<Arc<AppState>>, Path(id): Path<String>,
-) -> Result<Json<Vec<apps::App>>, ApiError> {
+) -> Result<Json<apps::RunningApps>, ApiError> {
     let ps = extract_phone(State(state), Path(id)).await?;
     apps::running_handler(&ps.config.adb_serial).await
 }

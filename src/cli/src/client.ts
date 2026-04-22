@@ -126,7 +126,7 @@ export class OtaconClient {
     return res.json();
   }
 
-  async appsRunning(): Promise<App[]> {
+  async appsRunning(): Promise<{ apps: App[]; screen_state: string }> {
     const res = await fetch(`${this.baseUrl}/api/apps/running`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return res.json();

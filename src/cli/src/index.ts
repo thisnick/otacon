@@ -348,11 +348,22 @@ app
   .option("--json", "output as JSON")
   .action(async (opts: { json?: boolean }) => {
     const client = await getClient();
-    const list = await client.appsRunning();
-    printList(list, [
+    const result = await client.appsRunning();
+    if (opts.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+    if (result.apps.length === 0 && result.screen_state !== "unlocked") {
+      console.error(
+        `(no running apps — phone is ${result.screen_state}. ` +
+          `Wake with: otacon key wake)`
+      );
+      return;
+    }
+    printList(result.apps, [
       { header: "PACKAGE", get: (a) => a.package },
       { header: "LABEL", get: (a) => a.label },
-    ], { json: opts.json });
+    ]);
   });
 
 app

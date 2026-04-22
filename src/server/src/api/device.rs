@@ -295,7 +295,7 @@ async fn get_focused_window(serial: &str) -> Result<String, ApiError> {
 ///   "dozing"   — ambient/low-power display
 ///   "dreaming" — screensaver / always-on display dream
 ///   "unknown"  — couldn't determine (adb errors, etc.)
-async fn get_screen_state(serial: &str) -> String {
+pub async fn get_screen_state(serial: &str) -> String {
     let (power_out, window_out) = tokio::join!(
         adb_shell(serial, "dumpsys power | grep mWakefulness="),
         adb_shell(serial, "dumpsys window | grep -i isKeyguardShowing"),

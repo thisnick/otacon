@@ -50,23 +50,36 @@ pub async fn list_handler(serial: &str) -> Result<Json<Vec<App>>, ApiError> {
     Ok(Json(apps))
 }
 
+#[derive(Serialize, ToSchema)]
+pub struct RunningApps {
+    /// List of running/foreground apps (empty when phone is asleep)
+    apps: Vec<App>,
+    /// Current screen state — explains an empty `apps` list
+    /// (asleep/dozing/dreaming → can't enumerate; unlocked → genuinely no apps)
+    /// See /api/info screen_state docs for the full enum.
+    screen_state: String,
+}
+
 #[utoipa::path(
     get,
     path = "/api/apps/running",
     tag = "Apps",
     operation_id = "listRunningApps",
-    responses((status = 200, body = Vec<App>))
+    responses((status = 200, body = RunningApps))
 )]
-pub async fn running_handler(serial: &str) -> Result<Json<Vec<App>>, ApiError> {
+pub async fn running_handler(serial: &str) -> Result<Json<RunningApps>, ApiError> {
     // Get recently used / running apps. When the phone is asleep dumpsys
     // sometimes fails or returns nothing — treat that as "no running apps"
     // rather than a 502, since asking for the running list on a sleeping
-    // phone is a reasonable observation.
-    let out = adb_shell(serial,
-        "dumpsys activity activities | grep -E 'mResumedActivity|topResumedActivity|realActivity'"
-    )
-    .await
-    .unwrap_or_default();
+    // phone is a reasonable observation. The screen_state field tells the
+    // caller why the list is empty.
+    let (out, screen_state) = tokio::join!(
+        adb_shell(serial,
+            "dumpsys activity activities | grep -E 'mResumedActivity|topResumedActivity|realActivity'"
+        ),
+        super::device::get_screen_state(serial),
+    );
+    let out = out.unwrap_or_default();
 
     let mut packages = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -89,7 +102,7 @@ pub async fn running_handler(serial: &str) -> Result<Json<Vec<App>>, ApiError> {
             }
         }
     }
-    Ok(Json(packages))
+    Ok(Json(RunningApps { apps: packages, screen_state }))
 }
 
 #[derive(Deserialize, Serialize, ToSchema)]
