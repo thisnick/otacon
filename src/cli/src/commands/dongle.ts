@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { resolveConfig } from "../config.js";
 import { RegistryClient } from "../registry-client.js";
+import { printList, colorStatus } from "../format.js";
 
 function getRegistryClient(opts: { registry?: string }): RegistryClient {
   const resolved = resolveConfig({ registry: opts.registry });
@@ -16,11 +17,19 @@ export function dongleCommands(parentOpts: () => { registry?: string }): Command
 
   dongle
     .command("list")
-    .description("List all dongles")
-    .action(async () => {
+    .description("List all dongles (default: table; use --json for raw JSON)")
+    .option("--json", "output as JSON")
+    .action(async (opts: { json?: boolean }) => {
       const client = getRegistryClient(parentOpts());
       const dongles = await client.listDongles();
-      console.log(JSON.stringify(dongles, null, 2));
+      printList(dongles, [
+        { header: "ID", get: (d) => d.id },
+        { header: "BT MAC", get: (d) => d.bt_mac },
+        { header: "HCI", get: (d) => d.hci_device },
+        { header: "HOST", get: (d) => d.host_id },
+        { header: "PHONE", get: (d) => d.phone_id ?? "spare" },
+        { header: "STATUS", get: (d) => colorStatus(d.status) },
+      ], { json: opts.json });
     });
 
   dongle

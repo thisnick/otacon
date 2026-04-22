@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { resolveConfig } from "../config.js";
 import { RegistryClient } from "../registry-client.js";
+import { printList } from "../format.js";
 
 function getRegistryClient(opts: { registry?: string }): RegistryClient {
   const resolved = resolveConfig({ registry: opts.registry });
@@ -32,18 +33,25 @@ export function regCommands(parentOpts: () => { registry?: string }): Command {
 
   reg
     .command("list")
-    .description("List pending registrations (hosts + clients)")
-    .action(async () => {
+    .description("List pending registrations (default: table; use --json for raw JSON)")
+    .option("--json", "output as JSON")
+    .action(async (opts: { json?: boolean }) => {
       const client = getRegistryClient(parentOpts());
       const [hosts, clients] = await Promise.all([
         client.listPendingHosts(),
         client.listPendingClients(),
       ]);
       const pending = [
-        ...hosts.map((r) => ({ ...r, kind: r.kind ?? "host" })),
-        ...clients.map((r) => ({ ...r, kind: r.kind ?? "client" })),
+        ...hosts.map((r) => ({ ...r, kind: "host" as const })),
+        ...clients.map((r) => ({ ...r, kind: "client" as const })),
       ].filter((r) => r.status === "pending");
-      console.log(JSON.stringify(pending, null, 2));
+      printList(pending, [
+        { header: "ID", get: (r) => r.id, maxWidth: 12 },
+        { header: "KIND", get: (r) => r.kind },
+        { header: "WHO", get: (r) => r.host_id },
+        { header: "HOSTNAME", get: (r) => r.hostname },
+        { header: "REQUESTED", get: (r) => r.requested_at },
+      ], { json: opts.json });
     });
 
   reg

@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { resolveConfig } from "../config.js";
 import { RegistryClient } from "../registry-client.js";
+import { printList } from "../format.js";
 
 function getRegistryClient(opts: { registry?: string }): RegistryClient {
   const resolved = resolveConfig({ registry: opts.registry });
@@ -20,15 +21,21 @@ export function clientCommands(parentOpts: () => { registry?: string }): Command
 
   client
     .command("list")
-    .description("List active admin clients")
+    .description("List active admin clients (default: table; use --json for raw JSON)")
     .option("--all", "include revoked clients")
-    .action(async (opts: { all?: boolean }) => {
+    .option("--json", "output as JSON")
+    .action(async (opts: { all?: boolean; json?: boolean }) => {
       const c = getRegistryClient(parentOpts());
       const tokens = await c.listTokens();
       const filtered = tokens.filter(
         (t) => t.scope === "admin" && (opts.all || !t.revoked_at)
       );
-      console.log(JSON.stringify(filtered, null, 2));
+      printList(filtered, [
+        { header: "PREFIX", get: (t) => t.token_prefix },
+        { header: "NOTE", get: (t) => t.note, maxWidth: 40 },
+        { header: "LAST SEEN", get: (t) => t.last_seen_at },
+        { header: "REVOKED", get: (t) => t.revoked_at },
+      ], { json: opts.json });
     });
 
   client

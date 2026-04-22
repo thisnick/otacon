@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { resolveConfig } from "../config.js";
 import { RegistryClient } from "../registry-client.js";
+import { printList, printDetail, colorStatus } from "../format.js";
 
 function getRegistryClient(opts: { registry?: string }): RegistryClient {
   const resolved = resolveConfig({ registry: opts.registry });
@@ -16,21 +17,30 @@ export function hostCommands(parentOpts: () => { registry?: string }): Command {
 
   host
     .command("list")
-    .description("List all hosts")
-    .action(async () => {
+    .description("List all hosts (default: table; use --json for raw JSON)")
+    .option("--json", "output as JSON")
+    .action(async (opts: { json?: boolean }) => {
       const client = getRegistryClient(parentOpts());
       const hosts = await client.listHosts();
-      console.log(JSON.stringify(hosts, null, 2));
+      printList(hosts, [
+        { header: "ID", get: (h) => h.id },
+        { header: "STATUS", get: (h) => colorStatus(h.status) },
+        { header: "FQDN", get: (h) => h.fqdn },
+        { header: "IP", get: (h) => h.tailscale_ip },
+        { header: "PORT", get: (h) => h.api_port },
+        { header: "LAST HEARTBEAT", get: (h) => h.last_heartbeat },
+      ], { json: opts.json });
     });
 
   host
     .command("status")
     .description("Show host details")
     .argument("<id>", "host ID")
-    .action(async (id: string) => {
+    .option("--json", "output as JSON")
+    .action(async (id: string, opts: { json?: boolean }) => {
       const client = getRegistryClient(parentOpts());
       const host = await client.getHost(id);
-      console.log(JSON.stringify(host, null, 2));
+      printDetail(host as unknown as Record<string, unknown>, { json: opts.json });
     });
 
   host
