@@ -139,21 +139,106 @@ pub async fn install_handler(serial: &str, body: axum::body::Bytes) -> Result<Js
         return Err(ApiError::BadRequest("empty APK body".into()));
     }
 
-    // Write APK to temp file
-    let tmp_path = "/tmp/otacon_install.apk";
-    tokio::fs::write(tmp_path, &body).await
+    // Detect format by magic bytes:
+    //   PK\x03\x04 = ZIP (likely .apkm bundle from APKMirror, an AAB-derived
+    //                     archive with base.apk + split_*.apk inside)
+    //   any other  = single .apk (which is also technically a zip, but if it
+    //                              has classes.dex or AndroidManifest.xml as
+    //                              top-level entries it's an APK)
+    let is_zip = body.starts_with(b"PK\x03\x04");
+    let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos()).unwrap_or(0);
+
+    if is_zip && looks_like_apk_bundle(&body) {
+        install_bundle(serial, &body, unique).await
+    } else {
+        install_single(serial, &body, unique).await
+    }
+}
+
+/// Quick heuristic: is this zip an APK bundle (.apkm with split_*.apk inside)
+/// rather than a single .apk file? Look for a "split_config." entry name.
+fn looks_like_apk_bundle(body: &axum::body::Bytes) -> bool {
+    let cursor = std::io::Cursor::new(body.as_ref());
+    let mut archive = match zip::ZipArchive::new(cursor) {
+        Ok(a) => a,
+        Err(_) => return false,
+    };
+    for i in 0..archive.len() {
+        if let Ok(file) = archive.by_index(i) {
+            if file.name().starts_with("split_config.") || file.name() == "base.apk" {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+async fn install_single(serial: &str, body: &axum::body::Bytes, unique: u128) -> Result<Json<serde_json::Value>, ApiError> {
+    let tmp_path = format!("/tmp/otacon_install_{unique}.apk");
+    tokio::fs::write(&tmp_path, body).await
         .map_err(|e| ApiError::Adb(format!("failed to write APK: {e}")))?;
 
-    // Install via ADB
-    let output = adb(serial, &["install", "-r", tmp_path]).await?;
+    let output = adb(serial, &["install", "-r", &tmp_path]).await?;
     let result = String::from_utf8_lossy(&output);
-
-    // Clean up
-    let _ = tokio::fs::remove_file(tmp_path).await;
+    let _ = tokio::fs::remove_file(&tmp_path).await;
 
     if result.contains("Success") {
-        Ok(Json(serde_json::json!({"ok": true})))
+        Ok(Json(serde_json::json!({"ok": true, "format": "apk"})))
     } else {
         Err(ApiError::Adb(format!("install failed: {}", result.trim())))
+    }
+}
+
+async fn install_bundle(serial: &str, body: &axum::body::Bytes, unique: u128) -> Result<Json<serde_json::Value>, ApiError> {
+    let tmp_dir = format!("/tmp/otacon_apkm_{unique}");
+    tokio::fs::create_dir_all(&tmp_dir).await
+        .map_err(|e| ApiError::Adb(format!("failed to create tmp dir: {e}")))?;
+
+    // Extract base.apk + split_*.apk entries from the zip
+    let cursor = std::io::Cursor::new(body.as_ref());
+    let mut archive = zip::ZipArchive::new(cursor)
+        .map_err(|e| ApiError::BadRequest(format!("invalid bundle zip: {e}")))?;
+
+    let mut apk_paths: Vec<String> = Vec::new();
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i)
+            .map_err(|e| ApiError::Adb(format!("zip read error: {e}")))?;
+        let name = file.name().to_string();
+        if !name.ends_with(".apk") {
+            continue;
+        }
+        let out_path = format!("{tmp_dir}/{name}");
+        let mut out = std::fs::File::create(&out_path)
+            .map_err(|e| ApiError::Adb(format!("failed to create {out_path}: {e}")))?;
+        std::io::copy(&mut file, &mut out)
+            .map_err(|e| ApiError::Adb(format!("failed to extract {name}: {e}")))?;
+        apk_paths.push(out_path);
+    }
+
+    if apk_paths.is_empty() {
+        let _ = tokio::fs::remove_dir_all(&tmp_dir).await;
+        return Err(ApiError::BadRequest("bundle has no .apk entries".into()));
+    }
+
+    // adb install-multiple installs all splits as one package; Android
+    // Package Manager picks the right arch + DPI splits at install time.
+    let mut args: Vec<&str> = vec!["install-multiple", "-r"];
+    for p in &apk_paths {
+        args.push(p);
+    }
+    let output = adb(serial, &args).await?;
+    let result = String::from_utf8_lossy(&output);
+
+    let _ = tokio::fs::remove_dir_all(&tmp_dir).await;
+
+    if result.contains("Success") {
+        Ok(Json(serde_json::json!({
+            "ok": true,
+            "format": "apkm",
+            "splits_installed": apk_paths.len()
+        })))
+    } else {
+        Err(ApiError::Adb(format!("install-multiple failed: {}", result.trim())))
     }
 }
