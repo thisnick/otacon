@@ -96,8 +96,6 @@ impl FleetClient {
 
     /// Register this host with the registry (identity only, no phone status side-effects).
     pub async fn register_host(&self) {
-        let tailscale_ip = get_tailscale_ip().await;
-        let fqdn = get_tailscale_fqdn().await;
         let api_port: u16 = std::env::var("AUDIO_PORT")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -105,8 +103,6 @@ impl FleetClient {
 
         let body = serde_json::json!({
             "host_id": self.host_id,
-            "tailscale_ip": tailscale_ip,
-            "fqdn": fqdn,
             "api_port": api_port,
         });
 
@@ -636,77 +632,3 @@ fn gethostname() -> Option<String> {
     }
 }
 
-async fn get_tailscale_ip() -> Option<String> {
-    // Try `tailscale ip -4` first (works if binary is in PATH)
-    if let Ok(output) = tokio::process::Command::new("tailscale")
-        .args(["ip", "-4"])
-        .output()
-        .await
-    {
-        if output.status.success() {
-            let ip = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !ip.is_empty() {
-                return Some(ip);
-            }
-        }
-    }
-
-    // Fallback: parse `ip -4 addr show tailscale0` (works in host-networking containers)
-    if let Ok(output) = tokio::process::Command::new("ip")
-        .args(["-4", "addr", "show", "tailscale0"])
-        .output()
-        .await
-    {
-        if output.status.success() {
-            let text = String::from_utf8_lossy(&output.stdout);
-            for line in text.lines() {
-                let trimmed = line.trim();
-                if let Some(rest) = trimmed.strip_prefix("inet ") {
-                    // Format: "inet 100.80.96.91/32 scope global tailscale0"
-                    if let Some(ip) = rest.split('/').next() {
-                        return Some(ip.to_string());
-                    }
-                }
-            }
-        }
-    }
-
-    None
-}
-
-async fn get_tailscale_fqdn() -> Option<String> {
-    // Try `tailscale status --json` first (works if binary is in PATH)
-    if let Ok(output) = tokio::process::Command::new("tailscale")
-        .args(["status", "--json"])
-        .output()
-        .await
-    {
-        if output.status.success() {
-            let json: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
-            if let Some(fqdn) = json.get("Self")
-                .and_then(|s| s.get("DNSName"))
-                .and_then(|v| v.as_str())
-            {
-                return Some(fqdn.trim_end_matches('.').to_string());
-            }
-        }
-    }
-
-    // Fallback: get the Tailscale IP and reverse-DNS it via `getent hosts`
-    let ip = get_tailscale_ip().await?;
-    if let Ok(output) = tokio::process::Command::new("getent")
-        .args(["hosts", &ip])
-        .output()
-        .await
-    {
-        if output.status.success() {
-            let text = String::from_utf8_lossy(&output.stdout);
-            // Format: "100.80.96.91    otacon-pi.tail0437b8.ts.net"
-            if let Some(fqdn) = text.split_whitespace().nth(1) {
-                return Some(fqdn.trim_end_matches('.').to_string());
-            }
-        }
-    }
-
-    None
-}
