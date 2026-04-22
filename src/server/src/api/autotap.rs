@@ -20,24 +20,49 @@ pub fn spawn_auto_tap(
     timeout: Duration,
 ) -> tokio::task::JoinHandle<bool> {
     tokio::spawn(async move {
+        let serial = state.config.adb_serial.clone();
+        eprintln!(
+            "[{}] auto-tap: started, watching for {:?} (snapshot_available={})",
+            serial, targets, state.bridge.is_snapshot_available()
+        );
         let deadline = tokio::time::Instant::now() + timeout;
         // Brief initial delay — let the dialog appear
         tokio::time::sleep(Duration::from_millis(500)).await;
 
+        let mut iters = 0u32;
         loop {
             if tokio::time::Instant::now() >= deadline {
+                eprintln!("[{}] auto-tap: timeout after {} iterations", serial, iters);
                 return false;
             }
+            iters += 1;
 
-            if let Some(ref_id) = find_button(&state, targets).await {
-                // Tap it
-                let body = serde_json::json!({"action": "click", "ref": ref_id}).to_string();
-                if state.bridge.snapshot_post("/action", &body).await.is_ok() {
-                    eprintln!(
-                        "[{}] auto-tap: tapped dialog button '{}'",
-                        state.config.adb_serial, ref_id
-                    );
-                    return true;
+            match find_button(&state, targets).await {
+                Some(ref_id) => {
+                    let body = serde_json::json!({"action": "click", "ref": ref_id}).to_string();
+                    match state.bridge.snapshot_post("/action", &body).await {
+                        Ok(_) => {
+                            eprintln!(
+                                "[{}] auto-tap: tapped dialog button '{}' on iter {}",
+                                serial, ref_id, iters
+                            );
+                            return true;
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "[{}] auto-tap: tap failed on iter {}: {:?}",
+                                serial, iters, e
+                            );
+                        }
+                    }
+                }
+                None => {
+                    if iters == 1 || iters % 5 == 0 {
+                        eprintln!(
+                            "[{}] auto-tap: no matching button on iter {}",
+                            serial, iters
+                        );
+                    }
                 }
             }
 
