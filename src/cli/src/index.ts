@@ -415,10 +415,14 @@ contacts
 
 program
   .command("info")
-  .description("Device and activity info")
-  .action(async () => {
+  .description("Device and activity info (omits fleet-agent monitor blob; use --monitor to include)")
+  .option("--monitor", "include the fleet-agent monitor status blob (verbose)")
+  .action(async (opts: { monitor?: boolean }) => {
     const client = await getClient();
-    const info = await client.info();
+    const info = await client.info() as Record<string, unknown>;
+    if (!opts.monitor && "monitor" in info) {
+      delete info.monitor;
+    }
     console.log(JSON.stringify(info, null, 2));
   });
 
