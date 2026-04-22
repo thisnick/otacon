@@ -337,6 +337,7 @@ apps
     const list = await client.apps();
     printList(list, [
       { header: "PACKAGE", get: (a) => a.package },
+      { header: "VERSION", get: (a) => (a as { version_code?: number }).version_code },
       { header: "LABEL", get: (a) => a.label },
     ], { json: opts.json });
   });

@@ -11,6 +11,13 @@ pub struct App {
     package: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     label: Option<String>,
+    /// Monotonic Android versionCode (e.g. 9270000)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version_code: Option<u64>,
+    /// Human versionName (e.g. "9.27.0"). Only populated when explicitly requested
+    /// (uses `dumpsys package <pkg>` per-app, which is slow).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version_name: Option<String>,
 }
 
 #[utoipa::path(
@@ -21,13 +28,22 @@ pub struct App {
     responses((status = 200, body = Vec<App>))
 )]
 pub async fn list_handler(serial: &str) -> Result<Json<Vec<App>>, ApiError> {
-    let out = adb_shell(serial, "pm list packages -3").await?;
+    // --show-versioncode appends "versionCode:N" to each package line in one call.
+    let out = adb_shell(serial, "pm list packages -3 --show-versioncode").await?;
     let apps: Vec<App> = out
         .lines()
         .filter_map(|line| {
-            line.strip_prefix("package:").map(|pkg| App {
-                package: pkg.trim().to_string(),
+            // Lines look like: "package:com.example.foo versionCode:42"
+            let rest = line.strip_prefix("package:")?;
+            let mut parts = rest.split_whitespace();
+            let pkg = parts.next()?.to_string();
+            let version_code = parts
+                .find_map(|w| w.strip_prefix("versionCode:")?.parse::<u64>().ok());
+            Some(App {
+                package: pkg,
                 label: None,
+                version_code,
+                version_name: None,
             })
         })
         .collect();
@@ -62,6 +78,8 @@ pub async fn running_handler(serial: &str) -> Result<Json<Vec<App>>, ApiError> {
                 packages.push(App {
                     package: pkg,
                     label: None,
+                    version_code: None,
+                    version_name: None,
                 });
             }
         }
