@@ -44,13 +44,13 @@ pub fn spawn_auto_tap(
             iters += 1;
 
             match find_button(&state, targets, context_keywords).await {
-                Some(ref_id) => {
-                    let body = serde_json::json!({"action": "click", "ref": ref_id}).to_string();
+                Some(m) => {
+                    let body = serde_json::json!({"action": "click", "ref": m.ref_id}).to_string();
                     match state.bridge.snapshot_post("/action", &body).await {
                         Ok(_) => {
                             eprintln!(
-                                "[{}] auto-tap: tapped dialog button '{}' on iter {}",
-                                serial, ref_id, iters
+                                "[{}] auto-tap: tapped '{}' (ref={}) on iter {}",
+                                serial, m.text, m.ref_id, iters
                             );
                             return true;
                         }
@@ -85,11 +85,16 @@ pub fn spawn_auto_tap(
 /// Walk the a11y tree and find a clickable button whose text matches one of
 /// `targets` (case-insensitive).  If `context_keywords` is non-empty, the
 /// keyword must appear somewhere in the tree (in any text/content_desc).
+struct ButtonMatch {
+    ref_id: String,
+    text: String,
+}
+
 async fn find_button(
     state: &PhoneState,
     targets: &[&str],
     context_keywords: &[&str],
-) -> Option<String> {
+) -> Option<ButtonMatch> {
     if !state.bridge.is_snapshot_available() {
         return None;
     }
@@ -106,8 +111,8 @@ async fn find_button(
     }
 
     for node in &nodes {
-        if let Some(ref_id) = walk_for_button(node, targets) {
-            return Some(ref_id);
+        if let Some(m) = walk_for_button(node, targets) {
+            return Some(m);
         }
     }
     None
@@ -123,18 +128,23 @@ fn has_context(node: &A11yNode, keywords: &[&str]) -> bool {
     node.children.iter().any(|c| has_context(c, keywords))
 }
 
-fn walk_for_button(node: &A11yNode, targets: &[&str]) -> Option<String> {
+fn walk_for_button(node: &A11yNode, targets: &[&str]) -> Option<ButtonMatch> {
     if node.clickable {
         if let Some(ref text) = node.text {
             let lower = text.trim().to_lowercase();
             if targets.iter().any(|t| lower == *t) {
-                return node.ref_id.clone();
+                if let Some(ref_id) = &node.ref_id {
+                    return Some(ButtonMatch {
+                        ref_id: ref_id.clone(),
+                        text: text.clone(),
+                    });
+                }
             }
         }
     }
     for child in &node.children {
-        if let Some(r) = walk_for_button(child, targets) {
-            return Some(r);
+        if let Some(m) = walk_for_button(child, targets) {
+            return Some(m);
         }
     }
     None

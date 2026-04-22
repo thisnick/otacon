@@ -179,10 +179,14 @@ pub async fn install_handler(state: Arc<PhoneState>, Json(body): Json<InstallBod
 
     // Spawn background auto-tapper for the carrier confirmation dialog
     // ("Allow your carrier to set up eSIM?" → tap "Yes"). The context
-    // keywords ensure we only tap when the eSIM dialog is actually visible —
-    // not a random button elsewhere in the UI.
+    // keywords match the exact dialog title text — using broader keywords
+    // (e.g. "esim" alone) would false-positive on the Settings → SIM page.
     static ESIM_CONFIRM_BUTTONS: &[&str] = &["yes", "allow", "ok", "confirm"];
-    static ESIM_CONFIRM_CONTEXT: &[&str] = &["esim", "carrier", "set up"];
+    static ESIM_CONFIRM_CONTEXT: &[&str] = &[
+        "allow your carrier",       // Pixel/AOSP dialog title
+        "set up esim",              // alt phrasing
+        "used immediately after",   // dialog body line
+    ];
     let tap_handle = autotap::spawn_auto_tap(
         state.clone(),
         ESIM_CONFIRM_BUTTONS,
