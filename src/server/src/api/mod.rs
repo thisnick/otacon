@@ -1,6 +1,7 @@
 pub mod adb;
 pub mod action;
 pub mod apps;
+pub mod autotap;
 pub mod bridge;
 pub mod calls;
 pub mod clipboard;
@@ -368,7 +369,7 @@ async fn phone_esim_install(
     body: Json<esim::InstallBody>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let ps = extract_phone(State(state), Path(id)).await?;
-    esim::install_handler(&ps.config.adb_serial, body).await
+    esim::install_handler(ps, body).await
 }
 
 async fn phone_esim_delete(

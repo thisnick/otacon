@@ -58,7 +58,7 @@ impl SnapshotCache {
 }
 
 
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Bounds {
     pub x1: i32,
     pub y1: i32,
@@ -66,7 +66,7 @@ pub struct Bounds {
     pub y2: i32,
 }
 
-#[derive(Debug, Clone, Serialize, ToSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[schema(no_recursion)]
 pub struct A11yNode {
     pub class: String,
@@ -80,15 +80,25 @@ pub struct A11yNode {
     pub bounds: Option<Bounds>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ref_id: Option<String>,
+    #[serde(default)]
     pub clickable: bool,
+    #[serde(default)]
     pub checkable: bool,
+    #[serde(default)]
     pub checked: bool,
+    #[serde(default)]
     pub focusable: bool,
+    #[serde(default)]
     pub focused: bool,
+    #[serde(default)]
     pub scrollable: bool,
+    #[serde(default)]
     pub enabled: bool,
+    #[serde(default)]
     pub selected: bool,
+    #[serde(default)]
     pub long_clickable: bool,
+    #[serde(default)]
     pub children: Vec<A11yNode>,
 }
 

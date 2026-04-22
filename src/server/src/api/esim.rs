@@ -1,9 +1,11 @@
 use axum::Json;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use std::time::Duration;
 use utoipa::ToSchema;
 
 use super::adb::adb_shell;
+use super::autotap;
 use super::ApiError;
 use crate::phone::PhoneState;
 
@@ -171,11 +173,25 @@ pub async fn profiles_handler(state: Arc<PhoneState>) -> Result<Json<Vec<EsimPro
     request_body = InstallBody,
     responses((status = 200, body = serde_json::Value))
 )]
-pub async fn install_handler(serial: &str, Json(body): Json<InstallBody>) -> Result<Json<serde_json::Value>, ApiError> {
+pub async fn install_handler(state: Arc<PhoneState>, Json(body): Json<InstallBody>) -> Result<Json<serde_json::Value>, ApiError> {
+    let serial = &state.config.adb_serial;
     let encoded = urlencoding::encode(&body.activation_code);
+
+    // Spawn background auto-tapper for the carrier confirmation dialog
+    // ("Allow your carrier to set up eSIM?" → tap "Yes")
+    static ESIM_CONFIRM_BUTTONS: &[&str] = &["yes", "allow", "ok", "confirm"];
+    let tap_handle = autotap::spawn_auto_tap(
+        state.clone(),
+        ESIM_CONFIRM_BUTTONS,
+        Duration::from_secs(120),
+    );
+
     let output = adb_shell(serial, &format!(
         "content query --uri 'content://com.otacon.kiosk/esim/install?activationCode={encoded}'"
     )).await?;
+
+    // Cancel the auto-tapper if still running
+    tap_handle.abort();
 
     parse_content_result(&output)
 }
