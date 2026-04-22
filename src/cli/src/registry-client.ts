@@ -47,6 +47,18 @@ export interface PendingRegistration {
   resolved_at?: string | null;
 }
 
+export interface Token {
+  id: string;
+  scope: "node" | "admin";
+  node_id?: string | null;
+  token_prefix: string;
+  created_at: string;
+  last_seen_at?: string | null;
+  expires_at?: string | null;
+  revoked_at?: string | null;
+  note?: string | null;
+}
+
 async function throwOnError(res: Response): Promise<void> {
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -184,6 +196,24 @@ export class RegistryClient {
   async rejectClient(id: string): Promise<void> {
     const res = await fetch(
       `${this.baseUrl}/api/v1/admin/clients/${encodeURIComponent(id)}/reject`,
+      { method: "POST", headers: this.headers() }
+    );
+    await throwOnError(res);
+  }
+
+  // ── Tokens ──────────────────────────────────────────────────────
+
+  async listTokens(): Promise<Token[]> {
+    const res = await fetch(`${this.baseUrl}/api/v1/admin/tokens`, {
+      headers: this.headers(),
+    });
+    await throwOnError(res);
+    return res.json();
+  }
+
+  async revokeToken(id: string): Promise<void> {
+    const res = await fetch(
+      `${this.baseUrl}/api/v1/admin/tokens/${encodeURIComponent(id)}/revoke`,
       { method: "POST", headers: this.headers() }
     );
     await throwOnError(res);

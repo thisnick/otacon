@@ -12,6 +12,7 @@ import { phoneCommands } from "./commands/phone.js";
 import { phoneEsimCommands } from "./commands/phone-esim.js";
 import { hostCommands } from "./commands/host.js";
 import { dongleCommands } from "./commands/dongle.js";
+import { clientCommands } from "./commands/client.js";
 
 program
   .name("otacon")
@@ -34,6 +35,7 @@ program.addCommand(authCommands());
 program.addCommand(regCommands(getParentOpts));
 program.addCommand(hostCommands(getParentOpts));
 program.addCommand(dongleCommands(getParentOpts));
+program.addCommand(clientCommands(getParentOpts));
 
 const phone = phoneCommands(getParentOpts);
 phone.addCommand(phoneEsimCommands(getParentOpts));
