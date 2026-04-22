@@ -28,7 +28,7 @@ pub struct FleetClient {
 
 /// Load the bearer token from the auth file on disk.
 /// Returns None if the file doesn't exist or can't be parsed.
-fn load_auth_token() -> Option<String> {
+pub fn load_auth_token() -> Option<String> {
     let data = std::fs::read_to_string(AUTH_FILE).ok()?;
     let json: serde_json::Value = serde_json::from_str(&data).ok()?;
     json.get("token")?.as_str().map(|s| s.to_string())
@@ -73,6 +73,16 @@ impl FleetClient {
                 eprintln!("[fleet] Failed to save registry_ids: {e}");
             }
         }
+    }
+
+    /// Get the registry URL.
+    pub fn registry_url(&self) -> &str {
+        &self.registry_url
+    }
+
+    /// Get the host ID.
+    pub fn host_id(&self) -> &str {
+        &self.host_id
     }
 
     /// Build a POST request with auth header (if token is available).

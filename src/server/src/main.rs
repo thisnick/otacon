@@ -1,6 +1,7 @@
 mod api;
 mod dbus_monitor;
 pub mod fleet;
+pub mod outbox;
 pub mod phone;
 
 use axum::{
@@ -133,6 +134,8 @@ pub struct AppState {
     pub config_path: std::path::PathBuf,
     /// Fleet client for registry communication (None in standalone mode)
     pub fleet_client: Option<Arc<fleet::FleetClient>>,
+    /// Outbox for reliable event delivery to registry (None in standalone mode)
+    pub outbox: Option<Arc<outbox::Outbox>>,
 }
 
 /// Create a PhoneState from a PhoneConfig.
@@ -232,11 +235,33 @@ async fn main() {
 
     let fleet_client = fleet::FleetClient::from_env().map(Arc::new);
 
+    // Initialize outbox if fleet client is configured
+    let outbox = if let Some(ref fc) = fleet_client {
+        let db_path = std::path::PathBuf::from("/data/otacon/outbox/events.db");
+        match outbox::Outbox::init(
+            &db_path,
+            fc.registry_url().to_string(),
+            fc.host_id().to_string(),
+        ) {
+            Ok(ob) => {
+                eprintln!("[outbox] Initialized at {db_path:?}");
+                Some(Arc::new(ob))
+            }
+            Err(e) => {
+                eprintln!("[outbox] Failed to initialize: {e} — events will not be persisted");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     let state = Arc::new(AppState {
         phones: tokio::sync::RwLock::new(phones),
         system_events_tx,
         config_path,
         fleet_client: fleet_client.clone(),
+        outbox,
     });
 
     // Start lazy VNC proxy listeners for each phone
