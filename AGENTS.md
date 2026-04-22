@@ -115,6 +115,17 @@ observation generates events to bring the registry into agreement.
 - Use `make registry-deploy` and `make push` — they build, push to ghcr.io,
   and pull on the Pi. Watchtower will revert if the ghcr.io image is older
   than the running container, so always push after a code change.
+- **`make push` includes the kiosk APK** — the Docker build
+  (`Dockerfile.otacon`) has a stage that runs `gradlew assembleRelease` on
+  the device-owner Android project, copies the APK into the image at
+  `/opt/otacon-kiosk.apk`. On container startup the fleet-agent's
+  `provision_device_owner()` auto-installs it on each phone via
+  `adb install -r`. No separate APK build/deploy step needed.
+- **Bump kiosk APK versionCode** when changing the device-owner app.
+  Fleet-agent compares the installed versionCode against the APK in the
+  image — if they match, it skips reinstall. Forgetting to bump
+  `android/device-owner/app/build.gradle.kts` → `versionCode` means
+  phones never pick up the new APK.
 
 ## Areas to remember (non-obvious gotchas)
 
