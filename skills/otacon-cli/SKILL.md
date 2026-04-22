@@ -15,15 +15,15 @@ Control Android phones connected to a Raspberry Pi fleet, via a central registry
 
 ```bash
 # 1. Pair this CLI with the registry — long-polls until an admin approves
-pnpm cli auth register --registry http://otacon-registry.<tailnet>.ts.net:9080
+otacon auth register --registry http://otacon-registry.<tailnet>.ts.net:9080
 
 # 2. Approve from another terminal (using an existing admin token):
-pnpm cli reg list
-pnpm cli reg approve <pending_id>
+otacon reg list
+otacon reg approve <pending_id>
 
 # 3. Pick a default phone (avoids passing --phone every time)
-pnpm cli phone list
-pnpm cli phone use phone-2
+otacon phone list
+otacon phone use phone-2
 ```
 
 After this, the token + registry URL are saved to `~/.otacon/config.toml` (chmod 0600). Subsequent commands work without flags.
@@ -41,21 +41,29 @@ All config values can be overridden per-invocation via env vars (precedence: env
 
 ## How to invoke
 
-This repo uses pnpm workspaces. The CLI is invoked through a wrapper script:
+The deployed CLI binary is `otacon`:
 
 ```bash
-pnpm cli <subcommand> ...
+otacon <subcommand> ...
 ```
 
-Everything after `pnpm cli` is passed as args to the otacon binary. Example: `pnpm cli phone list`.
+All examples in this skill use `otacon`.
+
+**Inside this repo (development)**, the CLI hasn't been globally installed. Use the pnpm wrapper instead — it runs the in-tree TypeScript source:
+
+```bash
+pnpm cli <subcommand> ...     # equivalent to: otacon <subcommand> ...
+```
+
+So `otacon phone list` becomes `pnpm cli phone list` when working from inside the repo. Pick whichever matches your environment.
 
 ## Output format
 
 List/status commands default to **column-aligned tables** with colored status fields. Pass `--json` for raw JSON (for piping to `jq` or programmatic use).
 
 ```bash
-pnpm cli phone list           # readable table
-pnpm cli phone list --json    # JSON array
+otacon phone list           # readable table
+otacon phone list --json    # JSON array
 ```
 
 ## Fleet management
@@ -63,14 +71,14 @@ pnpm cli phone list --json    # JSON array
 ### Phones
 
 ```bash
-pnpm cli phone list                              # list all phones
-pnpm cli phone list --connected                  # only connected
-pnpm cli phone list --host otacon-pi             # filter by host
-pnpm cli phone use <phone-id>                    # set active phone (persists in config)
-pnpm cli phone delete <phone-id>                 # remove from registry (re-added on next heartbeat if alive)
-pnpm cli phone factory-reset                     # active phone (DESTRUCTIVE)
-pnpm cli phone location [<id>]                   # show host FQDN + port
-pnpm cli phone config get                        # current config (wifi, bluetooth, etc.)
+otacon phone list                              # list all phones
+otacon phone list --connected                  # only connected
+otacon phone list --host otacon-pi             # filter by host
+otacon phone use <phone-id>                    # set active phone (persists in config)
+otacon phone delete <phone-id>                 # remove from registry (re-added on next heartbeat if alive)
+otacon phone factory-reset                     # active phone (DESTRUCTIVE)
+otacon phone location [<id>]                   # show host FQDN + port
+otacon phone config get                        # current config (wifi, bluetooth, etc.)
 ```
 
 ### eSIM (per phone)
@@ -78,28 +86,28 @@ pnpm cli phone config get                        # current config (wifi, bluetoo
 Maps directly to the host's `/api/esim/*` endpoints:
 
 ```bash
-pnpm cli phone esim list                         # GET /esim/profiles
-pnpm cli phone esim install <activation-code>    # install via SM-DP+ activation code
-pnpm cli phone esim delete <sub-id>              # delete eSIM profile
-pnpm cli phone esim switch <sub-id>              # set active subscription
-pnpm cli phone esim enable <sub-id>              # enable a profile
-pnpm cli phone esim disable <sub-id>             # disable a profile
-pnpm cli phone esim defaults                     # get default SIM for SMS/voice/data
+otacon phone esim list                         # GET /esim/profiles
+otacon phone esim install <activation-code>    # install via SM-DP+ activation code
+otacon phone esim delete <sub-id>              # delete eSIM profile
+otacon phone esim switch <sub-id>              # set active subscription
+otacon phone esim enable <sub-id>              # enable a profile
+otacon phone esim disable <sub-id>             # disable a profile
+otacon phone esim defaults                     # get default SIM for SMS/voice/data
 ```
 
 ### Hosts (Pi nodes)
 
 ```bash
-pnpm cli host list                               # all hosts
-pnpm cli host status <id>                        # detail for one host
-pnpm cli host delete <id>                        # forget (re-added on next heartbeat)
+otacon host list                               # all hosts
+otacon host status <id>                        # detail for one host
+otacon host delete <id>                        # forget (re-added on next heartbeat)
 ```
 
 ### Dongles (USB BT adapters)
 
 ```bash
-pnpm cli dongle list                             # all dongles, with phone bindings
-pnpm cli dongle delete <id>                      # forget
+otacon dongle list                             # all dongles, with phone bindings
+otacon dongle delete <id>                      # forget
 ```
 
 ### Registrations
@@ -107,27 +115,27 @@ pnpm cli dongle delete <id>                      # forget
 Both new hosts (Pi nodes) and new clients (CLIs/UIs) request registration; an admin approves them.
 
 ```bash
-pnpm cli reg list                                # pending hosts + clients
-pnpm cli reg approve <id>                        # approve any pending registration
-pnpm cli reg reject <id>                         # reject
-pnpm cli reg approve-all                         # bulk approve [--hosts-only|--clients-only]
-pnpm cli reg reject-all                          # bulk reject
+otacon reg list                                # pending hosts + clients
+otacon reg approve <id>                        # approve any pending registration
+otacon reg reject <id>                         # reject
+otacon reg approve-all                         # bulk approve [--hosts-only|--clients-only]
+otacon reg reject-all                          # bulk reject
 ```
 
 ### Admin clients (other CLIs/UIs that share access)
 
 ```bash
-pnpm cli client list                             # active admin clients
-pnpm cli client list --all                       # include revoked
-pnpm cli client revoke <token-id>                # revoke a client's access
+otacon client list                             # active admin clients
+otacon client list --all                       # include revoked
+otacon client revoke <token-id>                # revoke a client's access
 ```
 
 ### Auth
 
 ```bash
-pnpm cli auth register --registry <url>          # pair this CLI (long-polls until approved)
-pnpm cli auth unregister                         # remove local token
-pnpm cli auth whoami                             # show registry, token fingerprint, active phone
+otacon auth register --registry <url>          # pair this CLI (long-polls until approved)
+otacon auth unregister                         # remove local token
+otacon auth whoami                             # show registry, token fingerprint, active phone
 ```
 
 ## Per-phone automation (top-level commands)
@@ -137,10 +145,10 @@ These operate on the active phone (set via `phone use`) or `--phone <id>`.
 ### Core observation loop
 
 ```bash
-pnpm cli screenshot -o screen.png                # PNG of current screen
-pnpm cli snapshot                                # accessibility tree as indented text
-pnpm cli snapshot --json                         # accessibility tree as JSON
-pnpm cli info                                    # device info (model, activity, resolution)
+otacon screenshot -o screen.png                # PNG of current screen
+otacon snapshot                                # accessibility tree as indented text
+otacon snapshot --json                         # accessibility tree as JSON
+otacon info                                    # device info (model, activity, resolution)
 ```
 
 The accessibility tree assigns ref IDs (`e0`, `e1`, ...) to interactive elements. Refs are monotonic, stable for the same UI state, and only assigned to interactive elements. **Prefer ref-based actions over raw coordinates.**
@@ -149,35 +157,35 @@ The accessibility tree assigns ref IDs (`e0`, `e1`, ...) to interactive elements
 
 ```bash
 # Tap (by ref preferred, by coords as fallback)
-pnpm cli tap e5
-pnpm cli tap 540 1200
+otacon tap e5
+otacon tap 540 1200
 
 # Long-tap
-pnpm cli long-tap e5
-pnpm cli long-tap 540 1200
+otacon long-tap e5
+otacon long-tap 540 1200
 
 # Type ASCII text (uses ADB input)
-pnpm cli type "hello world"
+otacon type "hello world"
 
 # Set text on an EditText (Unicode-safe)
-pnpm cli set-text e3 "Hello, world!"
+otacon set-text e3 "Hello, world!"
 
 # Swipe (x1 y1 x2 y2 [--duration ms])
-pnpm cli swipe 540 1500 540 500
-pnpm cli swipe 540 1500 540 500 --duration 500
+otacon swipe 540 1500 540 500
+otacon swipe 540 1500 540 500 --duration 500
 
 # Pinch (center x, y, start radius, end radius)
-pnpm cli pinch 540 1200 100 300                  # zoom in
-pnpm cli pinch 540 1200 300 100                  # zoom out
+otacon pinch 540 1200 100 300                  # zoom in
+otacon pinch 540 1200 300 100                  # zoom out
 
 # Scroll a scrollable element
-pnpm cli scroll e7
-pnpm cli scroll e7 --up
+otacon scroll e7
+otacon scroll e7 --up
 
 # Press a key
-pnpm cli key home
-pnpm cli key back
-pnpm cli key enter
+otacon key home
+otacon key back
+otacon key enter
 ```
 
 **Recognized key names** (or pass a raw Android keycode):
@@ -188,84 +196,84 @@ pnpm cli key enter
 - Modifiers: `ctrl`, `shift`, `alt`, `meta`/`cmd`/`search`
 - Calls: `call`, `end_call`/`endcall`
 - Letters: `a`–`z` (lowercase, single char)
-- Raw: any digit string (e.g. `pnpm cli key 24`)
+- Raw: any digit string (e.g. `otacon key 24`)
 
 ### SMS
 
 ```bash
-pnpm cli sms list                                # threads
-pnpm cli sms read <thread_id>                    # messages in thread
-pnpm cli sms send "+1234567890" "message body"
+otacon sms list                                # threads
+otacon sms read <thread_id>                    # messages in thread
+otacon sms send "+1234567890" "message body"
 ```
 
 ### Calls
 
 ```bash
-pnpm cli call dial "+1234567890"
-pnpm cli call answer                             # answer incoming
-pnpm cli call hangup                             # end current call
-pnpm cli call status                             # state + duration
+otacon call dial "+1234567890"
+otacon call answer                             # answer incoming
+otacon call hangup                             # end current call
+otacon call status                             # state + duration
 ```
 
 ### Notifications
 
 ```bash
-pnpm cli notifications list                      # current notifications + action buttons
-pnpm cli notifications dismiss "<key>"
-pnpm cli notifications action "<key>" <index>    # trigger a button (e.g. Reply)
+otacon notifications list                      # current notifications + action buttons
+otacon notifications dismiss "<key>"
+otacon notifications action "<key>" <index>    # trigger a button (e.g. Reply)
 ```
 
 Keys often start with special characters — use `--` before the key if it starts with a dash:
 
 ```bash
-pnpm cli notifications dismiss -- "0|com.example|123|null|10045"
+otacon notifications dismiss -- "0|com.example|123|null|10045"
 ```
 
 ### Clipboard
 
 ```bash
-pnpm cli clipboard get
-pnpm cli clipboard set "copied text"
+otacon clipboard get
+otacon clipboard set "copied text"
 ```
 
 ### Apps
 
 ```bash
-pnpm cli apps list                               # installed apps
-pnpm cli apps running                            # foreground / running
-pnpm cli apps launch com.android.chrome
-pnpm cli apps stop com.android.chrome
-pnpm cli apps install /path/to/app.apk           # sideload APK
+otacon apps list                               # installed apps
+otacon apps running                            # foreground / running
+otacon apps launch com.android.chrome
+otacon apps stop com.android.chrome
+otacon apps install /path/to/app.apk           # sideload APK
 ```
 
 ### Open URI / deep link
 
 ```bash
-pnpm cli open "https://example.com"
-pnpm cli open "tel:+1234567890"
-pnpm cli open "instagram://user?username=example"
+otacon open "https://example.com"
+otacon open "tel:+1234567890"
+otacon open "instagram://user?username=example"
 ```
 
 ### Contacts
 
 ```bash
-pnpm cli contacts search "John"
+otacon contacts search "John"
 ```
 
 ### Screen recording
 
 ```bash
 # Interactive (holds TTY, Ctrl+C to stop)
-pnpm cli record                                  # 30s max, saves to recording.mp4
-pnpm cli record -d 60                            # 60s max
-pnpm cli record -d 60 -o video.mp4
+otacon record                                  # 30s max, saves to recording.mp4
+otacon record -d 60                            # 60s max
+otacon record -d 60 -o video.mp4
 
 # Headless (for agents)
-pnpm cli record start                            # start (30s max)
-pnpm cli record start -d 60                      # start (60s max)
-pnpm cli record status                           # check if recording + elapsed
-pnpm cli record stop                             # stop and save to recording.mp4
-pnpm cli record stop -o video.mp4
+otacon record start                            # start (30s max)
+otacon record start -d 60                      # start (60s max)
+otacon record status                           # check if recording + elapsed
+otacon record stop                             # stop and save to recording.mp4
+otacon record stop -o video.mp4
 ```
 
 Records video + audio (mp4). Max duration 180s. Only one recording at a time. Auto-stops at max — call `record stop` to retrieve the file.
@@ -285,4 +293,4 @@ Records video + audio (mp4). Max duration 180s. Only one recording at a time. Au
 - **Snapshots are cached briefly** — after performing an action, the cache is invalidated. Re-snapshot to see updated state.
 - **Notification keys often start with special chars** — quote them and use `--` separator.
 - **`screenshot.png` saved by the wrapper goes to `src/cli/`** (the package dir), not `$PWD`. Pass an absolute path with `-o $PWD/screenshot.png` if running from a different directory.
-- **Use `pnpm cli auth whoami`** to debug "not registered" issues — it shows which registry + token are actually being used after env var/config resolution.
+- **Use `otacon auth whoami`** to debug "not registered" issues — it shows which registry + token are actually being used after env var/config resolution.
