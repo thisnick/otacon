@@ -72,6 +72,10 @@ impl Flusher {
 
                     match req.send().await {
                         Ok(resp) if resp.status().is_success() => {
+                            eprintln!(
+                                "[outbox] Sent seq {} ({}) OK",
+                                row.seq, row.event_type
+                            );
                             if let Err(e) = self.store.mark_sent(row.seq) {
                                 eprintln!("[outbox] Failed to mark seq {} sent: {e}", row.seq);
                             }
