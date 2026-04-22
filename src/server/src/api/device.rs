@@ -32,6 +32,9 @@ pub struct DeviceInfo {
     adapter_mac: Option<String>,
     /// Whether the phone is currently BT-connected to its assigned dongle
     bt_connected: bool,
+    /// VNC port on the host that proxies this phone's screen
+    /// (connect with vnc://{host_address}:{vnc_port})
+    vnc_port: u16,
     /// WiFi connection state
     wifi: WifiStatus,
     /// Lightweight system stats (CPU/mem/battery/temp)
@@ -120,6 +123,7 @@ pub async fn info_handler(state: Arc<PhoneState>) -> Result<Json<DeviceInfo>, Ap
         phone_bt_mac,
         adapter_mac,
         bt_connected,
+        vnc_port: state.config.vnc_port,
         wifi,
         stats,
         monitor,
