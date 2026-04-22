@@ -101,18 +101,22 @@ async fn find_button(
     let json_str = state.bridge.snapshot_get("/snapshot?format=json").await.ok()?;
     let nodes: Vec<A11yNode> = serde_json::from_str(&json_str).ok()?;
 
-    // Context check: if context_keywords specified, verify at least one
-    // appears somewhere in the tree before tapping anything
-    if !context_keywords.is_empty() {
-        let context_present = nodes.iter().any(|n| has_context(n, context_keywords));
-        if !context_present {
-            return None;
+    // If context_keywords specified, find buttons ONLY within the top-level
+    // window (root node) that contains the context. This prevents tapping a
+    // "Yes" button in the underlying activity behind a modal dialog.
+    if context_keywords.is_empty() {
+        for node in &nodes {
+            if let Some(m) = walk_for_button(node, targets) {
+                return Some(m);
+            }
         }
-    }
-
-    for node in &nodes {
-        if let Some(m) = walk_for_button(node, targets) {
-            return Some(m);
+    } else {
+        for node in &nodes {
+            if has_context(node, context_keywords) {
+                if let Some(m) = walk_for_button(node, targets) {
+                    return Some(m);
+                }
+            }
         }
     }
     None
