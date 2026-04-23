@@ -1,5 +1,6 @@
 import { Command } from "commander";
 import { getHostClient } from "../host-client.js";
+import { printList, colorStatus } from "../format.js";
 
 /**
  * Fetch an eSIM endpoint on the host server.
@@ -28,10 +29,29 @@ export function phoneEsimCommands(
 
   esim
     .command("list")
-    .description("List eSIM profiles")
-    .action(async () => {
+    .description("List eSIM profiles (active and disabled)")
+    .option("--json", "output as JSON instead of a table")
+    .action(async (opts: { json?: boolean }) => {
       const res = await esimFetch(parentOpts(), "/profiles");
-      console.log(JSON.stringify(await res.json(), null, 2));
+      const profiles = (await res.json()) as Array<{
+        subId: number;
+        iccid: string;
+        carrier: string;
+        slot: number;
+        embedded: boolean;
+        enabled: boolean;
+        status: string;
+        isDefault: boolean;
+      }>;
+      printList(profiles, [
+        { header: "SUBID", get: (p) => String(p.subId) },
+        { header: "CARRIER", get: (p) => p.carrier || "(unknown)" },
+        { header: "ICCID", get: (p) => p.iccid },
+        { header: "TYPE", get: (p) => (p.embedded ? "eSIM" : "physical") },
+        { header: "SLOT", get: (p) => (p.slot < 0 ? "-" : String(p.slot)) },
+        { header: "STATUS", get: (p) => colorStatus(p.status) },
+        { header: "DEFAULT", get: (p) => (p.isDefault ? "*" : " ") },
+      ], { json: opts.json });
     });
 
   esim
@@ -55,7 +75,7 @@ export function phoneEsimCommands(
       const res = await esimFetch(parentOpts(), "/delete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subscription_id: parseInt(subId) }),
+        body: JSON.stringify({ subId: parseInt(subId) }),
       });
       console.log(JSON.stringify(await res.json(), null, 2));
     });
@@ -68,7 +88,7 @@ export function phoneEsimCommands(
       const res = await esimFetch(parentOpts(), "/switch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subscription_id: parseInt(subId) }),
+        body: JSON.stringify({ subId: parseInt(subId) }),
       });
       console.log(JSON.stringify(await res.json(), null, 2));
     });
@@ -81,7 +101,7 @@ export function phoneEsimCommands(
       const res = await esimFetch(parentOpts(), "/enable", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subscription_id: parseInt(subId), enabled: true }),
+        body: JSON.stringify({ subId: parseInt(subId), enabled: true }),
       });
       console.log(JSON.stringify(await res.json(), null, 2));
     });
@@ -94,7 +114,7 @@ export function phoneEsimCommands(
       const res = await esimFetch(parentOpts(), "/enable", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ subscription_id: parseInt(subId), enabled: false }),
+        body: JSON.stringify({ subId: parseInt(subId), enabled: false }),
       });
       console.log(JSON.stringify(await res.json(), null, 2));
     });

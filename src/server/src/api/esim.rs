@@ -17,7 +17,10 @@ pub struct EsimProfile {
     carrier: String,
     slot: i64,
     embedded: bool,
+    /// Currently active on a SIM slot (slot >= 0 && apps enabled)
     enabled: bool,
+    /// Status string: "active" (enabled, on a slot) or "disabled" (installed but not active)
+    status: String,
     #[serde(rename = "isDefault")]
     is_default: bool,
 }
@@ -94,23 +97,29 @@ pub async fn profiles_handler(state: Arc<PhoneState>) -> Result<Json<Vec<EsimPro
     let default_sms = adb_shell(serial, "settings get global multi_sim_sms").await
         .unwrap_or_default().trim().parse::<i64>().unwrap_or(-1);
 
-    // Parse dumpsys for ALL embedded profiles (including disabled)
+    // Parse dumpsys for ALL embedded profiles (including disabled).
+    // Format varies by OEM/Android version:
+    //   Samsung: `[SubscriptionInfoInternal: id=6 iccId=... isEmbedded=0/1 ...]`
+    //   Pixel:   `{id=2 iccId=... isEmbedded=true/false ...}`
     let dump = adb_shell(serial, "dumpsys isub").await?;
     let mut profiles = Vec::new();
     let mut seen_ids = std::collections::HashSet::new();
 
-    for chunk in dump.split("[SubscriptionInfoInternal:") {
-        if !chunk.contains("isEmbedded=1") {
+    for chunk in split_subscription_chunks(&dump) {
+        let embedded = chunk.contains("isEmbedded=1") || chunk.contains("isEmbedded=true");
+        if !embedded {
             continue;
         }
 
-        let sub_id = parse_dump_field_i64(chunk, "id");
+        let sub_id = parse_dump_field_i64(&chunk, "id");
         if sub_id < 0 || !seen_ids.insert(sub_id) {
             continue;
         }
 
-        let slot = parse_dump_field_i64(chunk, "simSlotIndex");
-        let apps_enabled = parse_dump_field_i64(chunk, "areUiccApplicationsEnabled") == 1;
+        let slot = parse_dump_field_i64(&chunk, "simSlotIndex");
+        // areUiccApplicationsEnabled may be `1`, `0`, `true`, or `false`
+        let apps_enabled = chunk.contains("areUiccApplicationsEnabled=1")
+            || chunk.contains("areUiccApplicationsEnabled=true");
 
         // Use unmasked data from active profiles if available
         let (iccid, carrier) = if let Some(ap) = active_map.get(&sub_id) {
@@ -119,9 +128,14 @@ pub async fn profiles_handler(state: Arc<PhoneState>) -> Result<Json<Vec<EsimPro
                 ap.get("carrier").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             )
         } else {
+            // Try carrierName, fall back to displayName (Pixel often has empty carrierName)
+            let mut carrier = parse_dump_field_str(&chunk, "carrierName");
+            if carrier.is_empty() {
+                carrier = parse_dump_field_str(&chunk, "displayName");
+            }
             (
-                parse_dump_field_str(chunk, "iccId"),
-                parse_dump_field_str(chunk, "carrierName"),
+                parse_dump_field_str(&chunk, "iccId"),
+                carrier,
             )
         };
 
@@ -129,13 +143,15 @@ pub async fn profiles_handler(state: Arc<PhoneState>) -> Result<Json<Vec<EsimPro
             continue;
         }
 
+        let enabled = slot >= 0 && apps_enabled;
         profiles.push(EsimProfile {
             sub_id,
             iccid,
             carrier,
             slot,
             embedded: true,
-            enabled: slot >= 0 && apps_enabled,
+            enabled,
+            status: if enabled { "active".into() } else { "disabled".into() },
             is_default: sub_id == default_sms,
         });
     }
@@ -152,6 +168,7 @@ pub async fn profiles_handler(state: Arc<PhoneState>) -> Result<Json<Vec<EsimPro
                 slot: p.get("slot").and_then(|v| v.as_i64()).unwrap_or(-1),
                 embedded: false,
                 enabled: true,
+                status: "active".into(),
                 is_default: sub_id == default_sms,
             });
         }
@@ -313,6 +330,30 @@ pub async fn defaults_set_handler(serial: &str, Json(body): Json<SetDefaultsBody
 }
 
 // --- Helpers ---
+
+/// Split a `dumpsys isub` dump into per-subscription chunks regardless of
+/// OEM format. Handles both:
+///   `[SubscriptionInfoInternal: id=6 ...]` (Samsung)
+///   `{id=2 ...}` (Pixel/AOSP)
+/// Returns owned strings so we can prepend `id=` to AOSP-format chunks.
+fn split_subscription_chunks(dump: &str) -> Vec<String> {
+    let mut chunks = Vec::new();
+    // Samsung format
+    if dump.contains("SubscriptionInfoInternal:") {
+        for c in dump.split("[SubscriptionInfoInternal:") {
+            if c.contains("id=") {
+                chunks.push(c.to_string());
+            }
+        }
+    }
+    // AOSP/Pixel format: split on `{id=`, prepend `id=` so field parsing works
+    for c in dump.split("{id=") {
+        if !c.is_empty() && c.starts_with(|ch: char| ch.is_ascii_digit() || ch == '-') {
+            chunks.push(format!("id={c}"));
+        }
+    }
+    chunks
+}
 
 fn parse_dump_field_i64(chunk: &str, field: &str) -> i64 {
     // Match: field=123 followed by space or end
