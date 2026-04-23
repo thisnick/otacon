@@ -126,7 +126,10 @@ pub async fn install_via_ui(
                 }
             }
             UiState::ConfirmNetwork => {
-                tap_clickable_with_text(&serial, &nodes, "Use a different network").await?;
+                // May be a clickable element or a non-clickable text (tap by bounds)
+                if let Err(_) = tap_clickable_with_text(&serial, &nodes, "Use a different network").await {
+                    tap_link_in_text(&serial, &nodes, "Use a different network").await?;
+                }
             }
             UiState::DownloadSim => {
                 tap_clickable_with_text(&serial, &nodes, "Next").await?;
@@ -176,11 +179,14 @@ pub async fn install_via_ui(
                 tap_clickable_with_text(&serial, &nodes, "Yes").await?;
             }
             UiState::SetUp => {
-                // Capture carrier name from the title "Set up your <X> eSIM"
+                // Capture carrier name from title variants
                 if let Some(name) = extract_carrier_from_title(&nodes) {
                     carrier_name = name;
                 }
-                tap_clickable_with_text(&serial, &nodes, "Set up").await?;
+                // "Set up" (phone-3) / "Download" (phone-4)
+                if let Err(_) = tap_clickable_with_text(&serial, &nodes, "Set up").await {
+                    tap_clickable_with_text(&serial, &nodes, "Download").await?;
+                }
             }
             UiState::Loading => {
                 // Just wait
@@ -225,13 +231,20 @@ fn node_contains_text(node: &A11yNode, target: &str) -> bool {
 
 fn detect_state(nodes: &[A11yNode]) -> UiState {
     // Check most specific states first
-    if tree_contains_text(nodes, "Activate your eSIM") {
+    // Terminal: "Activate your eSIM" (phone-3) / "Download Finished" (phone-4)
+    if tree_contains_text(nodes, "Activate your eSIM") || tree_contains_text(nodes, "Download Finished") {
         return UiState::Activate;
     }
-    if tree_contains_text(nodes, "Setting up") && tree_contains_text(nodes, "eSIM") {
+    // Loading: "Setting up X eSIM…" (phone-3) / "Downloading X…" (phone-4)
+    if (tree_contains_text(nodes, "Setting up") && tree_contains_text(nodes, "eSIM"))
+        || tree_contains_text(nodes, "Downloading")
+    {
         return UiState::Loading;
     }
-    if tree_contains_text(nodes, "Set up your") && tree_contains_text(nodes, "eSIM") {
+    // SetUp: "Set up your X eSIM" (phone-3) / "Use Tello?" (phone-4)
+    if (tree_contains_text(nodes, "Set up your") && tree_contains_text(nodes, "eSIM"))
+        || (tree_contains_text(nodes, "Use") && tree_contains_text(nodes, "available for this device"))
+    {
         return UiState::SetUp;
     }
     if tree_contains_text(nodes, "Connect to Wi-Fi") && tree_contains_text(nodes, "download a SIM") {
@@ -447,17 +460,28 @@ fn find_edittext_by_label(node: &A11yNode, label: &str) -> Option<String> {
 fn extract_carrier_from_title(nodes: &[A11yNode]) -> Option<String> {
     fn walk(n: &A11yNode) -> Option<String> {
         if let Some(ref t) = n.text {
-            // Title format: "Set up your <Carrier> eSIM"
+            // "Set up your <Carrier> eSIM" (phone-3)
             if let Some(rest) = t.strip_prefix("Set up your ") {
                 if let Some(carrier) = rest.strip_suffix(" eSIM") {
                     return Some(carrier.trim().to_string());
                 }
             }
+            // "Use <Carrier>?" (phone-4)
+            if let Some(rest) = t.strip_prefix("Use ") {
+                if let Some(carrier) = rest.strip_suffix("?") {
+                    return Some(carrier.trim().to_string());
+                }
+            }
+            // "Downloading <Carrier>…"
+            if let Some(rest) = t.strip_prefix("Downloading ") {
+                let carrier = rest.trim_end_matches('…').trim_end_matches("...").trim();
+                if !carrier.is_empty() {
+                    return Some(carrier.to_string());
+                }
+            }
         }
         for c in &n.children {
-            if let Some(s) = walk(c) {
-                return Some(s);
-            }
+            if let Some(s) = walk(c) { return Some(s); }
         }
         None
     }
