@@ -117,6 +117,11 @@ public class KioskProvider extends ContentProvider {
                 return deviceIdentity();
             }
 
+            // --- SMS default app ---
+            if (path.equals("sms/become-default")) {
+                return smsSetDefault();
+            }
+
             // --- eSIM (install/delete only — enable/disable/profiles/defaults moved to snapshot server) ---
             if (path.equals("esim/install")) {
                 return esimInstall(uri);
@@ -175,6 +180,19 @@ public class KioskProvider extends ContentProvider {
 
         MatrixCursor cursor = new MatrixCursor(new String[]{"imei", "imei2", "eid", "slot_count"});
         cursor.addRow(new Object[]{imei, imei2, eid, slotCount});
+        return cursor;
+    }
+
+    // ==================== SMS Default App ====================
+
+    private Cursor smsSetDefault() {
+        DeviceOwnerReceiver.setDefaultSmsApp(getContext());
+        String current = android.provider.Telephony.Sms.getDefaultSmsPackage(getContext());
+        MatrixCursor cursor = new MatrixCursor(new String[]{"ok", "default_sms_package"});
+        cursor.addRow(new Object[]{
+            getContext().getPackageName().equals(current),
+            current
+        });
         return cursor;
     }
 

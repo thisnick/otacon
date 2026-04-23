@@ -19,6 +19,7 @@
     <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
     <uses-permission android:name="android.permission.READ_SMS" />
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
+    <uses-permission android:name="android.permission.RECEIVE_MMS" />
     <uses-permission android:name="android.permission.WRITE_EMBEDDED_SUBSCRIPTIONS" />
 
     <application
@@ -75,6 +76,56 @@
                 <action android:name="com.otacon.kiosk.ESIM_RESULT" />
             </intent-filter>
         </receiver>
+
+        <!-- SMS default app components (all four required by RoleManager) -->
+
+        <receiver
+            android:name=".SmsReceiver"
+            android:permission="android.permission.BROADCAST_SMS"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.provider.Telephony.SMS_DELIVER" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".MmsReceiver"
+            android:permission="android.permission.BROADCAST_WAP_PUSH"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.provider.Telephony.WAP_PUSH_DELIVER" />
+                <data android:mimeType="application/vnd.wap.mms-message" />
+            </intent-filter>
+        </receiver>
+
+        <service
+            android:name=".HeadlessSmsSendService"
+            android:permission="android.permission.SEND_RESPOND_VIA_MESSAGE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.RESPOND_VIA_MESSAGE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="sms" />
+                <data android:scheme="smsto" />
+                <data android:scheme="mms" />
+                <data android:scheme="mmsto" />
+            </intent-filter>
+        </service>
+
+        <activity
+            android:name=".SmsSendActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SENDTO" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="sms" />
+                <data android:scheme="smsto" />
+                <data android:scheme="mms" />
+                <data android:scheme="mmsto" />
+            </intent-filter>
+        </activity>
 
     </application>
 
