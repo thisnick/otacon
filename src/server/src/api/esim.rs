@@ -124,6 +124,15 @@ pub async fn profiles_handler(state: Arc<PhoneState>) -> Result<Json<Vec<EsimPro
             continue;
         }
 
+        // Hide historical subscription records: dumpsys keeps stale entries
+        // for physical SIMs that have been swapped out. Only show physical
+        // entries that are actually present in the snapshot server's active
+        // subscription list. Embedded eSIMs always show (they're installed
+        // profiles, even if disabled).
+        if !embedded && !active_map.contains_key(&sub_id) {
+            continue;
+        }
+
         let slot = parse_dump_field_i64(&chunk, "simSlotIndex");
         // areUiccApplicationsEnabled may be `1`, `0`, `true`, or `false`
         let apps_enabled = chunk.contains("areUiccApplicationsEnabled=1")
