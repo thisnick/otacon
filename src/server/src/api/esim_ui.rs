@@ -38,6 +38,8 @@ enum UiState {
     EnterCode,
     /// "Set up your <Carrier> eSIM" — has Set up button
     SetUp,
+    /// "Allow your carrier to download SIM?" confirmation dialog
+    CarrierConfirm,
     /// "Setting up <Carrier> eSIM…" — loading
     Loading,
     /// "Activate your eSIM" — terminal success state
@@ -148,6 +150,11 @@ pub async fn install_via_ui(
                     tap_clickable_with_text(&serial, &nodes, "Next").await?;
                 }
             }
+            UiState::CarrierConfirm => {
+                // "Allow your carrier to download/set up SIM/eSIM?" → tap Yes
+                // Must use input tap — system dialog doesn't honor a11y clicks
+                tap_clickable_with_text(&serial, &nodes, "Yes").await?;
+            }
             UiState::SetUp => {
                 // Capture carrier name from the title "Set up your <X> eSIM"
                 if let Some(name) = extract_carrier_from_title(&nodes) {
@@ -203,6 +210,12 @@ fn detect_state(nodes: &[A11yNode]) -> UiState {
     }
     if tree_contains_text(nodes, "Set up your") && tree_contains_text(nodes, "eSIM") {
         return UiState::SetUp;
+    }
+    // Carrier confirmation dialogs (multiple phrasings across Pixel versions)
+    if tree_contains_text(nodes, "Allow your carrier to download SIM")
+        || tree_contains_text(nodes, "Allow your carrier to set up eSIM")
+    {
+        return UiState::CarrierConfirm;
     }
     if tree_contains_text(nodes, "Enter activation code") && tree_contains_text(nodes, "from your carrier") {
         return UiState::EnterCode;
