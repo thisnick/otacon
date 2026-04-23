@@ -38,6 +38,8 @@ enum UiState {
     EnterCode,
     /// "Set up your <Carrier> eSIM" — has Set up button
     SetUp,
+    /// "Connect to Wi-Fi" prompt (shown when eSIM download needs internet)
+    ConnectWifi,
     /// "Allow your carrier to download SIM?" confirmation dialog
     CarrierConfirm,
     /// "Setting up <Carrier> eSIM…" — loading
@@ -150,6 +152,9 @@ pub async fn install_via_ui(
                     tap_clickable_with_text(&serial, &nodes, "Next").await?;
                 }
             }
+            UiState::ConnectWifi => {
+                tap_clickable_with_text(&serial, &nodes, "Next").await?;
+            }
             UiState::CarrierConfirm => {
                 // "Allow your carrier to download/set up SIM/eSIM?" → tap Yes
                 // Must use input tap — system dialog doesn't honor a11y clicks
@@ -210,6 +215,9 @@ fn detect_state(nodes: &[A11yNode]) -> UiState {
     }
     if tree_contains_text(nodes, "Set up your") && tree_contains_text(nodes, "eSIM") {
         return UiState::SetUp;
+    }
+    if tree_contains_text(nodes, "Connect to Wi-Fi") && tree_contains_text(nodes, "download a SIM") {
+        return UiState::ConnectWifi;
     }
     // Carrier confirmation dialogs (multiple phrasings across Pixel versions)
     if tree_contains_text(nodes, "Allow your carrier to download SIM")
