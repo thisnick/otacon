@@ -113,7 +113,7 @@ pub async fn info_handler(state: Arc<PhoneState>) -> Result<Json<DeviceInfo>, Ap
         get_focused_window(serial),
         adb_shell(serial, "getprop ro.product.model"),
         adb_shell(serial, "wm size"),
-        get_phone_number(serial),
+        get_phone_number(&state),
         get_device_identity(&state),
         get_wifi_status(serial),
         get_bt_connected(adapter_mac.as_deref(), phone_bt_mac.as_deref()),
@@ -250,19 +250,50 @@ async fn get_bt_connected(adapter_mac: Option<&str>, phone_bt_mac: Option<&str>)
     text.contains("Connected: yes")
 }
 
-async fn get_phone_number(serial: &str) -> Result<String, ApiError> {
+async fn get_phone_number(state: &PhoneState) -> Result<String, ApiError> {
+    let serial = &state.config.adb_serial;
+
+    // Prefer the snapshot server (system UID) — it can call
+    // SubscriptionInfo.getNumber() directly and works on every OEM/Android.
+    // The shell-based `service call iphonesubinfo 16` returns garbage on
+    // newer Android / non-Samsung OEMs (literal "Parcel data not fully
+    // consumed" error string).
+    if state.bridge.is_snapshot_available() {
+        if let Ok(json) = state.bridge.snapshot_get("/esim/profiles").await {
+            if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(&json) {
+                for p in &arr {
+                    let enabled = p.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+                    if !enabled { continue; }
+                    if let Some(n) = p.get("number").and_then(|v| v.as_str()) {
+                        let cleaned: String = n.chars()
+                            .filter(|c| c.is_ascii_digit() || *c == '+')
+                            .collect();
+                        // Real phone numbers are at least 10 digits (US E.164)
+                        if cleaned.trim_start_matches('+').len() >= 10 {
+                            return Ok(format!("+{}", cleaned.trim_start_matches('+')));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Fallback: shell `service call iphonesubinfo 16` (works on Samsung)
     let out = adb_shell(serial, "service call iphonesubinfo 16 s16 com.android.shell").await?;
-    // Parcel output has quoted sections like '1.5.1.0.2.9.0.1.1.7.8...'
-    // Extract digits only from text between single quotes
+    // Reject if the response contains the "Parcel data not fully consumed"
+    // error string — that means index 16 has the wrong signature on this OEM.
+    if out.contains("Parcel data not fully consumed") {
+        return Err(ApiError::Adb("phone number unavailable (LPA snapshot failed and iphonesubinfo signature mismatch)".into()));
+    }
     let number: String = out
         .split('\'')
         .enumerate()
-        .filter(|(i, _)| i % 2 == 1) // odd indices are inside quotes
+        .filter(|(i, _)| i % 2 == 1)
         .flat_map(|(_, s)| s.chars())
         .filter(|c| c.is_ascii_digit() || *c == '+')
         .collect();
-    if number.is_empty() {
-        return Err(ApiError::Adb("no phone number found".into()));
+    if number.trim_start_matches('+').len() < 10 {
+        return Err(ApiError::Adb("phone number unavailable".into()));
     }
     Ok(format!("+{}", number.trim_start_matches('+')))
 }

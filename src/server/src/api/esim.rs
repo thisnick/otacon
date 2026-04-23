@@ -114,10 +114,10 @@ pub async fn profiles_handler(state: Arc<PhoneState>) -> Result<Json<Vec<EsimPro
     let mut seen_ids = std::collections::HashSet::new();
 
     for chunk in split_subscription_chunks(&dump) {
+        // Include both embedded eSIMs AND physical SIMs (we used to filter
+        // out non-embedded, but a physical SIM is still a SIM the user
+        // wants to see in `esim list`).
         let embedded = chunk.contains("isEmbedded=1") || chunk.contains("isEmbedded=true");
-        if !embedded {
-            continue;
-        }
 
         let sub_id = parse_dump_field_i64(&chunk, "id");
         if sub_id < 0 || !seen_ids.insert(sub_id) {
@@ -147,7 +147,8 @@ pub async fn profiles_handler(state: Arc<PhoneState>) -> Result<Json<Vec<EsimPro
             )
         };
 
-        if iccid.is_empty() {
+        // Skip the placeholder "CARD" / empty entries (no iccid or carrier)
+        if iccid.is_empty() || iccid == "890000000[****]" {
             continue;
         }
 
@@ -157,7 +158,7 @@ pub async fn profiles_handler(state: Arc<PhoneState>) -> Result<Json<Vec<EsimPro
             iccid,
             carrier,
             slot,
-            embedded: true,
+            embedded,
             enabled,
             status: if enabled { "active".into() } else { "disabled".into() },
             is_default: sub_id == default_sms,

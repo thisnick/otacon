@@ -498,22 +498,27 @@ public class SnapshotServer {
 
             JSONArray profiles = new JSONArray();
 
-            // Try getActiveSubscriptionInfoList first
-            java.lang.reflect.Method getActive = isub.getClass()
-                .getMethod("getActiveSubscriptionInfoList", String.class, String.class, boolean.class);
-            Object result = getActive.invoke(isub, "com.android.shell", "com.android.shell", false);
+            // getActiveSubscriptionInfoList signature varies by OEM/Android version:
+            //   Samsung:    (String, String, boolean)
+            //   AOSP/Pixel: (String, String) or (String) depending on version
+            //   Older:      ()
+            Object result = invokeActiveSubInfoList(isub);
 
             // Get isSubscriptionEnabled method for accurate enabled status
-            java.lang.reflect.Method isEnabled = isub.getClass()
-                .getMethod("isSubscriptionEnabled", int.class);
+            java.lang.reflect.Method isEnabled = null;
+            try {
+                isEnabled = isub.getClass().getMethod("isSubscriptionEnabled", int.class);
+            } catch (Exception ignored) {}
 
             if (result instanceof java.util.List) {
                 for (Object info : (java.util.List<?>) result) {
                     android.telephony.SubscriptionInfo sub = (android.telephony.SubscriptionInfo) info;
                     boolean subEnabled = true;
-                    try {
-                        subEnabled = (boolean) isEnabled.invoke(isub, sub.getSubscriptionId());
-                    } catch (Exception ignored) {}
+                    if (isEnabled != null) {
+                        try {
+                            subEnabled = (boolean) isEnabled.invoke(isub, sub.getSubscriptionId());
+                        } catch (Exception ignored) {}
+                    }
 
                     JSONObject profile = new JSONObject();
                     profile.put("subId", sub.getSubscriptionId());
@@ -523,6 +528,13 @@ public class SnapshotServer {
                     profile.put("embedded", sub.isEmbedded());
                     profile.put("enabled", subEnabled);
                     profile.put("isDefault", sub.getSubscriptionId() == defaultSmsSubId);
+                    // Phone number — only available from this system-UID context,
+                    // not from `service call iphonesubinfo` which returns garbage
+                    // on newer Android versions / non-Samsung OEMs.
+                    String number = String.valueOf(sub.getNumber());
+                    if (!number.isEmpty() && !"null".equals(number)) {
+                        profile.put("number", number);
+                    }
                     profiles.put(profile);
                 }
             }
@@ -656,6 +668,40 @@ public class SnapshotServer {
         try { return Integer.parseInt(val); } catch (Exception e) { return val; }
     }
 
+    /**
+     * Invoke ISub.getActiveSubscriptionInfoList with whichever signature
+     * exists on this Android version / OEM. Returns the raw List or null.
+     *
+     * Known signatures by version:
+     *   Samsung (One UI):  (String callingPkg, String featureId, boolean forAllProfiles)
+     *   AOSP/Pixel 13+:    (String callingPkg, String featureId)
+     *   AOSP/Pixel 11-12:  (String callingPkg)
+     *   AOSP/Pixel 10-:    ()
+     */
+    private static Object invokeActiveSubInfoList(Object isub) throws Exception {
+        Class<?> cls = isub.getClass();
+        // Try each known signature in order
+        for (Class<?>[] sig : new Class<?>[][] {
+            new Class<?>[]{String.class, String.class, boolean.class},
+            new Class<?>[]{String.class, String.class},
+            new Class<?>[]{String.class},
+            new Class<?>[]{},
+        }) {
+            try {
+                java.lang.reflect.Method m = cls.getMethod("getActiveSubscriptionInfoList", sig);
+                Object[] args;
+                if (sig.length == 3) args = new Object[]{"com.android.shell", "com.android.shell", false};
+                else if (sig.length == 2) args = new Object[]{"com.android.shell", "com.android.shell"};
+                else if (sig.length == 1) args = new Object[]{"com.android.shell"};
+                else args = new Object[]{};
+                return m.invoke(isub, args);
+            } catch (NoSuchMethodException e) {
+                // Try next signature
+            }
+        }
+        throw new NoSuchMethodException("getActiveSubscriptionInfoList: no matching signature");
+    }
+
     private static String findIccidBySubId(String subIdStr) {
         if (subIdStr == null || subIdStr.equals("null") || subIdStr.isEmpty()) return null;
         try {
@@ -666,9 +712,7 @@ public class SnapshotServer {
             Object isub = Class.forName("com.android.internal.telephony.ISub$Stub")
                 .getMethod("asInterface", android.os.IBinder.class)
                 .invoke(null, binder);
-            java.lang.reflect.Method getActive = isub.getClass()
-                .getMethod("getActiveSubscriptionInfoList", String.class, String.class, boolean.class);
-            Object result = getActive.invoke(isub, "com.android.shell", "com.android.shell", false);
+            Object result = invokeActiveSubInfoList(isub);
             if (result instanceof java.util.List) {
                 for (Object info : (java.util.List<?>) result) {
                     android.telephony.SubscriptionInfo sub = (android.telephony.SubscriptionInfo) info;
