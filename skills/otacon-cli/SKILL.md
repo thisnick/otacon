@@ -86,7 +86,7 @@ otacon phone config get                        # current config (wifi, bluetooth
 Maps directly to the host's `/api/esim/*` endpoints:
 
 ```bash
-otacon phone esim list                         # GET /esim/profiles
+otacon phone esim list                         # all profiles (active + disabled, --json)
 otacon phone esim install <activation-code>    # install via SM-DP+ activation code
 otacon phone esim delete <sub-id>              # delete eSIM profile
 otacon phone esim switch <sub-id>              # set active subscription
@@ -94,6 +94,52 @@ otacon phone esim enable <sub-id>              # enable a profile
 otacon phone esim disable <sub-id>             # disable a profile
 otacon phone esim defaults                     # get default SIM for SMS/voice/data
 ```
+
+**eSIM install is platform-aware:**
+- **Pixel**: uses the Settings UI flow (walks through a state machine that opens
+  Settings → Add eSIM → manual code entry → confirm). This is necessary because
+  `EuiccManager.downloadSubscription()` requires carrier privilege that third-party
+  Device Owner apps don't have.
+- **Samsung / other**: uses `EuiccManager.downloadSubscription()` via the kiosk app
+  bridge with an auto-tap watcher for the carrier confirmation dialog.
+
+After install, the profile is typically disabled. Enable + switch to activate:
+```bash
+otacon phone esim list                         # find the new subId
+otacon phone esim enable <sub-id>
+otacon phone esim switch <sub-id>              # assign to SIM slot, registers with carrier
+```
+
+**Adding a new UI variant for eSIM install (for agents):**
+
+The Pixel Settings UI flow has text that varies by Android version and phone model.
+When a new variant appears, use the snapshot + manual walk-through to map it:
+
+```bash
+# 1. Wake and go home
+otacon key wake --phone <id>
+otacon key home --phone <id>
+
+# 2. Open the SIMs settings entry point
+# (run via SSH: adb -s <serial> shell am start -a android.settings.MOBILE_NETWORK_LIST)
+
+# 3. At each screen, capture the a11y tree
+otacon snapshot --phone <id>
+
+# 4. Find the right element and tap it
+otacon tap <ref> --phone <id>
+# For system dialogs that don't honor a11y clicks, use input tap via SSH:
+# adb -s <serial> shell 'input tap <x> <y>'
+
+# 5. For text entry (activation code field), use set-text
+otacon set-text <ref> '<activation-code>' --phone <id>
+
+# 6. Repeat steps 3-5 until install completes or fails
+```
+
+The state machine is in `src/server/src/api/esim_ui.rs`. Each state has a detection
+predicate (text match on the snapshot) and an action (tap button, enter text, wait).
+Add new variants by updating detection text and action targets.
 
 ### Hosts (Pi nodes)
 

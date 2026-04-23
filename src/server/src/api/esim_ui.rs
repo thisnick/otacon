@@ -46,6 +46,8 @@ enum UiState {
     Loading,
     /// "Activate your eSIM" — terminal success state
     Activate,
+    /// "Network not activated" — terminal failure state
+    Failed,
     /// Unknown / transitional state — wait briefly and re-poll
     Unknown,
 }
@@ -142,16 +144,27 @@ pub async fn install_via_ui(
                 }
             }
             UiState::Troubleshoot => {
-                tap_clickable_with_text(&serial, &nodes, "Enter activation code").await?;
+                // "Enter activation code" (phone-3) / "Enter it manually" link (phone-4)
+                if let Err(_) = tap_clickable_with_text(&serial, &nodes, "Enter activation code").await {
+                    tap_link_in_text(&serial, &nodes, "Enter it manually").await?;
+                }
             }
             UiState::EnterCode => {
                 if !entered_code {
-                    set_text_by_label(&state, &nodes, "Code", activation_code).await?;
+                    // Phone-3: EditText labeled "Code"; Phone-4: unlabeled EditText
+                    let set_ok = set_text_by_label(&state, &nodes, "Code", activation_code).await;
+                    if set_ok.is_err() {
+                        // Fallback: find any EditText in the tree
+                        set_text_any_edittext(&state, &nodes, activation_code).await?;
+                    }
                     entered_code = true;
-                    // Wait for Next button to enable
+                    // Wait for Next/Continue button to enable
                     tokio::time::sleep(Duration::from_millis(800)).await;
                 } else {
-                    tap_clickable_with_text(&serial, &nodes, "Next").await?;
+                    // "Next" (phone-3) or "Continue" (phone-4)
+                    if let Err(_) = tap_clickable_with_text(&serial, &nodes, "Next").await {
+                        tap_clickable_with_text(&serial, &nodes, "Continue").await?;
+                    }
                 }
             }
             UiState::ConnectWifi => {
@@ -175,6 +188,9 @@ pub async fn install_via_ui(
             UiState::Activate => {
                 eprintln!("[{}] esim-ui: install complete (carrier={})", serial, carrier_name);
                 return Ok(carrier_name);
+            }
+            UiState::Failed => {
+                return Err("Network not activated — carrier rejected the install".into());
             }
             UiState::Unknown => {
                 // Wait for transitional state to settle
@@ -227,11 +243,18 @@ fn detect_state(nodes: &[A11yNode]) -> UiState {
     {
         return UiState::CarrierConfirm;
     }
-    if tree_contains_text(nodes, "Enter activation code") && tree_contains_text(nodes, "from your carrier") {
+    // "Enter activation code" (phone-3) / "Add network provider" (phone-4)
+    if (tree_contains_text(nodes, "Enter activation code") && tree_contains_text(nodes, "from your carrier"))
+        || (tree_contains_text(nodes, "Add network provider") && tree_contains_text(nodes, "from your provider"))
+    {
         return UiState::EnterCode;
     }
-    if tree_contains_text(nodes, "Fix QR code problems") {
+    // "Fix QR code problems" (phone-3) / "Help adding a network" (phone-4)
+    if tree_contains_text(nodes, "Fix QR code problems") || tree_contains_text(nodes, "Help adding a network") {
         return UiState::Troubleshoot;
+    }
+    if tree_contains_text(nodes, "Network not activated") {
+        return UiState::Failed;
     }
     // Pixel 4: "Download your SIM", Pixel 4a: "Download your eSIM"
     if tree_contains_text(nodes, "Download your SIM") || tree_contains_text(nodes, "Download your eSIM") {
@@ -325,6 +348,34 @@ async fn set_text_by_label(
         }
     }
     Err(format!("no EditText with label '{label}'"))
+}
+
+/// Fallback: find any EditText in the tree and set its text.
+async fn set_text_any_edittext(
+    state: &PhoneState,
+    nodes: &[A11yNode],
+    value: &str,
+) -> Result<(), String> {
+    let serial = &state.config.adb_serial;
+    fn find_edittext(n: &A11yNode) -> Option<String> {
+        if n.class.contains("EditText") { return n.ref_id.clone(); }
+        for c in &n.children {
+            if let Some(r) = find_edittext(c) { return Some(r); }
+        }
+        None
+    }
+    for n in nodes {
+        if let Some(ref_id) = find_edittext(n) {
+            let body = serde_json::json!({
+                "action": "set_text", "ref": ref_id, "text": value,
+            }).to_string();
+            state.bridge.snapshot_post("/action", &body).await
+                .map_err(|e| format!("set_text failed: {e:?}"))?;
+            eprintln!("[{}] esim-ui: set text on EditText (ref={})", serial, ref_id);
+            return Ok(());
+        }
+    }
+    Err("no EditText found".into())
 }
 
 fn find_clickable_with_text(node: &A11yNode, target: &str) -> Option<super::snapshot::Bounds> {
