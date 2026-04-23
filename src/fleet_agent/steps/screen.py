@@ -25,7 +25,10 @@ def configure_screen(serial: str):
     adb_shell(serial, 'cmd window user-rotation lock 0')
     adb_shell(serial, 'locksettings set-password-quality 0')
     adb_shell(serial, 'svc data disable')
-    adb_shell(serial, 'pm disable-user --user 0 com.google.android.apps.messaging')
+    # Note: previously disabled com.google.android.apps.messaging to suppress
+    # notifications, but the kiosk app is now the default SMS handler — no
+    # notification conflict — and on Samsung where setDefaultSmsApplication
+    # silently fails we want a fallback SMS app available.
 
 
 def parse_stream_max(dumpsys_output: str, stream: str) -> int | None:

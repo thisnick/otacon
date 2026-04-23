@@ -642,12 +642,35 @@ public class KioskProvider extends ContentProvider {
 
         SmsManager sms = SmsManager.getDefault();
         ArrayList<String> parts = sms.divideMessage(body);
-        if (parts.size() == 1) {
-            sms.sendTextMessage(to, null, body, null, null);
-        } else {
-            sms.sendMultipartTextMessage(to, null, parts, null, null);
+        try {
+            if (parts.size() == 1) {
+                sms.sendTextMessage(to, null, body, null, null);
+            } else {
+                sms.sendMultipartTextMessage(to, null, parts, null, null);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "sendTextMessage failed: " + e.getMessage());
+            return errorCursor("send failed: " + e.getMessage());
         }
         Log.i(TAG, "SMS sent to " + to + " (" + parts.size() + " parts)");
+
+        // Write to Sent folder so the message shows up in `otacon sms list`.
+        // Only the default SMS app can do this; the framework no longer
+        // auto-stores sent messages since Android 4.4.
+        try {
+            android.content.ContentValues values = new android.content.ContentValues();
+            values.put(android.provider.Telephony.Sms.ADDRESS, to);
+            values.put(android.provider.Telephony.Sms.BODY, body);
+            values.put(android.provider.Telephony.Sms.DATE, System.currentTimeMillis());
+            values.put(android.provider.Telephony.Sms.READ, 1);
+            values.put(android.provider.Telephony.Sms.TYPE,
+                android.provider.Telephony.Sms.MESSAGE_TYPE_SENT);
+            getContext().getContentResolver().insert(
+                android.provider.Telephony.Sms.Sent.CONTENT_URI, values);
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to record sent SMS in provider: " + e.getMessage());
+            // Don't fail the operation — the message was sent successfully
+        }
 
         MatrixCursor cursor = new MatrixCursor(new String[]{"ok", "parts"});
         cursor.addRow(new Object[]{true, parts.size()});
