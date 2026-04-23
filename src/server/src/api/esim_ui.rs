@@ -133,11 +133,13 @@ pub async fn install_via_ui(
                 tap_clickable_with_text(&serial, &nodes, "OK").await?;
             }
             UiState::ScanQr => {
-                // The "Try these troubleshooting steps" text is a clickable
-                // span inside a longer TextView, not a clickable node itself.
-                // Tap near the bottom of that TextView's bounds (where the
-                // link span sits visually).
-                tap_link_in_text(&serial, &nodes, "troubleshooting steps").await?;
+                // Pixel 4a: "Need help?" button
+                // Pixel 4a (other): "Try these troubleshooting steps" link span
+                if let Ok(()) = tap_clickable_with_text(&serial, &nodes, "Need help?").await {
+                    // ok
+                } else {
+                    tap_link_in_text(&serial, &nodes, "troubleshooting steps").await?;
+                }
             }
             UiState::Troubleshoot => {
                 tap_clickable_with_text(&serial, &nodes, "Enter activation code").await?;
@@ -235,7 +237,8 @@ fn detect_state(nodes: &[A11yNode]) -> UiState {
     if tree_contains_text(nodes, "Download your SIM") || tree_contains_text(nodes, "Download your eSIM") {
         return UiState::DownloadSim;
     }
-    if tree_contains_text(nodes, "Scan QR code from carrier") {
+    // "Scan QR code from carrier" / "Scan QR code from network" / "Scan QR code from Verizon"
+    if tree_contains_text(nodes, "Scan QR code") {
         return UiState::ScanQr;
     }
     if tree_contains_text(nodes, "Your camera is unavailable") {
