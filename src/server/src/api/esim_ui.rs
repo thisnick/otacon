@@ -28,6 +28,8 @@ enum UiState {
     ConfirmNetwork,
     /// "Your camera is unavailable" dialog (we entered the QR flow but camera blocked)
     CameraDialog,
+    /// "Download your SIM" info splash (Pixel 4 only)
+    DownloadSim,
     /// "Scan QR code from carrier" — has a link to troubleshooting
     ScanQr,
     /// "Fix QR code problems" — has "Enter activation code" link
@@ -120,6 +122,9 @@ pub async fn install_via_ui(
             UiState::ConfirmNetwork => {
                 tap_clickable_with_text(&serial, &nodes, "Use a different network").await?;
             }
+            UiState::DownloadSim => {
+                tap_clickable_with_text(&serial, &nodes, "Next").await?;
+            }
             UiState::CameraDialog => {
                 tap_clickable_with_text(&serial, &nodes, "OK").await?;
             }
@@ -204,6 +209,9 @@ fn detect_state(nodes: &[A11yNode]) -> UiState {
     }
     if tree_contains_text(nodes, "Fix QR code problems") {
         return UiState::Troubleshoot;
+    }
+    if tree_contains_text(nodes, "Download your SIM") {
+        return UiState::DownloadSim;
     }
     if tree_contains_text(nodes, "Scan QR code from carrier") {
         return UiState::ScanQr;
