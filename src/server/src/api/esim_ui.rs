@@ -231,7 +231,8 @@ fn detect_state(nodes: &[A11yNode]) -> UiState {
     if tree_contains_text(nodes, "Fix QR code problems") {
         return UiState::Troubleshoot;
     }
-    if tree_contains_text(nodes, "Download your SIM") {
+    // Pixel 4: "Download your SIM", Pixel 4a: "Download your eSIM"
+    if tree_contains_text(nodes, "Download your SIM") || tree_contains_text(nodes, "Download your eSIM") {
         return UiState::DownloadSim;
     }
     if tree_contains_text(nodes, "Scan QR code from carrier") {
