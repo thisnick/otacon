@@ -6,8 +6,16 @@ use utoipa::ToSchema;
 
 use super::adb::adb_shell;
 use super::autotap;
+use super::esim_ui;
 use super::ApiError;
 use crate::phone::PhoneState;
+
+/// Detect the phone manufacturer to choose install path.
+async fn is_pixel(serial: &str) -> bool {
+    adb_shell(serial, "getprop ro.product.manufacturer").await
+        .map(|s| s.trim().eq_ignore_ascii_case("Google"))
+        .unwrap_or(false)
+}
 
 #[derive(Serialize, ToSchema)]
 pub struct EsimProfile {
@@ -191,18 +199,32 @@ pub async fn profiles_handler(state: Arc<PhoneState>) -> Result<Json<Vec<EsimPro
     responses((status = 200, body = serde_json::Value))
 )]
 pub async fn install_handler(state: Arc<PhoneState>, Json(body): Json<InstallBody>) -> Result<Json<serde_json::Value>, ApiError> {
-    let serial = &state.config.adb_serial;
+    let serial = state.config.adb_serial.clone();
+
+    // Pixel devices don't have carrier privilege for arbitrary profiles —
+    // EuiccManager.downloadSubscription() always fails the privilege check.
+    // The only working path is walking the Settings → Add eSIM UI flow.
+    if is_pixel(&serial).await {
+        eprintln!("[{}] esim install: using UI flow (Pixel detected)", serial);
+        let carrier = esim_ui::install_via_ui(state.clone(), &body.activation_code)
+            .await
+            .map_err(|e| ApiError::Adb(format!("UI install failed: {e}")))?;
+        return Ok(Json(serde_json::json!({
+            "success": true,
+            "carrier": carrier,
+            "method": "ui",
+        })));
+    }
+
+    // Default: bridge flow (Samsung and other OEMs where downloadSubscription works)
     let encoded = urlencoding::encode(&body.activation_code);
 
     // Spawn background auto-tapper for the carrier confirmation dialog
-    // ("Allow your carrier to set up eSIM?" → tap "Yes"). The context
-    // keywords match the exact dialog title text — using broader keywords
-    // (e.g. "esim" alone) would false-positive on the Settings → SIM page.
     static ESIM_CONFIRM_BUTTONS: &[&str] = &["yes", "allow", "ok", "confirm"];
     static ESIM_CONFIRM_CONTEXT: &[&str] = &[
-        "allow your carrier",       // Pixel/AOSP dialog title
-        "set up esim",              // alt phrasing
-        "used immediately after",   // dialog body line
+        "allow your carrier",
+        "set up esim",
+        "used immediately after",
     ];
     let tap_handle = autotap::spawn_auto_tap(
         state.clone(),
@@ -211,11 +233,10 @@ pub async fn install_handler(state: Arc<PhoneState>, Json(body): Json<InstallBod
         Duration::from_secs(120),
     );
 
-    let output = adb_shell(serial, &format!(
+    let output = adb_shell(&serial, &format!(
         "content query --uri 'content://com.otacon.kiosk/esim/install?activationCode={encoded}'"
     )).await?;
 
-    // Cancel the auto-tapper if still running
     tap_handle.abort();
 
     parse_content_result(&output)

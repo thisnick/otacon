@@ -8,6 +8,7 @@ pub mod clipboard;
 pub mod contacts;
 pub mod device;
 pub mod esim;
+pub mod esim_ui;
 pub mod factory_reset;
 pub mod open;
 pub mod phones;
