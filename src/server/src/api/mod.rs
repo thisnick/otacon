@@ -360,9 +360,10 @@ async fn phone_apps_install(
 
 async fn phone_esim_profiles(
     State(state): State<Arc<AppState>>, Path(id): Path<String>,
+    query: axum::extract::Query<esim::ListProfilesQuery>,
 ) -> Result<Json<Vec<esim::EsimProfile>>, ApiError> {
     let ps = extract_phone(State(state), Path(id)).await?;
-    esim::profiles_handler(ps).await
+    esim::profiles_handler(ps, query).await
 }
 
 async fn phone_esim_install(

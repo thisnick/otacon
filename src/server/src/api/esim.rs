@@ -27,10 +27,22 @@ pub struct EsimProfile {
     embedded: bool,
     /// Currently active on a SIM slot (slot >= 0 && apps enabled)
     enabled: bool,
-    /// Status string: "active" (enabled, on a slot) or "disabled" (installed but not active)
+    /// Status string: "active" (enabled, on a slot), "disabled" (installed
+    /// but not active), or "historical" (stale subscription record from a
+    /// previously-inserted physical SIM, only shown with ?all=true)
     status: String,
+    /// True for stale physical SIM records (only present when ?all=true)
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    historical: bool,
     #[serde(rename = "isDefault")]
     is_default: bool,
+}
+
+#[derive(Deserialize)]
+pub struct ListProfilesQuery {
+    /// Include historical (stale) physical SIM records (default: false)
+    #[serde(default)]
+    pub all: bool,
 }
 
 #[derive(Deserialize, Serialize, ToSchema)]
@@ -85,9 +97,13 @@ pub struct SetDefaultsBody {
     path = "/api/esim/profiles",
     tag = "eSIM",
     operation_id = "listEsimProfiles",
+    params(("all" = Option<bool>, Query, description = "Include historical (stale) physical SIM records")),
     responses((status = 200, body = Vec<EsimProfile>))
 )]
-pub async fn profiles_handler(state: Arc<PhoneState>) -> Result<Json<Vec<EsimProfile>>, ApiError> {
+pub async fn profiles_handler(
+    state: Arc<PhoneState>,
+    axum::extract::Query(query): axum::extract::Query<ListProfilesQuery>,
+) -> Result<Json<Vec<EsimProfile>>, ApiError> {
     let serial = &state.config.adb_serial;
     // Get active profiles from app_process (has unmasked ICCIDs)
     let active_json = state.bridge.snapshot_get("/esim/profiles").await.unwrap_or_default();
@@ -124,12 +140,12 @@ pub async fn profiles_handler(state: Arc<PhoneState>) -> Result<Json<Vec<EsimPro
             continue;
         }
 
-        // Hide historical subscription records: dumpsys keeps stale entries
-        // for physical SIMs that have been swapped out. Only show physical
-        // entries that are actually present in the snapshot server's active
-        // subscription list. Embedded eSIMs always show (they're installed
-        // profiles, even if disabled).
-        if !embedded && !active_map.contains_key(&sub_id) {
+        // Detect historical entries: physical SIMs not in the snapshot
+        // server's active list are stale records from previously-inserted
+        // SIMs. Embedded eSIMs are never historical (always installed).
+        let historical = !embedded && !active_map.contains_key(&sub_id);
+        // Default behavior: hide historical entries unless ?all=true
+        if historical && !query.all {
             continue;
         }
 
@@ -162,6 +178,9 @@ pub async fn profiles_handler(state: Arc<PhoneState>) -> Result<Json<Vec<EsimPro
         }
 
         let enabled = slot >= 0 && apps_enabled;
+        let status = if historical { "historical" }
+            else if enabled { "active" }
+            else { "disabled" };
         profiles.push(EsimProfile {
             sub_id,
             iccid,
@@ -169,7 +188,8 @@ pub async fn profiles_handler(state: Arc<PhoneState>) -> Result<Json<Vec<EsimPro
             slot,
             embedded,
             enabled,
-            status: if enabled { "active".into() } else { "disabled".into() },
+            status: status.into(),
+            historical,
             is_default: sub_id == default_sms,
         });
     }
@@ -187,6 +207,7 @@ pub async fn profiles_handler(state: Arc<PhoneState>) -> Result<Json<Vec<EsimPro
                 embedded: false,
                 enabled: true,
                 status: "active".into(),
+                historical: false,
                 is_default: sub_id == default_sms,
             });
         }

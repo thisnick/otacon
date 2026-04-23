@@ -30,9 +30,11 @@ export function phoneEsimCommands(
   esim
     .command("list")
     .description("List eSIM profiles (active and disabled)")
+    .option("--all", "include historical (stale) physical SIM records")
     .option("--json", "output as JSON instead of a table")
-    .action(async (opts: { json?: boolean }) => {
-      const res = await esimFetch(parentOpts(), "/profiles");
+    .action(async (opts: { all?: boolean; json?: boolean }) => {
+      const path = opts.all ? "/profiles?all=true" : "/profiles";
+      const res = await esimFetch(parentOpts(), path);
       const profiles = (await res.json()) as Array<{
         subId: number;
         iccid: string;
@@ -41,6 +43,7 @@ export function phoneEsimCommands(
         embedded: boolean;
         enabled: boolean;
         status: string;
+        historical?: boolean;
         isDefault: boolean;
       }>;
       printList(profiles, [
