@@ -28,6 +28,15 @@ def find_pair_button_in_tree(data) -> str | None:
 
     Pure function — takes parsed JSON data, returns ref_id or None.
     """
+    result = find_pair_button_with_bounds(data)
+    return result[0] if result else None
+
+
+def find_pair_button_with_bounds(data) -> tuple[str, dict] | None:
+    """Walk a snapshot a11y tree and find a clickable Pair/Allow button.
+
+    Returns (ref_id, bounds_dict) or None.
+    """
     if not data:
         return None
 
@@ -36,24 +45,32 @@ def find_pair_button_in_tree(data) -> str | None:
     def walk(node):
         text = (node.get('text') or '').strip().lower()
         if text in PAIR_TEXTS and node.get('clickable'):
-            return node.get('ref_id')
+            ref = node.get('ref_id')
+            bounds = node.get('bounds')
+            if ref and bounds:
+                return (ref, bounds)
         for child in node.get('children', []):
-            ref = walk(child)
-            if ref:
-                return ref
+            result = walk(child)
+            if result:
+                return result
         return None
 
     nodes = data if isinstance(data, list) else [data]
     for node in nodes:
-        ref = walk(node)
-        if ref:
-            return ref
+        result = walk(node)
+        if result:
+            return result
     return None
 
 
 def _find_pair_button(snapshot_url: str) -> str | None:
     data = http_get(f'{snapshot_url}/snapshot?format=json', timeout=3)
     return find_pair_button_in_tree(data)
+
+
+def _find_pair_button_with_bounds(snapshot_url: str) -> tuple[str, dict] | None:
+    data = http_get(f'{snapshot_url}/snapshot?format=json', timeout=3)
+    return find_pair_button_with_bounds(data)
 
 
 def _tap_pair_notification(serial: str) -> bool:
@@ -340,10 +357,15 @@ def _do_pair_tap_loop(serial: str, snapshot_url: str, label: str = '') -> bool:
         time.sleep(1)
         if i % 5 == 0:
             ensure_screen_on(serial)
-        ref = _find_pair_button(snapshot_url)
-        if ref:
-            log.info(f"Auto-tapping 'Pair' button ({ref}){label}")
-            http_post(f'{snapshot_url}/action', {'action': 'click', 'ref': ref})
+        result = _find_pair_button_with_bounds(snapshot_url)
+        if result:
+            ref, bounds = result
+            # Use `input tap` (real touch) — Pixel system dialogs don't
+            # honor a11y performAction(ACTION_CLICK).
+            cx = (bounds['x1'] + bounds['x2']) // 2
+            cy = (bounds['y1'] + bounds['y2']) // 2
+            log.info(f"Auto-tapping 'Pair/Allow' button ({ref}) at ({cx},{cy}){label}")
+            adb_shell(serial, f'input tap {cx} {cy}')
             return True
         if _tap_pair_notification(serial):
             return True
@@ -361,10 +383,13 @@ def run_pair_dialog_watcher(serial: str, snapshot_url: str,
     """
     while not stop_event.is_set():
         try:
-            ref = _find_pair_button(snapshot_url)
-            if ref:
-                log.info(f"[{serial}] Pair-dialog watcher: auto-tapping '{ref}'")
-                http_post(f'{snapshot_url}/action', {'action': 'click', 'ref': ref})
+            result = _find_pair_button_with_bounds(snapshot_url)
+            if result:
+                ref, bounds = result
+                cx = (bounds['x1'] + bounds['x2']) // 2
+                cy = (bounds['y1'] + bounds['y2']) // 2
+                log.info(f"[{serial}] Pair-dialog watcher: auto-tapping '{ref}' at ({cx},{cy})")
+                adb_shell(serial, f'input tap {cx} {cy}')
                 # Brief cooldown after tap to let the dialog dismiss
                 stop_event.wait(2)
                 continue
