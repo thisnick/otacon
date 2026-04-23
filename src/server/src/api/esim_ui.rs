@@ -111,7 +111,11 @@ pub async fn install_via_ui(
                 tap_clickable_with_text(&serial, &nodes, "Add more").await?;
             }
             UiState::Connect => {
-                tap_clickable_with_text(&serial, &nodes, "Set up an eSIM").await?;
+                // Pixel 4a: "Set up an eSIM" button
+                // Pixel 4:  "Add a number using eSIM" clickable text
+                if let Err(_) = tap_clickable_with_text(&serial, &nodes, "Set up an eSIM").await {
+                    tap_clickable_with_text(&serial, &nodes, "Add a number using eSIM").await?;
+                }
             }
             UiState::ConfirmNetwork => {
                 tap_clickable_with_text(&serial, &nodes, "Use a different network").await?;
