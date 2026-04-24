@@ -14,10 +14,13 @@ function getRegistryClient(opts: { registry?: string }): RegistryClient {
 
 /**
  * Approved CLI/admin clients exist as admin-scope tokens in the registry.
- * `otacon client list` filters tokens by scope=admin and excludes revoked entries.
+ * `otacon clients list` filters tokens by scope=admin and excludes revoked entries.
  */
-export function clientCommands(parentOpts: () => { registry?: string }): Command {
-  const client = new Command("client").description("Admin client (CLI/UI) management");
+export function clientCommands(
+  parentOpts: () => { registry?: string },
+  name = "clients"
+): Command {
+  const client = new Command(name).description("Admin client (CLI/UI) management");
 
   client
     .command("list")

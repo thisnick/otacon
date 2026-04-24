@@ -9,6 +9,7 @@ from ..util.adb import adb, adb_shell
 from ..util.http import http_get, http_post
 from .status import MonitorStatus, StepStatus, HealStatus, now_iso, push_status
 from . import health, heal
+from .. import local_config
 from ..steps import screen, provisioning, snapshot, passcode, wifi
 from ..bluetooth.pair import allocate_and_pair_bluetooth, run_pair_dialog_watcher
 from ..registry.identity import gather_identity
@@ -98,7 +99,10 @@ class PhoneAgent:
         self._run_step('wait_for_server', self._wait_for_server)
         self._run_step('clear_passcode_if_set', passcode.clear_passcode_if_set,
                         self.serial, self._report_error)
-        self._run_step('connect_wifi', wifi.connect_wifi, self.serial)
+        if self._wifi_enabled():
+            self._run_step('connect_wifi', wifi.connect_wifi, self.serial)
+        else:
+            self.log.info('WiFi disabled by host-local config; skipping setup')
 
         replaced_mac = None
         result = self._run_step('allocate_and_pair_bluetooth',
@@ -168,12 +172,12 @@ class PhoneAgent:
     def _apply_config(self, config: dict):
         if not config:
             return
-        if config.get('wifi_enabled') is not None:
-            adb_shell(self.serial,
-                f"svc wifi {'enable' if config['wifi_enabled'] else 'disable'}")
         if config.get('bluetooth_enabled') is not None:
             adb_shell(self.serial,
                 f"svc bluetooth {'enable' if config['bluetooth_enabled'] else 'disable'}")
+
+    def _wifi_enabled(self) -> bool:
+        return local_config.wifi_enabled(self.serial)
 
     def run_maintenance_tick(self):
         """Run all health checks and heal failures."""
@@ -213,7 +217,7 @@ class PhoneAgent:
             self.adapter_mac, self.phone_bt_mac, serial=self.serial)
         checks['bt_connected'] = lambda: health.check_bt_connected(
             self.adapter_mac, self.phone_bt_mac)
-        checks['wifi'] = lambda: health.check_wifi_connected(self.serial)
+        checks['wifi'] = lambda: True if not self._wifi_enabled() else health.check_wifi_connected(self.serial)
         checks['device_owner'] = lambda: health.check_device_owner(self.serial)
         checks['restrictions'] = lambda: health.check_restrictions(self.serial)
         checks['snapshot_alive'] = lambda: health.check_snapshot_alive(self.serial)
@@ -278,7 +282,10 @@ class PhoneAgent:
                 else:
                     hs.consecutive_failures = 0
             elif name == 'wifi':
-                heal.heal_wifi(self.serial)
+                if self._wifi_enabled():
+                    heal.heal_wifi(self.serial)
+                else:
+                    self.log.info('WiFi disabled by host-local config; skipping heal')
             elif name == 'device_owner':
                 heal.heal_device_owner(self.serial)
             elif name == 'restrictions':
@@ -344,7 +351,7 @@ class PhoneAgent:
                 self.serial, self.snapshot_port, self.internal_port),
             'passcode': lambda: passcode.clear_passcode_if_set(
                 self.serial, self._report_error),
-            'wifi': lambda: wifi.connect_wifi(self.serial),
+            'wifi': lambda: wifi.connect_wifi(self.serial) if self._wifi_enabled() else None,
             'pair': lambda: allocate_and_pair_bluetooth(
                 self.serial, self.snapshot_url, self._report_error),
             'restrictions': lambda: provisioning.apply_restrictions(self.serial),

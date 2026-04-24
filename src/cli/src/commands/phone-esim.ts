@@ -1,19 +1,19 @@
 import { Command } from "commander";
 import { getHostClient } from "../host-client.js";
-import { printList, colorStatus } from "../format.js";
+import { printList, printDetail, colorStatus } from "../format.js";
 
 /**
- * Fetch an eSIM endpoint on the host server.
+ * Fetch a SIMs endpoint on the host server.
  * getHostClient() already includes the /phones/{localId} prefix,
- * so we just append /api/esim/... to the client's baseUrl.
+ * so we just append /api/sims/... to the client's baseUrl.
  */
-async function esimFetch(
+async function simsFetch(
   opts: { host?: string; phone?: string; registry?: string },
   path: string,
   init?: RequestInit
 ): Promise<Response> {
   const client = await getHostClient(opts);
-  const url = `${client.baseUrl}/api/esim${path}`;
+  const url = `${client.baseUrl}/api/sims${path}`;
   const res = await fetch(url, init);
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -22,19 +22,20 @@ async function esimFetch(
   return res;
 }
 
-export function phoneEsimCommands(
-  parentOpts: () => { host?: string; phone?: string; registry?: string }
+export function simCommands(
+  parentOpts: () => { host?: string; phone?: string; registry?: string },
+  name = "sims"
 ): Command {
-  const esim = new Command("esim").description("eSIM management");
+  const sims = new Command(name).description("SIM/eSIM management");
 
-  esim
+  sims
     .command("list")
-    .description("List eSIM profiles (active and disabled)")
+    .description("List SIM/eSIM profiles (active and disabled)")
     .option("--all", "include historical (stale) physical SIM records")
     .option("--json", "output as JSON instead of a table")
     .action(async (opts: { all?: boolean; json?: boolean }) => {
-      const path = opts.all ? "/profiles?all=true" : "/profiles";
-      const res = await esimFetch(parentOpts(), path);
+      const path = opts.all ? "?all=true" : "";
+      const res = await simsFetch(parentOpts(), path);
       const profiles = (await res.json()) as Array<{
         subId: number;
         iccid: string;
@@ -57,80 +58,86 @@ export function phoneEsimCommands(
       ], { json: opts.json });
     });
 
-  esim
+  sims
     .command("install")
     .description("Install an eSIM profile")
     .argument("<activation-code>", "activation code (LPA:1$...)")
-    .action(async (activationCode: string) => {
-      const res = await esimFetch(parentOpts(), "/install", {
+    .option("--json", "output as JSON")
+    .action(async (activationCode: string, opts: { json?: boolean }) => {
+      const res = await simsFetch(parentOpts(), "/install", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ activationCode }),
       });
-      console.log(JSON.stringify(await res.json(), null, 2));
+      printDetail(await res.json(), { json: opts.json });
     });
 
-  esim
+  sims
     .command("delete")
     .description("Delete an eSIM profile")
     .argument("<sub-id>", "subscription ID")
-    .action(async (subId: string) => {
-      const res = await esimFetch(parentOpts(), "/delete", {
+    .option("--json", "output as JSON")
+    .action(async (subId: string, opts: { json?: boolean }) => {
+      const res = await simsFetch(parentOpts(), "/delete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ subId: parseInt(subId) }),
       });
-      console.log(JSON.stringify(await res.json(), null, 2));
+      printDetail(await res.json(), { json: opts.json });
     });
 
-  esim
+  sims
     .command("switch")
     .description("Switch active eSIM profile")
     .argument("<sub-id>", "subscription ID")
-    .action(async (subId: string) => {
-      const res = await esimFetch(parentOpts(), "/switch", {
+    .option("--json", "output as JSON")
+    .action(async (subId: string, opts: { json?: boolean }) => {
+      const res = await simsFetch(parentOpts(), "/switch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ subId: parseInt(subId) }),
       });
-      console.log(JSON.stringify(await res.json(), null, 2));
+      printDetail(await res.json(), { json: opts.json });
     });
 
-  esim
+  sims
     .command("enable")
     .description("Enable an eSIM profile")
     .argument("<sub-id>", "subscription ID")
-    .action(async (subId: string) => {
-      const res = await esimFetch(parentOpts(), "/enable", {
+    .option("--json", "output as JSON")
+    .action(async (subId: string, opts: { json?: boolean }) => {
+      const res = await simsFetch(parentOpts(), "/enable", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ subId: parseInt(subId), enabled: true }),
       });
-      console.log(JSON.stringify(await res.json(), null, 2));
+      printDetail(await res.json(), { json: opts.json });
     });
 
-  esim
+  sims
     .command("disable")
     .description("Disable an eSIM profile")
     .argument("<sub-id>", "subscription ID")
-    .action(async (subId: string) => {
-      const res = await esimFetch(parentOpts(), "/enable", {
+    .option("--json", "output as JSON")
+    .action(async (subId: string, opts: { json?: boolean }) => {
+      const res = await simsFetch(parentOpts(), "/enable", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ subId: parseInt(subId), enabled: false }),
       });
-      console.log(JSON.stringify(await res.json(), null, 2));
+      printDetail(await res.json(), { json: opts.json });
     });
 
-  esim
+  sims
     .command("defaults")
-    .description("Get or set eSIM defaults")
+    .description("Get or set SIM defaults")
     .argument("[action]", "get or set", "get")
     .argument("[kv...]", "key=value pairs for set")
-    .action(async (action: string, kv: string[]) => {
+    .option("--json", "output as JSON")
+    .action(async (action: string, kv: string[], opts: { json?: boolean }) => {
       if (action === "get") {
-        const res = await esimFetch(parentOpts(), "/defaults");
-        console.log(JSON.stringify(await res.json(), null, 2));
+        const res = await simsFetch(parentOpts(), "/defaults");
+        printDetail(await res.json(), { json: opts.json });
       } else if (action === "set" && kv.length > 0) {
         const obj: Record<string, string | number | boolean> = {};
         for (const pair of kv) {
@@ -142,17 +149,17 @@ export function phoneEsimCommands(
           else if (raw === "false") obj[k] = false;
           else obj[k] = raw;
         }
-        const res = await esimFetch(parentOpts(), "/defaults", {
+        const res = await simsFetch(parentOpts(), "/defaults", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(obj),
         });
-        console.log(JSON.stringify(await res.json(), null, 2));
+        printDetail(await res.json(), { json: opts.json });
       } else {
-        console.error("Usage: otacon phone esim defaults [get|set <k=v>]");
+        console.error("Usage: otacon sims defaults [get|set <k=v>]");
         process.exit(1);
       }
     });
 
-  return esim;
+  return sims;
 }

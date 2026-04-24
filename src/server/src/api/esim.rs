@@ -94,8 +94,8 @@ pub struct SetDefaultsBody {
 
 #[utoipa::path(
     get,
-    path = "/api/esim/profiles",
-    tag = "eSIM",
+    path = "/api/sims",
+    tag = "SIM",
     operation_id = "listEsimProfiles",
     params(("all" = Option<bool>, Query, description = "Include historical (stale) physical SIM records")),
     responses((status = 200, body = Vec<EsimProfile>))
@@ -132,7 +132,7 @@ pub async fn profiles_handler(
     for chunk in split_subscription_chunks(&dump) {
         // Include both embedded eSIMs AND physical SIMs (we used to filter
         // out non-embedded, but a physical SIM is still a SIM the user
-        // wants to see in `esim list`).
+        // wants to see in `sim list`).
         let embedded = chunk.contains("isEmbedded=1") || chunk.contains("isEmbedded=true");
 
         let sub_id = parse_dump_field_i64(&chunk, "id");
@@ -223,8 +223,8 @@ pub async fn profiles_handler(
 
 #[utoipa::path(
     post,
-    path = "/api/esim/install",
-    tag = "eSIM",
+    path = "/api/sims/install",
+    tag = "SIM",
     operation_id = "installEsimProfile",
     request_body = InstallBody,
     responses((status = 200, body = serde_json::Value))
@@ -277,8 +277,8 @@ pub async fn install_handler(state: Arc<PhoneState>, Json(body): Json<InstallBod
 
 #[utoipa::path(
     post,
-    path = "/api/esim/delete",
-    tag = "eSIM",
+    path = "/api/sims/delete",
+    tag = "SIM",
     operation_id = "deleteEsimProfile",
     request_body = DeleteBody,
     responses((status = 200, body = serde_json::Value))
@@ -296,8 +296,8 @@ pub async fn delete_handler(serial: &str, Json(body): Json<DeleteBody>) -> Resul
 
 #[utoipa::path(
     post,
-    path = "/api/esim/switch",
-    tag = "eSIM",
+    path = "/api/sims/switch",
+    tag = "SIM",
     operation_id = "switchEsimProfile",
     request_body = SwitchBody,
     responses((status = 200, body = serde_json::Value))
@@ -317,8 +317,8 @@ pub async fn switch_handler(state: Arc<PhoneState>, Json(body): Json<SwitchBody>
 
 #[utoipa::path(
     post,
-    path = "/api/esim/enable",
-    tag = "eSIM",
+    path = "/api/sims/enable",
+    tag = "SIM",
     operation_id = "enableEsimProfile",
     request_body = EnableBody,
     responses((status = 200, body = serde_json::Value))
@@ -340,8 +340,8 @@ pub async fn enable_handler(state: Arc<PhoneState>, Json(body): Json<EnableBody>
 
 #[utoipa::path(
     get,
-    path = "/api/esim/defaults",
-    tag = "eSIM",
+    path = "/api/sims/defaults",
+    tag = "SIM",
     operation_id = "getEsimDefaults",
     responses((status = 200, body = EsimDefaults))
 )]
@@ -362,8 +362,8 @@ pub async fn defaults_get_handler(serial: &str) -> Result<Json<EsimDefaults>, Ap
 
 #[utoipa::path(
     put,
-    path = "/api/esim/defaults",
-    tag = "eSIM",
+    path = "/api/sims/defaults",
+    tag = "SIM",
     operation_id = "setEsimDefaults",
     request_body = SetDefaultsBody,
     responses((status = 200, body = serde_json::Value))

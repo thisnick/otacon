@@ -12,7 +12,7 @@ Infrastructure-as-code for a Raspberry Pi fleet hosting multiple Android phones 
 - **Registry stack** (one per tailnet) — Docker containers on their own Tailscale identity:
   - `otacon-registry` — central index of all hosts, phones, dongles, SIMs, tokens. Serves the admin UI. Single binary, Rust + `utoipa` OpenAPI.
   - `tailscale-registry` — Tailscale sidecar (gives the registry its own FQDN like `otacon-registry.<tailnet>.ts.net`)
-- **CLI** (`otacon`, TypeScript) — pair once with `otacon auth register`, then drive any phone in the fleet: `otacon phone list`, `otacon screenshot`, `otacon tap e5`, etc. See `skills/otacon-cli/SKILL.md` for the full reference.
+- **CLI** (`otacon`, TypeScript) — pair once with `otacon auth register`, then drive any phone in the fleet: `otacon phones list`, `otacon screenshot`, `otacon tap e5`, etc. See `skills/otacon-cli/SKILL.md` for the full reference.
 - **Android app** — Device Owner kiosk app that locks down WiFi/Bluetooth/GPS/factory-reset and provides the ContentProvider bridge for SMS/calls/eSIM/notifications.
 - **Pi-gen** — builds flashable Raspberry Pi images with everything pre-configured
 
@@ -106,11 +106,16 @@ The `otacon` CLI lets you drive any phone in the fleet from your laptop. Inside 
 pnpm cli auth register --registry http://otacon-registry.<tailnet>.ts.net:9080
 # (have an admin approve via `pnpm cli reg approve <id>` or the admin UI)
 
-pnpm cli phone list            # see all phones in the fleet
-pnpm cli phone use phone-2     # pick a default
+pnpm cli phones list           # see all phones in the fleet
+pnpm cli phones use phone-2    # pick a default
 pnpm cli info                  # screen state, model, activity, vnc_port, etc.
 pnpm cli screenshot            # save current screen as PNG
 pnpm cli tap e5                # tap an accessibility-tree element by ref
+pnpm cli sims list             # list physical SIMs/eSIM profiles
+pnpm cli apns upsert SpeedTalk --operator 310240 --apn stkmobi --mmsc https://mms.example/mms/wapenc
+pnpm cli wifi off              # immediate host-local Wi-Fi off for active phone
+pnpm cli wifi status           # desired + observed Wi-Fi state
+pnpm cli config set bluetooth_enabled=off  # registry-level BT pairing policy
 ```
 
 See `skills/otacon-cli/SKILL.md` for the full command reference (organized for AI-agent consumption — works for humans too).

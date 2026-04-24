@@ -2,18 +2,21 @@
 // Accept Tailscale self-signed certs (set before any imports to avoid warning)
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
-import { program } from "commander";
+import { Command, program } from "commander";
 import { readFileSync, writeFileSync } from "fs";
 import type { Action } from "./client.js";
 import { getHostClient } from "./host-client.js";
 import { authCommands } from "./commands/auth.js";
 import { regCommands } from "./commands/reg.js";
 import { phoneCommands } from "./commands/phone.js";
-import { phoneEsimCommands } from "./commands/phone-esim.js";
+import { configCommands } from "./commands/config.js";
+import { simCommands } from "./commands/phone-esim.js";
+import { apnCommands } from "./commands/phone-apns.js";
 import { hostCommands } from "./commands/host.js";
 import { dongleCommands } from "./commands/dongle.js";
-import { printList } from "./format.js";
+import { printDetail, printList } from "./format.js";
 import { clientCommands } from "./commands/client.js";
+import { wifiCommands } from "./commands/wifi.js";
 
 program
   .name("otacon")
@@ -28,19 +31,138 @@ async function getClient(): Promise<import("./client.js").OtaconClient> {
   return getHostClient(opts);
 }
 
+type CliRecord = Record<string, unknown>;
+
+function jsonOut(value: unknown): void {
+  console.log(JSON.stringify(value, null, 2));
+}
+
+function asRecord(value: unknown): CliRecord {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as CliRecord
+    : {};
+}
+
+function cell(value: unknown): string {
+  if (value === null || value === undefined || value === "") return "-";
+  if (typeof value === "boolean") return value ? "yes" : "no";
+  return String(value);
+}
+
+function status(value: unknown, yes: string, no: string): string {
+  return value ? yes : no;
+}
+
+function seconds(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "-";
+  const mins = Math.floor(value / 60);
+  const secs = Math.floor(value % 60);
+  return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+}
+
+function printSection(title: string, rows: Array<[string, unknown]>, first = false): void {
+  if (!first) console.log("");
+  console.log(title);
+  if (rows.length === 0) {
+    console.log("-");
+    return;
+  }
+  const width = Math.max(...rows.map(([key]) => key.length));
+  for (const [key, value] of rows) {
+    console.log(`${key.padEnd(width)}  ${cell(value)}`);
+  }
+}
+
+function flattenRecord(record: CliRecord, prefix = "", depth = 0): Array<[string, unknown]> {
+  const rows: Array<[string, unknown]> = [];
+  for (const [key, value] of Object.entries(record)) {
+    const label = prefix ? `${prefix}.${key}` : key;
+    if (value && typeof value === "object" && !Array.isArray(value) && depth < 2) {
+      rows.push(...flattenRecord(value as CliRecord, label, depth + 1));
+    } else if (Array.isArray(value)) {
+      rows.push([label, value.length === 0 ? "-" : `${value.length} item${value.length === 1 ? "" : "s"}`]);
+    } else {
+      rows.push([label, value]);
+    }
+  }
+  return rows;
+}
+
+function printDeviceInfo(info: CliRecord): void {
+  const wifi = asRecord(info.wifi);
+  const stats = asRecord(info.stats);
+  const memUsed = stats.mem_used_mb;
+  const memTotal = stats.mem_total_mb;
+  const memory =
+    typeof memUsed === "number" && typeof memTotal === "number"
+      ? `${memUsed} / ${memTotal} MB`
+      : "-";
+  const cpu = typeof stats.cpu_pct === "number" ? `${stats.cpu_pct.toFixed(1)}%` : "-";
+  const battery = typeof stats.battery_pct === "number" ? `${stats.battery_pct}%` : "-";
+  const temp = typeof stats.temp_c === "number" ? `${stats.temp_c.toFixed(1)} C` : "-";
+  const wifiStatus = wifi.connected
+    ? `connected${wifi.ssid ? `  ${wifi.ssid}` : ""}${wifi.rssi ? `  ${wifi.rssi} dBm` : ""}`
+    : status(wifi.enabled, "enabled", "disabled");
+
+  printSection("DEVICE", [
+    ["model", info.model],
+    ["adb_serial", info.adb_serial],
+    ["screen_state", info.screen_state],
+    ["resolution", info.resolution],
+    ["vnc_port", info.vnc_port],
+  ], true);
+
+  printSection("CONNECTIONS", [
+    ["device_owner", status(info.bridge, "online", "offline")],
+    ["snapshot_server", status(info.snapshot_server, "online", "offline")],
+    ["bluetooth", status(info.bt_connected, "connected", "disconnected")],
+    ["adapter_mac", info.adapter_mac],
+    ["phone_bt_mac", info.phone_bt_mac],
+    ["wifi", wifiStatus],
+  ]);
+
+  printSection("IDENTITY", [
+    ["phone_number", info.phone_number],
+    ["imei", info.imei],
+    ["imei2", info.imei2],
+    ["eid", info.eid],
+  ]);
+
+  printSection("CURRENT APP", [
+    ["activity", info.activity],
+    ["window", info.window],
+  ]);
+
+  printSection("STATS", [
+    ["battery", battery],
+    ["memory", memory],
+    ["cpu", cpu],
+    ["temperature", temp],
+  ]);
+
+  if (info.monitor) {
+    printSection("MONITOR", flattenRecord(asRecord(info.monitor)));
+  }
+}
+
 // ── Subcommand groups ─────────────────────────────────────────────
 
 const getParentOpts = () => program.opts() as { host?: string; phone?: string; registry?: string };
 
 program.addCommand(authCommands());
 program.addCommand(regCommands(getParentOpts));
+program.addCommand(configCommands(getParentOpts));
 program.addCommand(hostCommands(getParentOpts));
+program.addCommand(hostCommands(getParentOpts, "host"), { hidden: true });
 program.addCommand(dongleCommands(getParentOpts));
+program.addCommand(dongleCommands(getParentOpts, "dongle"), { hidden: true });
 program.addCommand(clientCommands(getParentOpts));
-
-const phone = phoneCommands(getParentOpts);
-phone.addCommand(phoneEsimCommands(getParentOpts));
-program.addCommand(phone);
+program.addCommand(clientCommands(getParentOpts, "client"), { hidden: true });
+program.addCommand(simCommands(getParentOpts));
+program.addCommand(apnCommands(getParentOpts));
+program.addCommand(wifiCommands(getParentOpts));
+program.addCommand(phoneCommands(getParentOpts));
+program.addCommand(phoneCommands(getParentOpts, "phone"), { hidden: true });
 
 // ── Top-level per-phone commands (daily use) ──────────────────────
 
@@ -196,21 +318,34 @@ const sms = program.command("sms").description("SMS commands");
 
 sms
   .command("list")
-  .description("List SMS threads")
-  .action(async () => {
+  .description("List SMS threads (default: table; use --json for raw JSON)")
+  .option("--json", "output as JSON")
+  .action(async (opts: { json?: boolean }) => {
     const client = await getClient();
     const threads = await client.smsThreads();
-    console.log(JSON.stringify(threads, null, 2));
+    printList(threads, [
+      { header: "THREAD", get: (t) => t.thread_id },
+      { header: "ADDRESS", get: (t) => t.address },
+      { header: "DATE", get: (t) => t.date },
+      { header: "SNIPPET", get: (t) => t.snippet, maxWidth: 64 },
+    ], { json: opts.json });
   });
 
 sms
   .command("read")
-  .description("Read messages in a thread")
+  .description("Read messages in a thread (default: table; use --json for raw JSON)")
   .argument("<thread_id>", "thread ID")
-  .action(async (threadId: string) => {
+  .option("--json", "output as JSON")
+  .action(async (threadId: string, opts: { json?: boolean }) => {
     const client = await getClient();
     const messages = await client.smsMessages(parseInt(threadId));
-    console.log(JSON.stringify(messages, null, 2));
+    printList(messages, [
+      { header: "ID", get: (m) => m.id },
+      { header: "DATE", get: (m) => m.date },
+      { header: "TYPE", get: (m) => m.type },
+      { header: "ADDRESS", get: (m) => m.address },
+      { header: "BODY", get: (m) => m.body, maxWidth: 80 },
+    ], { json: opts.json });
   });
 
 sms
@@ -254,11 +389,21 @@ call
 
 call
   .command("status")
-  .description("Get current call status")
-  .action(async () => {
+  .description("Get current call status (default: detail; use --json for raw JSON)")
+  .option("--json", "output as JSON")
+  .action(async (opts: { json?: boolean }) => {
     const client = await getClient();
     const status = await client.callStatus();
-    console.log(JSON.stringify(status, null, 2));
+    if (opts.json) {
+      jsonOut(status);
+      return;
+    }
+    const record = status as unknown as CliRecord;
+    printDetail({
+      state: record.state,
+      number: record.number,
+      duration: seconds(record.duration),
+    });
   });
 
 // --- Notifications ---
@@ -270,11 +415,22 @@ const notifications = program
 
 notifications
   .command("list")
-  .description("List current notifications")
-  .action(async () => {
+  .description("List current notifications (default: table; use --json for raw JSON)")
+  .option("--json", "output as JSON")
+  .action(async (opts: { json?: boolean }) => {
     const client = await getClient();
     const notifs = await client.notifications();
-    console.log(JSON.stringify(notifs, null, 2));
+    printList(notifs, [
+      { header: "PACKAGE", get: (n) => n.package },
+      { header: "TITLE", get: (n) => n.title, maxWidth: 32 },
+      { header: "TEXT", get: (n) => n.text, maxWidth: 56 },
+      {
+        header: "ACTIONS",
+        get: (n) => (n.actions ?? []).map((a) => `[${a.index}] ${a.title}`).join(" "),
+        maxWidth: 56,
+      },
+      { header: "KEY", get: (n) => n.key, maxWidth: 36 },
+    ], { json: opts.json });
   });
 
 notifications
@@ -326,74 +482,81 @@ clipboard
 
 // --- Apps ---
 
-const app = program.command("app").description("App commands");
+function appCommands(name: string): Command {
+  const app = new Command(name).description("App commands");
 
-app
-  .command("list")
-  .description("List installed apps (default: table; use --json for raw JSON)")
-  .option("--json", "output as JSON")
-  .action(async (opts: { json?: boolean }) => {
-    const client = await getClient();
-    const list = await client.apps();
-    printList(list, [
-      { header: "PACKAGE", get: (a) => a.package },
-      { header: "VERSION", get: (a) => (a as { version_code?: number }).version_code },
-      { header: "LABEL", get: (a) => a.label },
-    ], { json: opts.json });
-  });
+  app
+    .command("list")
+    .description("List installed apps (default: table; use --json for raw JSON)")
+    .option("--json", "output as JSON")
+    .action(async (opts: { json?: boolean }) => {
+      const client = await getClient();
+      const list = await client.apps();
+      printList(list, [
+        { header: "PACKAGE", get: (a) => a.package },
+        { header: "VERSION", get: (a) => (a as { version_code?: number }).version_code },
+        { header: "LABEL", get: (a) => a.label },
+      ], { json: opts.json });
+    });
 
-app
-  .command("running")
-  .description("List running/foreground apps (default: table; use --json for raw JSON)")
-  .option("--json", "output as JSON")
-  .action(async (opts: { json?: boolean }) => {
-    const client = await getClient();
-    const result = await client.appsRunning();
-    if (opts.json) {
-      console.log(JSON.stringify(result, null, 2));
-      return;
-    }
-    if (result.apps.length === 0 && result.screen_state !== "unlocked") {
-      console.error(
-        `(no running apps — phone is ${result.screen_state}. ` +
-          `Wake with: otacon key wake)`
-      );
-      return;
-    }
-    printList(result.apps, [
-      { header: "PACKAGE", get: (a) => a.package },
-      { header: "LABEL", get: (a) => a.label },
-    ]);
-  });
+  app
+    .command("running")
+    .description("List running/foreground apps (default: table; use --json for raw JSON)")
+    .option("--json", "output as JSON")
+    .action(async (opts: { json?: boolean }) => {
+      const client = await getClient();
+      const result = await client.appsRunning();
+      if (opts.json) {
+        console.log(JSON.stringify(result, null, 2));
+        return;
+      }
+      if (result.apps.length === 0 && result.screen_state !== "unlocked") {
+        console.error(
+          `(no running apps — phone is ${result.screen_state}. ` +
+            `Wake with: otacon key wake)`
+        );
+        return;
+      }
+      printList(result.apps, [
+        { header: "PACKAGE", get: (a) => a.package },
+        { header: "LABEL", get: (a) => a.label },
+      ]);
+    });
 
-app
-  .command("launch")
-  .description("Launch an app")
-  .argument("<package>", "package name")
-  .action(async (pkg: string) => {
-    const client = await getClient();
-    await client.appLaunch(pkg);
-  });
+  app
+    .command("launch")
+    .description("Launch an app")
+    .argument("<package>", "package name")
+    .action(async (pkg: string) => {
+      const client = await getClient();
+      await client.appLaunch(pkg);
+    });
 
-app
-  .command("stop")
-  .description("Force stop an app")
-  .argument("<package>", "package name")
-  .action(async (pkg: string) => {
-    const client = await getClient();
-    await client.appStop(pkg);
-  });
+  app
+    .command("stop")
+    .description("Force stop an app")
+    .argument("<package>", "package name")
+    .action(async (pkg: string) => {
+      const client = await getClient();
+      await client.appStop(pkg);
+    });
 
-app
-  .command("install")
-  .description("Install an APK")
-  .argument("<apk>", "path to APK file")
-  .action(async (apk: string) => {
-    const client = await getClient();
-    const data = readFileSync(apk);
-    await client.appInstall(data);
-    console.error(`Installed ${apk}`);
-  });
+  app
+    .command("install")
+    .description("Install an APK")
+    .argument("<apk>", "path to APK file")
+    .action(async (apk: string) => {
+      const client = await getClient();
+      const data = readFileSync(apk);
+      await client.appInstall(data);
+      console.error(`Installed ${apk}`);
+    });
+
+  return app;
+}
+
+program.addCommand(appCommands("apps"));
+program.addCommand(appCommands("app"), { hidden: true });
 
 // --- Contacts ---
 
@@ -403,27 +566,36 @@ const contacts = program
 
 contacts
   .command("search")
-  .description("Search contacts")
+  .description("Search contacts (default: table; use --json for raw JSON)")
   .argument("<query>", "search query")
-  .action(async (query: string) => {
+  .option("--json", "output as JSON")
+  .action(async (query: string, opts: { json?: boolean }) => {
     const client = await getClient();
     const list = await client.contacts(query);
-    console.log(JSON.stringify(list, null, 2));
+    printList(list, [
+      { header: "NAME", get: (c) => c.name },
+      { header: "PHONES", get: (c) => c.phones.join(", "), maxWidth: 80 },
+    ], { json: opts.json });
   });
 
 // --- Device ---
 
 program
   .command("info")
-  .description("Device and activity info (omits fleet-agent monitor blob; use --monitor to include)")
+  .description("Device and activity info (default: sections; use --json for raw JSON)")
   .option("--monitor", "include the fleet-agent monitor status blob (verbose)")
-  .action(async (opts: { monitor?: boolean }) => {
+  .option("--json", "output as JSON")
+  .action(async (opts: { monitor?: boolean; json?: boolean }) => {
     const client = await getClient();
     const info = await client.info() as Record<string, unknown>;
     if (!opts.monitor && "monitor" in info) {
       delete info.monitor;
     }
-    console.log(JSON.stringify(info, null, 2));
+    if (opts.json) {
+      jsonOut(info);
+      return;
+    }
+    printDeviceInfo(info);
   });
 
 // --- Open ---
@@ -509,11 +681,24 @@ record
 
 record
   .command("status")
-  .description("Check recording status")
-  .action(async () => {
+  .description("Check recording status (default: detail; use --json for raw JSON)")
+  .option("--json", "output as JSON")
+  .action(async (opts: { json?: boolean }) => {
     const client = await getClient();
     const status = await client.recordStatus();
-    console.log(JSON.stringify(status, null, 2));
+    if (opts.json) {
+      jsonOut(status);
+      return;
+    }
+    printDetail({
+      recording: status.recording ? "yes" : "no",
+      elapsed: seconds(status.elapsed),
+      max_duration: seconds(status.max_duration),
+      remaining:
+        typeof status.elapsed === "number" && typeof status.max_duration === "number"
+          ? seconds(Math.max(status.max_duration - status.elapsed, 0))
+          : "-",
+    });
   });
 
 // --- Events ---

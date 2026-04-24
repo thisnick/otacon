@@ -76,7 +76,7 @@ WHOAMI_OUTPUT=$(OTACON_CONFIG_DIR="$TEST_CONFIG_DIR" \
 observe "whoami with env override: $WHOAMI_OUTPUT"
 
 # whoami uses loadConfig() not resolveConfig(), so env vars are not reflected.
-# Actual commands (phone list, screenshot, etc.) DO use resolveConfig().
+# Actual commands (phones list, screenshot, etc.) DO use resolveConfig().
 if echo "$WHOAMI_OUTPUT" | grep -qi "env-override"; then
     pass "OTACON_REGISTRY_URL reflected in whoami"
 else

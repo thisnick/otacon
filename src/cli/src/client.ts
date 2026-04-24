@@ -11,6 +11,7 @@ export type SetTextParams = components["schemas"]["SetTextParams"];
 export type ScrollParams = components["schemas"]["ScrollParams"];
 export type A11yNode = components["schemas"]["A11yNode"];
 export type DeviceInfo = components["schemas"]["DeviceInfo"];
+export type Notification = components["schemas"]["Notification"];
 export type SmsThread = components["schemas"]["SmsThread"];
 export type SmsMessage = components["schemas"]["SmsMessage"];
 export type App = components["schemas"]["App"];

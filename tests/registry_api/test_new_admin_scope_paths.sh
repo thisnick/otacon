@@ -156,7 +156,7 @@ echo ""
 echo "--- PUT /api/v1/admin/phones/{id}/config ---"
 if [ -n "$PHONE_ID" ]; then
     RESULT=$(http_put "$REGISTRY_URL/api/v1/admin/phones/$PHONE_ID/config" \
-        '{"wifi_enabled":false,"bluetooth_enabled":true}' "$ADMIN_TOKEN")
+        '{"bluetooth_enabled":true}' "$ADMIN_TOKEN")
     STATUS=$(get_status "$RESULT")
     if [ "$STATUS" = "200" ]; then
         pass "PUT /api/v1/admin/phones/{id}/config -> 200"

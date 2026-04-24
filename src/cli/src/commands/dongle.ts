@@ -12,8 +12,11 @@ function getRegistryClient(opts: { registry?: string }): RegistryClient {
   return new RegistryClient(resolved.registryUrl, resolved.token);
 }
 
-export function dongleCommands(parentOpts: () => { registry?: string }): Command {
-  const dongle = new Command("dongle").description("Dongle management");
+export function dongleCommands(
+  parentOpts: () => { registry?: string },
+  name = "dongles"
+): Command {
+  const dongle = new Command(name).description("Dongle management");
 
   dongle
     .command("list")

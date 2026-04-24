@@ -1,1864 +1,1969 @@
 {
-  "openapi": "3.1.0",
-  "info": {
-    "title": "Otacon Registry API",
-    "description": "Central registry for managing fleet hosts, phones, dongles, and SIMs.",
-    "license": {
-      "name": "MIT"
+    "openapi": "3.1.0",
+    "info": {
+        "title": "Otacon Registry API",
+        "description": "Central registry for managing fleet hosts, phones, dongles, and SIMs.",
+        "license": {
+            "name": "MIT"
+        },
+        "version": "1.0.0"
     },
-    "version": "1.0.0"
-  },
-  "paths": {
-    "/api/v1/admin/clients/pending": {
-      "get": {
-        "tags": [
-          "Admin — Registration"
-        ],
-        "summary": "List pending client registrations.",
-        "operationId": "list_pending_clients",
-        "responses": {
-          "200": {
-            "description": "Pending client registrations",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/PendingRegistration"
-                  }
+    "paths": {
+        "/api/v1/admin/clients/pending": {
+            "get": {
+                "tags": [
+                    "Admin \u2014 Registration"
+                ],
+                "summary": "List pending client registrations.",
+                "operationId": "list_pending_clients",
+                "responses": {
+                    "200": {
+                        "description": "Pending client registrations",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/PendingRegistration"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearer": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/admin/clients/{id}/approve": {
+            "post": {
+                "tags": [
+                    "Admin \u2014 Registration"
+                ],
+                "summary": "Approve a pending client registration.",
+                "operationId": "approve_client",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "description": "Registration ID",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Approved",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Registration not found or already resolved"
+                    }
+                },
+                "security": [
+                    {
+                        "bearer": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/admin/clients/{id}/reject": {
+            "post": {
+                "tags": [
+                    "Admin \u2014 Registration"
+                ],
+                "summary": "Reject a pending client registration.",
+                "operationId": "reject_client",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "description": "Registration ID",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Rejected",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Registration not found or already resolved"
+                    }
+                },
+                "security": [
+                    {
+                        "bearer": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/admin/dongles": {
+            "get": {
+                "tags": [
+                    "Admin \u2014 Fleet"
+                ],
+                "summary": "List all dongles.",
+                "operationId": "list",
+                "responses": {
+                    "200": {
+                        "description": "All dongles",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/Dongle"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearer": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/admin/dongles/{id}": {
+            "delete": {
+                "tags": [
+                    "Admin \u2014 Fleet"
+                ],
+                "summary": "Admin DELETE: forget a dongle from the registry.\n\"Forget\" semantics \u2014 if the dongle is still alive, the next heartbeat re-registers it.",
+                "operationId": "admin_delete",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "description": "Dongle ID",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Dongle forgotten",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Dongle not found"
+                    }
+                },
+                "security": [
+                    {
+                        "bearer": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/admin/events": {
+            "get": {
+                "tags": [
+                    "Admin \u2014 Fleet"
+                ],
+                "summary": "Query event log.",
+                "operationId": "list",
+                "parameters": [
+                    {
+                        "name": "event_type",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": [
+                                "string",
+                                "null"
+                            ]
+                        }
+                    },
+                    {
+                        "name": "entity_id",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": [
+                                "string",
+                                "null"
+                            ]
+                        }
+                    },
+                    {
+                        "name": "phone_id",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": [
+                                "string",
+                                "null"
+                            ]
+                        }
+                    },
+                    {
+                        "name": "severity",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": [
+                                "string",
+                                "null"
+                            ]
+                        }
+                    },
+                    {
+                        "name": "category",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": [
+                                "string",
+                                "null"
+                            ]
+                        }
+                    },
+                    {
+                        "name": "limit",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": "integer",
+                            "minimum": 0
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Filtered events",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/Event"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearer": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/admin/hosts": {
+            "get": {
+                "tags": [
+                    "Admin \u2014 Fleet"
+                ],
+                "summary": "List all hosts.",
+                "operationId": "list",
+                "responses": {
+                    "200": {
+                        "description": "All hosts",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/Host"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearer": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/admin/hosts/pending": {
+            "get": {
+                "tags": [
+                    "Admin \u2014 Registration"
+                ],
+                "summary": "List pending host registrations.",
+                "operationId": "list_pending_hosts",
+                "responses": {
+                    "200": {
+                        "description": "Pending host registrations",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/PendingRegistration"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearer": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/admin/hosts/{id}": {
+            "get": {
+                "tags": [
+                    "Admin \u2014 Fleet"
+                ],
+                "summary": "Get a single host by ID.",
+                "operationId": "get",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "description": "Host ID",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Host details",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Host"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Host not found"
+                    }
+                },
+                "security": [
+                    {
+                        "bearer": []
+                    }
+                ]
+            },
+            "delete": {
+                "tags": [
+                    "Admin \u2014 Fleet"
+                ],
+                "summary": "Admin DELETE: forget a host from the registry.\n\"Forget\" semantics \u2014 if the host is still alive, the next heartbeat re-registers it.",
+                "operationId": "admin_delete",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "description": "Host ID",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Host forgotten",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Host not found"
+                    }
+                },
+                "security": [
+                    {
+                        "bearer": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/admin/hosts/{id}/approve": {
+            "post": {
+                "tags": [
+                    "Admin \u2014 Registration"
+                ],
+                "summary": "Approve a pending host registration.",
+                "operationId": "approve_host",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "description": "Registration ID",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Approved",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Registration not found or already resolved"
+                    }
+                },
+                "security": [
+                    {
+                        "bearer": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/admin/hosts/{id}/reject": {
+            "post": {
+                "tags": [
+                    "Admin \u2014 Registration"
+                ],
+                "summary": "Reject a pending host registration.",
+                "operationId": "reject_host",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "description": "Registration ID",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Rejected",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Registration not found or already resolved"
+                    }
+                },
+                "security": [
+                    {
+                        "bearer": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/admin/phones": {
+            "get": {
+                "tags": [
+                    "Admin \u2014 Fleet"
+                ],
+                "summary": "List phones (summary).",
+                "operationId": "list",
+                "responses": {
+                    "200": {
+                        "description": "All phones",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/Phone"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearer": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/admin/phones/{id}": {
+            "get": {
+                "tags": [
+                    "Admin \u2014 Fleet"
+                ],
+                "summary": "Phone detail with host location, SIMs, and config.",
+                "operationId": "get_detail",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "description": "Phone ID",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Phone detail",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Phone not found"
+                    }
+                },
+                "security": [
+                    {
+                        "bearer": []
+                    }
+                ]
+            },
+            "delete": {
+                "tags": [
+                    "Admin \u2014 Fleet"
+                ],
+                "summary": "Admin DELETE: forget a phone from the registry.\n\"Forget\" semantics \u2014 if the device is still alive, the next heartbeat re-registers it.",
+                "operationId": "admin_delete",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "description": "Phone ID",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Phone forgotten",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Phone not found"
+                    }
+                },
+                "security": [
+                    {
+                        "bearer": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/admin/phones/{id}/config": {
+            "get": {
+                "tags": [
+                    "Admin \u2014 Fleet"
+                ],
+                "summary": "Get phone config.",
+                "operationId": "get_config",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "description": "Phone ID",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Phone config",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/PhoneConfig"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Phone not found"
+                    }
+                },
+                "security": [
+                    {
+                        "bearer": []
+                    }
+                ]
+            },
+            "put": {
+                "tags": [
+                    "Admin \u2014 Fleet"
+                ],
+                "summary": "Set phone config (pushes to host).",
+                "operationId": "set_config",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "description": "Phone ID",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/PhoneConfig"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "Config updated",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Phone not found"
+                    }
+                },
+                "security": [
+                    {
+                        "bearer": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/admin/sims": {
+            "get": {
+                "tags": [
+                    "Admin \u2014 Fleet"
+                ],
+                "summary": "List all SIMs, optionally filtered by phone_number.",
+                "operationId": "list",
+                "parameters": [
+                    {
+                        "name": "phone_number",
+                        "in": "query",
+                        "required": false,
+                        "schema": {
+                            "type": [
+                                "string",
+                                "null"
+                            ]
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "All SIMs",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/SimCard"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearer": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/admin/tokens": {
+            "get": {
+                "tags": [
+                    "Admin \u2014 Tokens"
+                ],
+                "summary": "List all tokens.",
+                "operationId": "list",
+                "responses": {
+                    "200": {
+                        "description": "All tokens",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/Token"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearer": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/admin/tokens/{id}/revoke": {
+            "post": {
+                "tags": [
+                    "Admin \u2014 Tokens"
+                ],
+                "summary": "Revoke a token.",
+                "operationId": "revoke",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "description": "Token ID",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Token revoked",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Token not found"
+                    }
+                },
+                "security": [
+                    {
+                        "bearer": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/clients/poll/{pending_id}": {
+            "post": {
+                "tags": [
+                    "Public"
+                ],
+                "summary": "Client long-polls for registration approval (public).",
+                "operationId": "poll_client",
+                "parameters": [
+                    {
+                        "name": "pending_id",
+                        "in": "path",
+                        "description": "Pending registration ID",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Approved \u2014 token returned",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Registration rejected"
+                    },
+                    "408": {
+                        "description": "Poll timeout \u2014 retry"
+                    }
                 }
-              }
             }
-          }
         },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/admin/clients/{id}/approve": {
-      "post": {
-        "tags": [
-          "Admin — Registration"
-        ],
-        "summary": "Approve a pending client registration.",
-        "operationId": "approve_client",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Registration ID",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Approved",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "400": {
-            "description": "Registration not found or already resolved"
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/admin/clients/{id}/reject": {
-      "post": {
-        "tags": [
-          "Admin — Registration"
-        ],
-        "summary": "Reject a pending client registration.",
-        "operationId": "reject_client",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Registration ID",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Rejected",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "400": {
-            "description": "Registration not found or already resolved"
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/admin/dongles": {
-      "get": {
-        "tags": [
-          "Admin — Fleet"
-        ],
-        "summary": "List all dongles.",
-        "operationId": "list",
-        "responses": {
-          "200": {
-            "description": "All dongles",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/Dongle"
-                  }
+        "/api/v1/clients/register": {
+            "post": {
+                "tags": [
+                    "Public"
+                ],
+                "summary": "Client requests registration (public, no auth).",
+                "operationId": "register_client",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/RegisterClientBody"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "Registration pending",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    }
                 }
-              }
             }
-          }
         },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/admin/dongles/{id}": {
-      "delete": {
-        "tags": [
-          "Admin — Fleet"
-        ],
-        "summary": "Admin DELETE: forget a dongle from the registry.\n\"Forget\" semantics — if the dongle is still alive, the next heartbeat re-registers it.",
-        "operationId": "admin_delete",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Dongle ID",
-            "required": true,
-            "schema": {
-              "type": "string"
+        "/api/v1/hosts/dongles/register": {
+            "post": {
+                "tags": [
+                    "Node"
+                ],
+                "summary": "Report dongles from a host (node-scope).",
+                "operationId": "register",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/RegisterDonglesBody"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "Dongles registered",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearer": []
+                    }
+                ]
             }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Dongle forgotten",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "404": {
-            "description": "Dongle not found"
-          }
         },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/admin/events": {
-      "get": {
-        "tags": [
-          "Admin — Fleet"
-        ],
-        "summary": "Query event log.",
-        "operationId": "list",
-        "parameters": [
-          {
-            "name": "event_type",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+        "/api/v1/hosts/events": {
+            "post": {
+                "tags": [
+                    "Node"
+                ],
+                "summary": "Report an event from a host (node-scope).",
+                "operationId": "report",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/ReportEventBody"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "Event recorded",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearer": []
+                    }
+                ]
             }
-          },
-          {
-            "name": "entity_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+        },
+        "/api/v1/hosts/events/ingest": {
+            "post": {
+                "tags": [
+                    "Node"
+                ],
+                "summary": "Ingest a typed fleet event from a host (node-scope).\nThe data field contains the full FleetEvent (tagged enum).\nApply functions are idempotent \u2014 no dedup needed.",
+                "operationId": "ingest",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/FleetEventBody"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "Event applied",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearer": []
+                    }
+                ]
             }
-          },
-          {
-            "name": "phone_id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+        },
+        "/api/v1/hosts/heartbeat": {
+            "post": {
+                "tags": [
+                    "Node"
+                ],
+                "summary": "Heartbeat with host metadata and connected phones/dongles.",
+                "operationId": "heartbeat",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/HeartbeatBody"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearer": []
+                    }
+                ]
             }
-          },
-          {
-            "name": "severity",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+        },
+        "/api/v1/hosts/identity": {
+            "post": {
+                "tags": [
+                    "Node"
+                ],
+                "summary": "Register/update host identity without affecting phone/dongle status.\nUse this on startup; use heartbeat for periodic state sync.",
+                "operationId": "identity",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/HostIdentityBody"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearer": []
+                    }
+                ]
             }
-          },
-          {
-            "name": "category",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
+        },
+        "/api/v1/hosts/phones/deregister": {
+            "post": {
+                "tags": [
+                    "Node"
+                ],
+                "summary": "Mark a phone as disconnected (node-scope).",
+                "operationId": "deregister",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/DeregisterPhoneBody"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "Phone deregistered",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearer": []
+                    }
+                ]
             }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0
+        },
+        "/api/v1/hosts/phones/register": {
+            "post": {
+                "tags": [
+                    "Node"
+                ],
+                "summary": "Register or update a phone (node-scope).",
+                "operationId": "register",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/RegisterPhoneBody"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "Phone registered",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearer": []
+                    }
+                ]
             }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Filtered events",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/Event"
-                  }
+        },
+        "/api/v1/hosts/phones/{id}": {
+            "delete": {
+                "tags": [
+                    "Node"
+                ],
+                "summary": "Permanently remove a phone (Pi-initiated, node-scope).",
+                "operationId": "delete",
+                "parameters": [
+                    {
+                        "name": "id",
+                        "in": "path",
+                        "description": "Phone ID",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Phone deleted",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Phone not found"
+                    }
+                },
+                "security": [
+                    {
+                        "bearer": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/hosts/phones/{phone_id}/sims": {
+            "post": {
+                "tags": [
+                    "Node"
+                ],
+                "summary": "Report SIM inventory for a phone (node-scope).",
+                "operationId": "report",
+                "parameters": [
+                    {
+                        "name": "phone_id",
+                        "in": "path",
+                        "description": "Phone ID",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/ReportSimsBody"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "SIMs updated",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "bearer": []
+                    }
+                ]
+            }
+        },
+        "/api/v1/hosts/poll/{pending_id}": {
+            "post": {
+                "tags": [
+                    "Public"
+                ],
+                "summary": "Host long-polls for registration approval (public).",
+                "operationId": "poll_host",
+                "parameters": [
+                    {
+                        "name": "pending_id",
+                        "in": "path",
+                        "description": "Pending registration ID",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Approved \u2014 token returned",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Registration rejected"
+                    },
+                    "408": {
+                        "description": "Poll timeout \u2014 retry"
+                    }
                 }
-              }
             }
-          }
         },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/admin/hosts": {
-      "get": {
-        "tags": [
-          "Admin — Fleet"
-        ],
-        "summary": "List all hosts.",
-        "operationId": "list",
-        "responses": {
-          "200": {
-            "description": "All hosts",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/Host"
-                  }
+        "/api/v1/hosts/register": {
+            "post": {
+                "tags": [
+                    "Public"
+                ],
+                "summary": "Host requests registration (public, no auth).",
+                "operationId": "register_host",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/RegisterHostBody"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "Registration pending",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    }
                 }
-              }
             }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
+        }
     },
-    "/api/v1/admin/hosts/pending": {
-      "get": {
-        "tags": [
-          "Admin — Registration"
-        ],
-        "summary": "List pending host registrations.",
-        "operationId": "list_pending_hosts",
-        "responses": {
-          "200": {
-            "description": "Pending host registrations",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/PendingRegistration"
-                  }
+    "components": {
+        "schemas": {
+            "AuthScope": {
+                "type": "string",
+                "enum": [
+                    "node",
+                    "admin"
+                ]
+            },
+            "DeregisterPhoneBody": {
+                "type": "object",
+                "required": [
+                    "host_id",
+                    "phone_id"
+                ],
+                "properties": {
+                    "host_id": {
+                        "type": "string"
+                    },
+                    "phone_id": {
+                        "type": "string"
+                    }
                 }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/admin/hosts/{id}": {
-      "get": {
-        "tags": [
-          "Admin — Fleet"
-        ],
-        "summary": "Get a single host by ID.",
-        "operationId": "get",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Host ID",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Host details",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Host"
+            },
+            "Dongle": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "bt_mac",
+                    "status",
+                    "created_at"
+                ],
+                "properties": {
+                    "bt_mac": {
+                        "type": "string"
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "hci_device": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "host_id": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "id": {
+                        "type": "string"
+                    },
+                    "phone_id": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "status": {
+                        "type": "string"
+                    }
                 }
-              }
-            }
-          },
-          "404": {
-            "description": "Host not found"
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      },
-      "delete": {
-        "tags": [
-          "Admin — Fleet"
-        ],
-        "summary": "Admin DELETE: forget a host from the registry.\n\"Forget\" semantics — if the host is still alive, the next heartbeat re-registers it.",
-        "operationId": "admin_delete",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Host ID",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Host forgotten",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "404": {
-            "description": "Host not found"
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/admin/hosts/{id}/approve": {
-      "post": {
-        "tags": [
-          "Admin — Registration"
-        ],
-        "summary": "Approve a pending host registration.",
-        "operationId": "approve_host",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Registration ID",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Approved",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "400": {
-            "description": "Registration not found or already resolved"
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/admin/hosts/{id}/reject": {
-      "post": {
-        "tags": [
-          "Admin — Registration"
-        ],
-        "summary": "Reject a pending host registration.",
-        "operationId": "reject_host",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Registration ID",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Rejected",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "400": {
-            "description": "Registration not found or already resolved"
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/admin/phones": {
-      "get": {
-        "tags": [
-          "Admin — Fleet"
-        ],
-        "summary": "List phones (summary).",
-        "operationId": "list",
-        "responses": {
-          "200": {
-            "description": "All phones",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/Phone"
-                  }
+            },
+            "DongleEntry": {
+                "type": "object",
+                "required": [
+                    "bt_mac"
+                ],
+                "properties": {
+                    "bt_mac": {
+                        "type": "string"
+                    },
+                    "hci_device": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "phone_id": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    }
                 }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/admin/phones/{id}": {
-      "get": {
-        "tags": [
-          "Admin — Fleet"
-        ],
-        "summary": "Phone detail with host location, SIMs, and config.",
-        "operationId": "get_detail",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Phone ID",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Phone detail",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "404": {
-            "description": "Phone not found"
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      },
-      "delete": {
-        "tags": [
-          "Admin — Fleet"
-        ],
-        "summary": "Admin DELETE: forget a phone from the registry.\n\"Forget\" semantics — if the device is still alive, the next heartbeat re-registers it.",
-        "operationId": "admin_delete",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Phone ID",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Phone forgotten",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "404": {
-            "description": "Phone not found"
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/admin/phones/{id}/config": {
-      "get": {
-        "tags": [
-          "Admin — Fleet"
-        ],
-        "summary": "Get phone config.",
-        "operationId": "get_config",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Phone ID",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Phone config",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PhoneConfig"
+            },
+            "Event": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "timestamp",
+                    "event_type"
+                ],
+                "properties": {
+                    "data": {},
+                    "entity_id": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "event_type": {
+                        "type": "string"
+                    },
+                    "id": {
+                        "type": "integer",
+                        "format": "int64",
+                        "minimum": 0
+                    },
+                    "timestamp": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
                 }
-              }
-            }
-          },
-          "404": {
-            "description": "Phone not found"
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      },
-      "put": {
-        "tags": [
-          "Admin — Fleet"
-        ],
-        "summary": "Set phone config (pushes to host).",
-        "operationId": "set_config",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Phone ID",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PhoneConfig"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Config updated",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "404": {
-            "description": "Phone not found"
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/admin/sims": {
-      "get": {
-        "tags": [
-          "Admin — Fleet"
-        ],
-        "summary": "List all SIMs, optionally filtered by phone_number.",
-        "operationId": "list",
-        "parameters": [
-          {
-            "name": "phone_number",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": [
-                "string",
-                "null"
-              ]
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "All SIMs",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/SimCard"
-                  }
+            },
+            "FleetEventBody": {
+                "type": "object",
+                "description": "Body for typed fleet events sent by the host outbox flusher.",
+                "required": [
+                    "host_id",
+                    "event_type",
+                    "data"
+                ],
+                "properties": {
+                    "data": {},
+                    "entity_id": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "event_type": {
+                        "type": "string"
+                    },
+                    "host_id": {
+                        "type": "string"
+                    }
                 }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/admin/tokens": {
-      "get": {
-        "tags": [
-          "Admin — Tokens"
-        ],
-        "summary": "List all tokens.",
-        "operationId": "list",
-        "responses": {
-          "200": {
-            "description": "All tokens",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/Token"
-                  }
+            },
+            "HeartbeatBody": {
+                "type": "object",
+                "required": [
+                    "host_id"
+                ],
+                "properties": {
+                    "address": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "api_port": {
+                        "type": "integer",
+                        "format": "int32",
+                        "minimum": 0
+                    },
+                    "dongles": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "host_id": {
+                        "type": "string"
+                    },
+                    "phones": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    }
                 }
-              }
+            },
+            "Host": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "api_port",
+                    "status",
+                    "created_at"
+                ],
+                "properties": {
+                    "address": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "description": "Network address (FQDN or IP) the CLI uses to reach this host.\nTransport-agnostic: could be tailnet FQDN, public hostname, plain IP, etc.\nDefault None for backwards compat with old hosts.json (pre-rename from fqdn)."
+                    },
+                    "api_port": {
+                        "type": "integer",
+                        "format": "int32",
+                        "minimum": 0
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "id": {
+                        "type": "string"
+                    },
+                    "last_heartbeat": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "format": "date-time"
+                    },
+                    "status": {
+                        "type": "string"
+                    }
+                }
+            },
+            "HostIdentityBody": {
+                "type": "object",
+                "required": [
+                    "host_id"
+                ],
+                "properties": {
+                    "address": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "description": "Network address (FQDN or IP) where the CLI can reach this host."
+                    },
+                    "api_port": {
+                        "type": "integer",
+                        "format": "int32",
+                        "minimum": 0
+                    },
+                    "host_id": {
+                        "type": "string"
+                    }
+                }
+            },
+            "PendingRegistration": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "host_id",
+                    "status",
+                    "requested_at"
+                ],
+                "properties": {
+                    "host_id": {
+                        "type": "string",
+                        "description": "For host registrations this is the host_id; for client registrations a label."
+                    },
+                    "hostname": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "id": {
+                        "type": "string"
+                    },
+                    "kind": {
+                        "$ref": "#/components/schemas/RegistrationKind"
+                    },
+                    "raw_token": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "description": "Raw token stashed here temporarily after approval so the polling process can read it.\nCleared after the first successful poll retrieval."
+                    },
+                    "requested_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "resolved_at": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "format": "date-time"
+                    },
+                    "status": {
+                        "$ref": "#/components/schemas/RegistrationStatus"
+                    },
+                    "tailnet_node_id": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "token_id": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    }
+                }
+            },
+            "Phone": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "adb_serial",
+                    "status",
+                    "config",
+                    "created_at",
+                    "updated_at"
+                ],
+                "properties": {
+                    "adapter_mac": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "adb_serial": {
+                        "type": "string"
+                    },
+                    "bt_mac": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "config": {
+                        "$ref": "#/components/schemas/PhoneConfig"
+                    },
+                    "connected_at": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "format": "date-time"
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "host_id": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "id": {
+                        "type": "string"
+                    },
+                    "imei": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "last_seen_in_heartbeat": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "format": "date-time",
+                        "description": "Last time this phone appeared in a heartbeat (for grace period)."
+                    },
+                    "model": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "phone_number": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "status": {
+                        "type": "string"
+                    },
+                    "updated_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
+            "PhoneConfig": {
+                "type": "object",
+                "properties": {
+                    "bluetooth_enabled": {
+                        "type": "boolean"
+                    }
+                }
+            },
+            "RegisterClientBody": {
+                "type": "object",
+                "required": [
+                    "client_id"
+                ],
+                "properties": {
+                    "client_id": {
+                        "type": "string"
+                    },
+                    "hostname": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    }
+                }
+            },
+            "RegisterDonglesBody": {
+                "type": "object",
+                "required": [
+                    "host_id",
+                    "dongles"
+                ],
+                "properties": {
+                    "dongles": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/DongleEntry"
+                        }
+                    },
+                    "host_id": {
+                        "type": "string"
+                    }
+                }
+            },
+            "RegisterHostBody": {
+                "type": "object",
+                "required": [
+                    "host_id"
+                ],
+                "properties": {
+                    "host_id": {
+                        "type": "string"
+                    },
+                    "hostname": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "tailnet_node_id": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    }
+                }
+            },
+            "RegisterPhoneBody": {
+                "type": "object",
+                "required": [
+                    "host_id",
+                    "adb_serial"
+                ],
+                "properties": {
+                    "adapter_mac": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "adb_serial": {
+                        "type": "string"
+                    },
+                    "bt_mac": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "host_id": {
+                        "type": "string"
+                    },
+                    "imei": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "model": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "phone_number": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    }
+                }
+            },
+            "RegistrationKind": {
+                "type": "string",
+                "enum": [
+                    "host",
+                    "client"
+                ]
+            },
+            "RegistrationStatus": {
+                "type": "string",
+                "enum": [
+                    "pending",
+                    "approved",
+                    "rejected"
+                ]
+            },
+            "ReportEventBody": {
+                "type": "object",
+                "required": [
+                    "severity",
+                    "category",
+                    "message"
+                ],
+                "properties": {
+                    "category": {
+                        "type": "string"
+                    },
+                    "data": {},
+                    "host_id": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "message": {
+                        "type": "string"
+                    },
+                    "phone_id": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "severity": {
+                        "type": "string"
+                    }
+                }
+            },
+            "ReportSimsBody": {
+                "type": "object",
+                "required": [
+                    "sims"
+                ],
+                "properties": {
+                    "sims": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/SimEntry"
+                        }
+                    }
+                }
+            },
+            "SimCard": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "iccid",
+                    "phone_id",
+                    "slot",
+                    "is_esim",
+                    "is_active",
+                    "created_at",
+                    "updated_at"
+                ],
+                "properties": {
+                    "carrier": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "iccid": {
+                        "type": "string"
+                    },
+                    "id": {
+                        "type": "string"
+                    },
+                    "is_active": {
+                        "type": "boolean"
+                    },
+                    "is_esim": {
+                        "type": "boolean"
+                    },
+                    "phone_id": {
+                        "type": "string"
+                    },
+                    "phone_number": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "profile_name": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "slot": {
+                        "type": "integer",
+                        "format": "int32",
+                        "minimum": 0
+                    },
+                    "updated_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    }
+                }
+            },
+            "SimEntry": {
+                "type": "object",
+                "required": [
+                    "iccid",
+                    "slot",
+                    "is_esim",
+                    "is_active"
+                ],
+                "properties": {
+                    "carrier": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "iccid": {
+                        "type": "string"
+                    },
+                    "is_active": {
+                        "type": "boolean"
+                    },
+                    "is_esim": {
+                        "type": "boolean"
+                    },
+                    "phone_number": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "profile_name": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "slot": {
+                        "type": "integer",
+                        "format": "int32",
+                        "minimum": 0
+                    }
+                }
+            },
+            "Token": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "scope",
+                    "token_hash",
+                    "token_prefix",
+                    "created_at"
+                ],
+                "properties": {
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time"
+                    },
+                    "expires_at": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "format": "date-time"
+                    },
+                    "id": {
+                        "type": "string"
+                    },
+                    "last_seen_at": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "format": "date-time"
+                    },
+                    "node_id": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "description": "For node tokens, the host_id this token is bound to."
+                    },
+                    "note": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "revoked_at": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "format": "date-time"
+                    },
+                    "scope": {
+                        "$ref": "#/components/schemas/AuthScope"
+                    },
+                    "token_hash": {
+                        "type": "string",
+                        "description": "SHA-256 hex hash of the raw token."
+                    },
+                    "token_prefix": {
+                        "type": "string",
+                        "description": "First 12 chars of the raw token, for display in admin UI."
+                    }
+                }
             }
-          }
-        },
-        "security": [
-          {
+        }
+    },
+    "security": [
+        {
             "bearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/admin/tokens/{id}/revoke": {
-      "post": {
-        "tags": [
-          "Admin — Tokens"
-        ],
-        "summary": "Revoke a token.",
-        "operationId": "revoke",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Token ID",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Token revoked",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "404": {
-            "description": "Token not found"
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/clients/poll/{pending_id}": {
-      "post": {
-        "tags": [
-          "Public"
-        ],
-        "summary": "Client long-polls for registration approval (public).",
-        "operationId": "poll_client",
-        "parameters": [
-          {
-            "name": "pending_id",
-            "in": "path",
-            "description": "Pending registration ID",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Approved — token returned",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "403": {
-            "description": "Registration rejected"
-          },
-          "408": {
-            "description": "Poll timeout — retry"
-          }
         }
-      }
-    },
-    "/api/v1/clients/register": {
-      "post": {
-        "tags": [
-          "Public"
-        ],
-        "summary": "Client requests registration (public, no auth).",
-        "operationId": "register_client",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RegisterClientBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Registration pending",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/hosts/dongles/register": {
-      "post": {
-        "tags": [
-          "Node"
-        ],
-        "summary": "Report dongles from a host (node-scope).",
-        "operationId": "register",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RegisterDonglesBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Dongles registered",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/hosts/events": {
-      "post": {
-        "tags": [
-          "Node"
-        ],
-        "summary": "Report an event from a host (node-scope).",
-        "operationId": "report",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ReportEventBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Event recorded",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/hosts/heartbeat": {
-      "post": {
-        "tags": [
-          "Node"
-        ],
-        "summary": "Heartbeat with host metadata and connected phones/dongles.",
-        "operationId": "heartbeat",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/HeartbeatBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/hosts/phones/deregister": {
-      "post": {
-        "tags": [
-          "Node"
-        ],
-        "summary": "Mark a phone as disconnected (node-scope).",
-        "operationId": "deregister",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/DeregisterPhoneBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Phone deregistered",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/hosts/phones/register": {
-      "post": {
-        "tags": [
-          "Node"
-        ],
-        "summary": "Register or update a phone (node-scope).",
-        "operationId": "register",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RegisterPhoneBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Phone registered",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/hosts/phones/{id}": {
-      "delete": {
-        "tags": [
-          "Node"
-        ],
-        "summary": "Permanently remove a phone (Pi-initiated, node-scope).",
-        "operationId": "delete",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "Phone ID",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Phone deleted",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "404": {
-            "description": "Phone not found"
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/hosts/phones/{phone_id}/sims": {
-      "post": {
-        "tags": [
-          "Node"
-        ],
-        "summary": "Report SIM inventory for a phone (node-scope).",
-        "operationId": "report",
-        "parameters": [
-          {
-            "name": "phone_id",
-            "in": "path",
-            "description": "Phone ID",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ReportSimsBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "SIMs updated",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ]
-      }
-    },
-    "/api/v1/hosts/poll/{pending_id}": {
-      "post": {
-        "tags": [
-          "Public"
-        ],
-        "summary": "Host long-polls for registration approval (public).",
-        "operationId": "poll_host",
-        "parameters": [
-          {
-            "name": "pending_id",
-            "in": "path",
-            "description": "Pending registration ID",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Approved — token returned",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "403": {
-            "description": "Registration rejected"
-          },
-          "408": {
-            "description": "Poll timeout — retry"
-          }
-        }
-      }
-    },
-    "/api/v1/hosts/register": {
-      "post": {
-        "tags": [
-          "Public"
-        ],
-        "summary": "Host requests registration (public, no auth).",
-        "operationId": "register_host",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RegisterHostBody"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Registration pending",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        }
-      }
-    }
-  },
-  "components": {
-    "schemas": {
-      "AuthScope": {
-        "type": "string",
-        "enum": [
-          "node",
-          "admin"
-        ]
-      },
-      "DeregisterPhoneBody": {
-        "type": "object",
-        "required": [
-          "host_id",
-          "phone_id"
-        ],
-        "properties": {
-          "host_id": {
-            "type": "string"
-          },
-          "phone_id": {
-            "type": "string"
-          }
-        }
-      },
-      "Dongle": {
-        "type": "object",
-        "required": [
-          "id",
-          "bt_mac",
-          "status",
-          "created_at"
-        ],
-        "properties": {
-          "bt_mac": {
-            "type": "string"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "hci_device": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "host_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "id": {
-            "type": "string"
-          },
-          "phone_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "status": {
-            "type": "string"
-          }
-        }
-      },
-      "DongleEntry": {
-        "type": "object",
-        "required": [
-          "bt_mac"
-        ],
-        "properties": {
-          "bt_mac": {
-            "type": "string"
-          },
-          "hci_device": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "phone_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        }
-      },
-      "Event": {
-        "type": "object",
-        "required": [
-          "id",
-          "timestamp",
-          "event_type"
-        ],
-        "properties": {
-          "data": {},
-          "entity_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "event_type": {
-            "type": "string"
-          },
-          "id": {
-            "type": "integer",
-            "format": "int64",
-            "minimum": 0
-          },
-          "timestamp": {
-            "type": "string",
-            "format": "date-time"
-          }
-        }
-      },
-      "HeartbeatBody": {
-        "type": "object",
-        "required": [
-          "host_id"
-        ],
-        "properties": {
-          "api_port": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
-          },
-          "dongles": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "fqdn": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "host_id": {
-            "type": "string"
-          },
-          "phones": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "tailscale_ip": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        }
-      },
-      "Host": {
-        "type": "object",
-        "required": [
-          "id",
-          "api_port",
-          "status",
-          "created_at"
-        ],
-        "properties": {
-          "api_port": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "fqdn": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "id": {
-            "type": "string"
-          },
-          "last_heartbeat": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          },
-          "status": {
-            "type": "string"
-          },
-          "tailscale_ip": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        }
-      },
-      "PendingRegistration": {
-        "type": "object",
-        "required": [
-          "id",
-          "host_id",
-          "status",
-          "requested_at"
-        ],
-        "properties": {
-          "host_id": {
-            "type": "string",
-            "description": "For host registrations this is the host_id; for client registrations a label."
-          },
-          "hostname": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "id": {
-            "type": "string"
-          },
-          "kind": {
-            "$ref": "#/components/schemas/RegistrationKind"
-          },
-          "raw_token": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Raw token stashed here temporarily after approval so the polling process can read it.\nCleared after the first successful poll retrieval."
-          },
-          "requested_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "resolved_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          },
-          "status": {
-            "$ref": "#/components/schemas/RegistrationStatus"
-          },
-          "tailnet_node_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "token_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        }
-      },
-      "Phone": {
-        "type": "object",
-        "required": [
-          "id",
-          "adb_serial",
-          "status",
-          "config",
-          "created_at",
-          "updated_at"
-        ],
-        "properties": {
-          "adapter_mac": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "adb_serial": {
-            "type": "string"
-          },
-          "bt_mac": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "config": {
-            "$ref": "#/components/schemas/PhoneConfig"
-          },
-          "connected_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "host_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "id": {
-            "type": "string"
-          },
-          "imei": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "model": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "phone_number": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "status": {
-            "type": "string"
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time"
-          }
-        }
-      },
-      "PhoneConfig": {
-        "type": "object",
-        "required": [
-          "wifi_enabled",
-          "bluetooth_enabled"
-        ],
-        "properties": {
-          "bluetooth_enabled": {
-            "type": "boolean"
-          },
-          "wifi_enabled": {
-            "type": "boolean"
-          }
-        }
-      },
-      "RegisterClientBody": {
-        "type": "object",
-        "required": [
-          "client_id"
-        ],
-        "properties": {
-          "client_id": {
-            "type": "string"
-          },
-          "hostname": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        }
-      },
-      "RegisterDonglesBody": {
-        "type": "object",
-        "required": [
-          "host_id",
-          "dongles"
-        ],
-        "properties": {
-          "dongles": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/DongleEntry"
-            }
-          },
-          "host_id": {
-            "type": "string"
-          }
-        }
-      },
-      "RegisterHostBody": {
-        "type": "object",
-        "required": [
-          "host_id"
-        ],
-        "properties": {
-          "host_id": {
-            "type": "string"
-          },
-          "hostname": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "tailnet_node_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        }
-      },
-      "RegisterPhoneBody": {
-        "type": "object",
-        "required": [
-          "host_id",
-          "adb_serial"
-        ],
-        "properties": {
-          "adapter_mac": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "adb_serial": {
-            "type": "string"
-          },
-          "bt_mac": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "host_id": {
-            "type": "string"
-          },
-          "imei": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "model": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "phone_number": {
-            "type": [
-              "string",
-              "null"
-            ]
-          }
-        }
-      },
-      "RegistrationKind": {
-        "type": "string",
-        "enum": [
-          "host",
-          "client"
-        ]
-      },
-      "RegistrationStatus": {
-        "type": "string",
-        "enum": [
-          "pending",
-          "approved",
-          "rejected"
-        ]
-      },
-      "ReportEventBody": {
-        "type": "object",
-        "required": [
-          "severity",
-          "category",
-          "message"
-        ],
-        "properties": {
-          "category": {
-            "type": "string"
-          },
-          "data": {},
-          "host_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "message": {
-            "type": "string"
-          },
-          "phone_id": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "severity": {
-            "type": "string"
-          }
-        }
-      },
-      "ReportSimsBody": {
-        "type": "object",
-        "required": [
-          "sims"
-        ],
-        "properties": {
-          "sims": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/SimEntry"
-            }
-          }
-        }
-      },
-      "SimCard": {
-        "type": "object",
-        "required": [
-          "id",
-          "iccid",
-          "phone_id",
-          "slot",
-          "is_esim",
-          "is_active",
-          "created_at",
-          "updated_at"
-        ],
-        "properties": {
-          "carrier": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "iccid": {
-            "type": "string"
-          },
-          "id": {
-            "type": "string"
-          },
-          "is_active": {
-            "type": "boolean"
-          },
-          "is_esim": {
-            "type": "boolean"
-          },
-          "phone_id": {
-            "type": "string"
-          },
-          "phone_number": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "profile_name": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "slot": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
-          },
-          "updated_at": {
-            "type": "string",
-            "format": "date-time"
-          }
-        }
-      },
-      "SimEntry": {
-        "type": "object",
-        "required": [
-          "iccid",
-          "slot",
-          "is_esim",
-          "is_active"
-        ],
-        "properties": {
-          "carrier": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "iccid": {
-            "type": "string"
-          },
-          "is_active": {
-            "type": "boolean"
-          },
-          "is_esim": {
-            "type": "boolean"
-          },
-          "phone_number": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "profile_name": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "slot": {
-            "type": "integer",
-            "format": "int32",
-            "minimum": 0
-          }
-        }
-      },
-      "Token": {
-        "type": "object",
-        "required": [
-          "id",
-          "scope",
-          "token_hash",
-          "token_prefix",
-          "created_at"
-        ],
-        "properties": {
-          "created_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "expires_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          },
-          "id": {
-            "type": "string"
-          },
-          "last_seen_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          },
-          "node_id": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "For node tokens, the host_id this token is bound to."
-          },
-          "note": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "revoked_at": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "format": "date-time"
-          },
-          "scope": {
-            "$ref": "#/components/schemas/AuthScope"
-          },
-          "token_hash": {
-            "type": "string",
-            "description": "SHA-256 hex hash of the raw token."
-          },
-          "token_prefix": {
-            "type": "string",
-            "description": "First 12 chars of the raw token, for display in admin UI."
-          }
-        }
-      }
-    }
-  },
-  "security": [
-    {
-      "bearer": []
-    }
-  ]
+    ]
 }

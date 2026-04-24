@@ -621,6 +621,54 @@
     font-style: italic;
     text-align: center;
   }
+  .apn-section {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+  .apn-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .apn-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .apn-form {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr 1fr 1fr 1fr auto;
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .apn-form input,
+  .apn-form select {
+    min-width: 0;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+  }
+  .apn-form input:focus,
+  .apn-form select:focus {
+    border-color: var(--accent);
+    outline: none;
+  }
+  @media (max-width: 900px) {
+    .apn-form { grid-template-columns: 1fr 1fr; }
+  }
 
   /* --- Monitor panel --- */
   .monitor-panel {
@@ -882,6 +930,46 @@
       <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
         <input type="text" id="simActivationCode" placeholder="LPA:1$server$code" style="flex:1;background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px 10px;border-radius:4px;font-family:'JetBrains Mono',monospace;font-size:11px">
         <button class="pill" onclick="simInstall()">Install</button>
+      </div>
+      <div class="apn-section">
+        <div class="apn-title">
+          <span>APN overrides</span>
+          <button class="pill" onclick="event.stopPropagation();refreshApns()">Refresh</button>
+        </div>
+        <div class="apn-status" id="apnStatus">loading...</div>
+        <div class="sim-profiles" id="apnProfiles">
+          <div class="sim-empty">loading...</div>
+        </div>
+        <input type="hidden" id="apnFormId">
+        <div class="apn-form">
+          <input type="text" id="apnEntryName" placeholder="Name" value="SpeedTalk">
+          <input type="text" id="apnOperator" placeholder="MCC MNC" value="310240">
+          <input type="text" id="apnName" placeholder="APN" value="stkmobi">
+          <input type="text" id="apnTypes" placeholder="types" value="default,supl">
+          <input type="text" id="apnMmsc" placeholder="MMSC URL">
+          <select id="apnProtocol">
+            <option value="ipv4v6">ipv4v6</option>
+            <option value="ipv4">ipv4</option>
+            <option value="ipv6">ipv6</option>
+          </select>
+          <button class="pill" onclick="apnSave()">Save</button>
+          <select id="apnRoamingProtocol">
+            <option value="ipv4v6">roaming ipv4v6</option>
+            <option value="ipv4">roaming ipv4</option>
+            <option value="ipv6">roaming ipv6</option>
+          </select>
+          <select id="apnAuthType">
+            <option value="none">auth none</option>
+            <option value="pap">auth pap</option>
+            <option value="chap">auth chap</option>
+            <option value="pap_or_chap">auth pap/chap</option>
+          </select>
+          <input type="text" id="apnUser" placeholder="username">
+          <input type="password" id="apnPassword" placeholder="password">
+          <input type="text" id="apnMmsProxy" placeholder="MMS proxy">
+          <input type="text" id="apnMmsPort" placeholder="MMS port">
+          <button class="pill" onclick="apnClearForm()">New</button>
+        </div>
       </div>
     </div>
   </div>
@@ -1374,7 +1462,7 @@ function escHtml(s) {
 }
 
 async function refreshAll() {
-  await Promise.all([refreshScreenshot(), refreshSnapshot(), refreshInfo(), refreshSimProfiles()]);
+  await Promise.all([refreshScreenshot(), refreshSnapshot(), refreshInfo(), refreshSimProfiles(), refreshApns()]);
 }
 
 function toggleJsonMode() {
@@ -1721,7 +1809,7 @@ function toggleSimPanel() {
 
 async function refreshSimProfiles() {
   try {
-    const res = await fetch(`${apiBase()}/esim/profiles`);
+    const res = await fetch(`${apiBase()}/sims`);
     if (!res.ok) return;
     const profiles = await res.json();
     const el = document.getElementById('simProfiles');
@@ -1754,7 +1842,7 @@ async function refreshSimProfiles() {
 async function simSwitch(subId) {
   if (!confirm(`Switch to eSIM profile #${subId}?`)) return;
   try {
-    const res = await fetch(`${apiBase()}/esim/switch`, {
+    const res = await fetch(`${apiBase()}/sims/switch`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({subId})
@@ -1771,7 +1859,7 @@ async function simInstall() {
   if (!confirm('Install eSIM profile?\n\n' + code)) return;
   try {
     document.getElementById('simActivationCode').value = 'installing...';
-    const res = await fetch(`${apiBase()}/esim/install`, {
+    const res = await fetch(`${apiBase()}/sims/install`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({activationCode: code})
@@ -1793,7 +1881,7 @@ async function simInstall() {
 async function simDelete(subId, carrier) {
   if (!confirm(`Delete eSIM profile "${carrier}" (subId:${subId})?\n\nThis cannot be undone.`)) return;
   try {
-    const res = await fetch(`${apiBase()}/esim/delete`, {
+    const res = await fetch(`${apiBase()}/sims/delete`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({subId})
@@ -1806,6 +1894,177 @@ async function simDelete(subId, carrier) {
     }
   } catch(e) {
     alert('Delete error: ' + e.message);
+  }
+}
+
+let apnCache = [];
+
+async function refreshApns() {
+  const listEl = document.getElementById('apnProfiles');
+  const statusEl = document.getElementById('apnStatus');
+  try {
+    const [listRes, statusRes] = await Promise.all([
+      fetch(`${apiBase()}/apns`),
+      fetch(`${apiBase()}/apns/enabled`)
+    ]);
+    if (!listRes.ok) {
+      listEl.innerHTML = '<div class="sim-empty">APN API unavailable</div>';
+      statusEl.textContent = 'override APNs unavailable';
+      return;
+    }
+    apnCache = await listRes.json();
+    const status = statusRes.ok ? await statusRes.json() : {enabled: false};
+    statusEl.innerHTML =
+      `<span>override APNs ${status.enabled ? 'enabled' : 'disabled'}</span>` +
+      `<button class="pill" onclick="apnSetEnabled(${status.enabled ? 'false' : 'true'})">${status.enabled ? 'Disable' : 'Enable'}</button>`;
+
+    if (!apnCache.length) {
+      listEl.innerHTML = '<div class="sim-empty">no APN overrides</div>';
+      return;
+    }
+    listEl.innerHTML = apnCache.map(a => {
+      const mms = a.mmsc ? ` \u2022 MMSC ${a.mmsc}` : '';
+      const detail = `${a.operatorNumeric || '-'} \u2022 ${a.apnName || '-'} \u2022 ${a.types || '-'} \u2022 ${a.protocol || '-'}/${a.roamingProtocol || '-'}${mms}`;
+      return `<div class="sim-card${a.enabled ? ' active' : ''}">` +
+        `<div class="sim-dot"></div>` +
+        `<div class="sim-info">` +
+          `<div class="sim-carrier">${escHtml(a.entryName || 'APN')} <span style="color:var(--text-muted);font-size:11px">#${a.id}</span></div>` +
+          `<div class="sim-detail">${escHtml(detail)}</div>` +
+        `</div>` +
+        `<div class="sim-actions">` +
+          `<button class="pill" onclick="apnEdit(${a.id})">Edit</button>` +
+          `<button class="pill" style="background:var(--red);color:#fff;opacity:0.7" onclick="apnDelete(${a.id})">Delete</button>` +
+        `</div>` +
+      `</div>`;
+    }).join('');
+  } catch(e) {
+    listEl.innerHTML = '<div class="sim-empty">error loading APNs</div>';
+    statusEl.textContent = e.message;
+  }
+}
+
+function apnPayload() {
+  const entryName = document.getElementById('apnEntryName').value.trim();
+  const operatorNumeric = document.getElementById('apnOperator').value.trim();
+  const apn = document.getElementById('apnName').value.trim();
+  if (!entryName || !operatorNumeric || !apn) {
+    alert('APN name, operator, and APN are required.');
+    return null;
+  }
+  const payload = {
+    entryName,
+    operatorNumeric,
+    apn,
+    types: document.getElementById('apnTypes').value.trim() || 'default,supl',
+    protocol: document.getElementById('apnProtocol').value,
+    roamingProtocol: document.getElementById('apnRoamingProtocol').value,
+    authType: document.getElementById('apnAuthType').value,
+    user: document.getElementById('apnUser').value
+  };
+  const password = document.getElementById('apnPassword').value;
+  if (password) payload.password = password;
+  const mmsc = document.getElementById('apnMmsc').value.trim();
+  if (mmsc) payload.mmsc = mmsc;
+  const mmsProxy = document.getElementById('apnMmsProxy').value.trim();
+  if (mmsProxy) payload.mmsProxy = mmsProxy;
+  const mmsPort = document.getElementById('apnMmsPort').value.trim();
+  if (mmsPort) {
+    const parsedMmsPort = Number.parseInt(mmsPort, 10);
+    if (!Number.isFinite(parsedMmsPort) || parsedMmsPort < 0 || parsedMmsPort > 65535) {
+      alert('MMS port must be between 0 and 65535.');
+      return null;
+    }
+    payload.mmsPort = parsedMmsPort;
+  }
+  return payload;
+}
+
+async function apnSave() {
+  const payload = apnPayload();
+  if (!payload) return;
+  const id = document.getElementById('apnFormId').value;
+  try {
+    const res = await fetch(`${apiBase()}/apns${id ? '/' + id : ''}`, {
+      method: id ? 'PUT' : 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      alert('APN save failed: ' + (data.error || JSON.stringify(data)));
+      return;
+    }
+    apnClearForm();
+    refreshApns();
+  } catch(e) {
+    alert('APN save error: ' + e.message);
+  }
+}
+
+function apnEdit(id) {
+  const apn = apnCache.find(a => a.id === id);
+  if (!apn) return;
+  document.getElementById('apnFormId').value = apn.id;
+  document.getElementById('apnEntryName').value = apn.entryName || '';
+  document.getElementById('apnOperator').value = apn.operatorNumeric || '';
+  document.getElementById('apnName').value = apn.apnName || '';
+  document.getElementById('apnTypes').value = apn.types || 'default,supl';
+  document.getElementById('apnProtocol').value = apn.protocol || 'ipv4v6';
+  document.getElementById('apnRoamingProtocol').value = apn.roamingProtocol || 'ipv4v6';
+  document.getElementById('apnAuthType').value = apn.authType || 'none';
+  document.getElementById('apnUser').value = apn.user || '';
+  document.getElementById('apnPassword').value = '';
+  document.getElementById('apnMmsc').value = apn.mmsc || '';
+  document.getElementById('apnMmsProxy').value = apn.mmsProxy || '';
+  document.getElementById('apnMmsPort').value = apn.mmsPort || '';
+}
+
+function apnClearForm() {
+  document.getElementById('apnFormId').value = '';
+  document.getElementById('apnEntryName').value = 'SpeedTalk';
+  document.getElementById('apnOperator').value = '310240';
+  document.getElementById('apnName').value = 'stkmobi';
+  document.getElementById('apnTypes').value = 'default,supl';
+  document.getElementById('apnProtocol').value = 'ipv4v6';
+  document.getElementById('apnRoamingProtocol').value = 'ipv4v6';
+  document.getElementById('apnAuthType').value = 'none';
+  document.getElementById('apnUser').value = '';
+  document.getElementById('apnPassword').value = '';
+  document.getElementById('apnMmsc').value = '';
+  document.getElementById('apnMmsProxy').value = '';
+  document.getElementById('apnMmsPort').value = '';
+}
+
+async function apnDelete(id) {
+  if (!confirm(`Delete APN override #${id}?`)) return;
+  try {
+    const res = await fetch(`${apiBase()}/apns/${id}`, {method: 'DELETE'});
+    const data = await res.json();
+    if (!res.ok || data.error || data.ok === false) {
+      alert('APN delete failed: ' + (data.error || JSON.stringify(data)));
+      return;
+    }
+    refreshApns();
+  } catch(e) {
+    alert('APN delete error: ' + e.message);
+  }
+}
+
+async function apnSetEnabled(enabled) {
+  try {
+    const res = await fetch(`${apiBase()}/apns/enabled`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({enabled})
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      alert('APN toggle failed: ' + (data.error || JSON.stringify(data)));
+      return;
+    }
+    refreshApns();
+  } catch(e) {
+    alert('APN toggle error: ' + e.message);
   }
 }
 

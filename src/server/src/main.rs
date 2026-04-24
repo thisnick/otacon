@@ -1,6 +1,7 @@
 mod api;
 mod dbus_monitor;
 pub mod fleet;
+pub mod local_config;
 pub mod outbox;
 pub mod phone;
 pub mod reconciler;
@@ -133,6 +134,10 @@ pub struct AppState {
     pub system_events_tx: broadcast::Sender<String>,
     /// Path to phones.json config file
     pub config_path: std::path::PathBuf,
+    /// Path to host-local per-phone config file keyed by ADB serial
+    pub local_config_path: std::path::PathBuf,
+    /// Host-local per-phone config. Used for immediate controls such as Wi-Fi.
+    pub local_config: tokio::sync::RwLock<HashMap<String, local_config::LocalPhoneConfig>>,
     /// Fleet client for registry communication (None in standalone mode)
     pub fleet_client: Option<Arc<fleet::FleetClient>>,
     /// Outbox for reliable event delivery to registry (None in standalone mode)
@@ -219,6 +224,10 @@ async fn main() {
         env::var("PHONES_CONFIG").unwrap_or_else(|_| "/data/otacon/phones.json".into())
     );
     let phone_configs = phone::load_phones(&config_path).await;
+    let local_config_path = std::path::PathBuf::from(
+        env::var("LOCAL_PHONE_CONFIG").unwrap_or_else(|_| "/data/otacon/local_config.json".into())
+    );
+    let local_configs = local_config::load(&local_config_path).await;
 
     if phone_configs.is_empty() {
         eprintln!("No phones in {config_path:?} — waiting for device-monitor to register via POST /phones");
@@ -261,6 +270,8 @@ async fn main() {
         phones: tokio::sync::RwLock::new(phones),
         system_events_tx,
         config_path,
+        local_config_path,
+        local_config: tokio::sync::RwLock::new(local_configs),
         fleet_client: fleet_client.clone(),
         outbox,
     });

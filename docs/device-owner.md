@@ -18,7 +18,7 @@ adb shell dpm set-device-owner com.otacon.kiosk/.DeviceOwnerReceiver
 - `DISALLOW_AIRPLANE_MODE` — prevent airplane mode
 - `DISALLOW_CONFIG_TETHERING` — prevent hotspot/tethering
 - Camera disabled
-- WiFi disabled
+- WiFi desired state managed by host-local Rust config and applied directly by the host
 
 ## TODO: Bluetooth pairing
 
@@ -55,24 +55,40 @@ Or use `DISALLOW_LOCK_SCREEN` restriction.
 - Dismiss any unexpected system popups automatically
 - Suppress low battery warning, update prompts, etc.
 
-## TODO: WiFi auto-connect (headless, no ADB)
+## WiFi provisioning under restrictions
 
-Currently the Pi connects the phone to the AP via ADB:
-```bash
-adb shell cmd wifi connect-network "${WIFI_AP_SSID}" wpa2 "${WIFI_AP_PASSWORD}"
+The Device Owner ContentProvider keeps a small WiFi bridge for provisioning,
+self-heal, and reliable on/off under restrictions. `src/fleet_agent/steps/wifi.py`
+calls `wifi/connect` when normal `cmd wifi connect-network` is blocked or
+unreliable. User-facing Wi-Fi connect/forget is intentionally not exposed.
+
+```text
+content://com.otacon.kiosk/wifi/status
+content://com.otacon.kiosk/wifi/enabled?enabled=true|false
+content://com.otacon.kiosk/wifi/connect?ssid=...&password=...
+content://com.otacon.kiosk/wifi/forget?ssid=...
 ```
-This saves credentials permanently and auto-connects on future boots, but requires USB.
 
-For fully headless boot (no USB cable), Device Owner can add the network programmatically
-before `DISALLOW_CONFIG_WIFI` is applied:
+For mutating operations, the provider temporarily clears `DISALLOW_CONFIG_WIFI`,
+performs the WiFi change, then restores the restriction.
 
-1. `dpm.setWifiEnabled(admin, true)` — ensure WiFi is on
-2. `dpm.addWifiNetworkPrivileged(admin, suggestion)` (API 33 / Android 13) — add the
-   Pi AP credentials silently without user interaction
-3. Apply `DISALLOW_CONFIG_WIFI` after — user cannot change or remove it
+## APN overrides
 
-This path requires Android 13+ and the Device Owner app to know the AP credentials
-(pass via intent or bake into the APK via BuildConfig).
+The Device Owner ContentProvider exposes Android `DevicePolicyManager` override
+APNs for host-local APN management:
+
+```text
+content://com.otacon.kiosk/apns
+content://com.otacon.kiosk/apns/create?name=SpeedTalk&operator=310240&apn=stkmobi
+content://com.otacon.kiosk/apns/update?id=1&apn=...
+content://com.otacon.kiosk/apns/delete?id=1
+content://com.otacon.kiosk/apns/enabled?enabled=true|false
+```
+
+Supported APN fields include data settings (`types`, `protocol`,
+`roamingProtocol`, `authType`, `user`, `password`) and MMS settings (`mmsc`,
+`mmsProxy`, `mmsPort`). The provider auto-adds the `mms` APN type when any MMS
+field is present.
 
 ## TODO: AccessibilityService for fast UI tree + actions
 

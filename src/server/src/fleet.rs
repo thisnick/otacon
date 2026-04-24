@@ -420,7 +420,6 @@ struct ConfigPush {
 /// Phone config fields pushed from the registry.
 #[derive(serde::Deserialize, Debug)]
 struct RegistryPhoneConfig {
-    wifi_enabled: bool,
     bluetooth_enabled: bool,
 }
 
@@ -493,8 +492,8 @@ async fn handle_config_ws(
             Message::Text(text) => {
                 match serde_json::from_str::<ConfigPush>(&text) {
                     Ok(push) if push.msg_type == "config_update" => {
-                        eprintln!("[fleet] Config push for phone '{}': wifi={}, bt={}",
-                            push.phone_id, push.config.wifi_enabled, push.config.bluetooth_enabled);
+                        eprintln!("[fleet] Config push for phone '{}': bt={}",
+                            push.phone_id, push.config.bluetooth_enabled);
 
                         // Find the ADB serial for this phone
                         let serial = find_serial_for_phone(fleet, state, &push.phone_id).await;
@@ -540,20 +539,11 @@ async fn find_serial_for_phone(fleet: &FleetClient, state: &AppState, registry_p
     }
 }
 
-/// Apply WiFi and Bluetooth config to a phone via ADB.
+/// Apply registry-level config to a phone via ADB.
 async fn apply_config(serial: &str, config: &RegistryPhoneConfig) {
-    let wifi_arg = if config.wifi_enabled { "enable" } else { "disable" };
     let bt_arg = if config.bluetooth_enabled { "enable" } else { "disable" };
 
-    eprintln!("[fleet] Applying config to {serial}: wifi {wifi_arg}, bluetooth {bt_arg}");
-
-    let wifi_result = tokio::process::Command::new("adb")
-        .args(["-s", serial, "shell", "svc", "wifi", wifi_arg])
-        .output()
-        .await;
-    if let Err(e) = wifi_result {
-        eprintln!("[fleet] Failed to set wifi on {serial}: {e}");
-    }
+    eprintln!("[fleet] Applying config to {serial}: bluetooth {bt_arg}");
 
     let bt_result = tokio::process::Command::new("adb")
         .args(["-s", serial, "shell", "svc", "bluetooth", bt_arg])
@@ -651,4 +641,3 @@ fn gethostname() -> Option<String> {
         None
     }
 }
-

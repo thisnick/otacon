@@ -1,8 +1,10 @@
 package com.otacon.kiosk;
 
 import android.app.PendingIntent;
+import android.app.admin.DevicePolicyManager;
 import android.content.ContentProvider;
 import android.content.ContentValues;
+import android.content.ComponentName;
 import android.content.Intent;
 import android.database.Cursor;
 import android.database.MatrixCursor;
@@ -11,12 +13,16 @@ import android.telephony.SmsManager;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
+import android.telephony.data.ApnSetting;
 import android.telephony.euicc.DownloadableSubscription;
 import android.telephony.euicc.EuiccManager;
 import android.util.Log;
 
+import java.net.InetAddress;
+import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -36,6 +42,11 @@ import java.util.concurrent.TimeUnit;
  *   /notifications/action?key=...&index=0
  *   /esim/install?activationCode=LPA:1$server$code
  *   /esim/delete?iccid=...
+ *   /apns
+ *   /apns/create?name=SpeedTalk&operator=310240&apn=stkmobi&mmsc=https://...
+ *   /apns/update?id=1&apn=...
+ *   /apns/delete?id=1
+ *   /apns/enabled?enabled=true
  */
 public class KioskProvider extends ContentProvider {
     private static final String TAG = "KioskProvider";
@@ -78,6 +89,9 @@ public class KioskProvider extends ContentProvider {
             }
             if (path.equals("wifi/status")) {
                 return wifiStatus();
+            }
+            if (path.equals("wifi/enabled")) {
+                return wifiSetEnabled(uri);
             }
 
             // --- Bluetooth ---
@@ -128,6 +142,24 @@ public class KioskProvider extends ContentProvider {
             }
             if (path.equals("esim/delete")) {
                 return esimDelete(uri);
+            }
+
+            // --- APN overrides ---
+            if (path.equals("apns")) {
+                return apnsList();
+            }
+            if (path.equals("apns/create")) {
+                return apnsCreate(uri);
+            }
+            if (path.equals("apns/update")) {
+                return apnsUpdate(uri);
+            }
+            if (path.equals("apns/delete")) {
+                return apnsDelete(uri);
+            }
+            if (path.equals("apns/enabled")) {
+                String enabled = uri.getQueryParameter("enabled");
+                return enabled == null ? apnsEnabled() : apnsSetEnabled(enabled);
             }
 
             // --- Lock (passcode management) ---
@@ -342,6 +374,33 @@ public class KioskProvider extends ContentProvider {
         MatrixCursor cursor = new MatrixCursor(new String[]{"ok", "enabled", "connected", "ssid", "rssi"});
         cursor.addRow(new Object[]{true, enabled, connected, ssid, rssi});
         return cursor;
+    }
+
+    /** Endpoint: turn WiFi on/off while preserving the WiFi config restriction. */
+    @SuppressWarnings("deprecation")
+    private Cursor wifiSetEnabled(Uri uri) {
+        boolean needsRestore = clearWifiRestriction();
+        try {
+            String enabledParam = uri.getQueryParameter("enabled");
+            if (enabledParam == null) return errorCursor("missing enabled parameter");
+            boolean target = Boolean.parseBoolean(enabledParam);
+
+            android.net.wifi.WifiManager wm = (android.net.wifi.WifiManager)
+                getContext().getApplicationContext().getSystemService(android.content.Context.WIFI_SERVICE);
+            if (wm == null) return errorCursor("no WifiManager");
+
+            boolean requested = wm.setWifiEnabled(target);
+            for (int i = 0; i < 20; i++) {
+                if (wm.isWifiEnabled() == target) break;
+                try { Thread.sleep(250); } catch (InterruptedException ignored) {}
+            }
+
+            MatrixCursor cursor = new MatrixCursor(new String[]{"ok", "enabled", "requested"});
+            cursor.addRow(new Object[]{wm.isWifiEnabled() == target, wm.isWifiEnabled(), requested});
+            return cursor;
+        } finally {
+            if (needsRestore) restoreWifiRestriction();
+        }
     }
 
     // ==================== Bluetooth ====================
@@ -749,6 +808,408 @@ public class KioskProvider extends ContentProvider {
         MatrixCursor cursor = new MatrixCursor(new String[]{"ok"});
         cursor.addRow(new Object[]{ok});
         return cursor;
+    }
+
+    // ==================== APN overrides ====================
+
+    private Cursor apnsList() {
+        DevicePolicyManager dpm = getDevicePolicyManager();
+        if (dpm == null) return errorCursor("no DevicePolicyManager");
+        ComponentName admin = deviceAdmin();
+        if (!dpm.isDeviceOwnerApp(getContext().getPackageName())) {
+            return errorCursor("not device owner");
+        }
+
+        MatrixCursor cursor = apnCursor();
+        List<ApnSetting> apns = dpm.getOverrideApns(admin);
+        if (apns != null) {
+            for (ApnSetting apn : apns) {
+                addApnRow(cursor, apn, -1);
+            }
+        }
+        return cursor;
+    }
+
+    private Cursor apnsCreate(Uri uri) {
+        DevicePolicyManager dpm = getDevicePolicyManager();
+        if (dpm == null) return errorCursor("no DevicePolicyManager");
+        ComponentName admin = deviceAdmin();
+        if (!dpm.isDeviceOwnerApp(getContext().getPackageName())) {
+            return errorCursor("not device owner");
+        }
+
+        ApnSetting apn = buildApn(uri, null);
+        int id = dpm.addOverrideApn(admin, apn);
+        if (id < 0) {
+            return errorCursor("addOverrideApn failed; APN may conflict with an existing override APN");
+        }
+
+        MatrixCursor cursor = apnCursor();
+        ApnSetting stored = findApnById(dpm.getOverrideApns(admin), id);
+        addApnRow(cursor, stored != null ? stored : apn, id);
+        return cursor;
+    }
+
+    private Cursor apnsUpdate(Uri uri) {
+        DevicePolicyManager dpm = getDevicePolicyManager();
+        if (dpm == null) return errorCursor("no DevicePolicyManager");
+        ComponentName admin = deviceAdmin();
+        if (!dpm.isDeviceOwnerApp(getContext().getPackageName())) {
+            return errorCursor("not device owner");
+        }
+
+        int id = intParam(uri, "id", -1);
+        if (id < 0) return errorCursor("missing id parameter");
+
+        ApnSetting existing = findApnById(dpm.getOverrideApns(admin), id);
+        if (existing == null) return errorCursor("APN not found: " + id);
+
+        ApnSetting apn = buildApn(uri, existing);
+        boolean ok = dpm.updateOverrideApn(admin, id, apn);
+        if (!ok) {
+            return errorCursor("updateOverrideApn failed; APN may not exist or may conflict");
+        }
+
+        MatrixCursor cursor = apnCursor();
+        ApnSetting stored = findApnById(dpm.getOverrideApns(admin), id);
+        addApnRow(cursor, stored != null ? stored : apn, id);
+        return cursor;
+    }
+
+    private Cursor apnsDelete(Uri uri) {
+        DevicePolicyManager dpm = getDevicePolicyManager();
+        if (dpm == null) return errorCursor("no DevicePolicyManager");
+        ComponentName admin = deviceAdmin();
+        if (!dpm.isDeviceOwnerApp(getContext().getPackageName())) {
+            return errorCursor("not device owner");
+        }
+
+        int id = intParam(uri, "id", -1);
+        if (id < 0) return errorCursor("missing id parameter");
+
+        boolean ok = dpm.removeOverrideApn(admin, id);
+        MatrixCursor cursor = new MatrixCursor(new String[]{"ok", "id"});
+        cursor.addRow(new Object[]{ok, id});
+        return cursor;
+    }
+
+    private Cursor apnsEnabled() {
+        DevicePolicyManager dpm = getDevicePolicyManager();
+        if (dpm == null) return errorCursor("no DevicePolicyManager");
+        ComponentName admin = deviceAdmin();
+        if (!dpm.isDeviceOwnerApp(getContext().getPackageName())) {
+            return errorCursor("not device owner");
+        }
+
+        MatrixCursor cursor = new MatrixCursor(new String[]{"enabled"});
+        cursor.addRow(new Object[]{dpm.isOverrideApnEnabled(admin)});
+        return cursor;
+    }
+
+    private Cursor apnsSetEnabled(String enabledParam) {
+        DevicePolicyManager dpm = getDevicePolicyManager();
+        if (dpm == null) return errorCursor("no DevicePolicyManager");
+        ComponentName admin = deviceAdmin();
+        if (!dpm.isDeviceOwnerApp(getContext().getPackageName())) {
+            return errorCursor("not device owner");
+        }
+
+        boolean enabled = Boolean.parseBoolean(enabledParam);
+        dpm.setOverrideApnsEnabled(admin, enabled);
+
+        MatrixCursor cursor = new MatrixCursor(new String[]{"ok", "enabled"});
+        cursor.addRow(new Object[]{true, dpm.isOverrideApnEnabled(admin)});
+        return cursor;
+    }
+
+    private DevicePolicyManager getDevicePolicyManager() {
+        return getContext().getSystemService(DevicePolicyManager.class);
+    }
+
+    private ComponentName deviceAdmin() {
+        return new ComponentName(getContext(), DeviceOwnerReceiver.class);
+    }
+
+    private MatrixCursor apnCursor() {
+        return new MatrixCursor(new String[]{
+            "id", "entryName", "apnName", "operatorNumeric", "types",
+            "protocol", "roamingProtocol", "authType", "user",
+            "mmsc", "mmsProxy", "mmsPort", "enabled"
+        });
+    }
+
+    private void addApnRow(MatrixCursor cursor, ApnSetting apn, int overrideId) {
+        int id = overrideId >= 0 ? overrideId : apn.getId();
+        cursor.addRow(new Object[]{
+            id,
+            nullToEmpty(apn.getEntryName()),
+            nullToEmpty(apn.getApnName()),
+            nullToEmpty(apn.getOperatorNumeric()),
+            formatApnTypes(apn.getApnTypeBitmask()),
+            formatApnProtocol(apn.getProtocol()),
+            formatApnProtocol(apn.getRoamingProtocol()),
+            formatApnAuthType(apn.getAuthType()),
+            nullToEmpty(apn.getUser()),
+            apn.getMmsc() == null ? "" : apn.getMmsc().toString(),
+            formatInetAddress(apn.getMmsProxyAddress()),
+            apn.getMmsProxyPort(),
+            apn.isEnabled()
+        });
+    }
+
+    private ApnSetting findApnById(List<ApnSetting> apns, int id) {
+        if (apns == null) return null;
+        for (ApnSetting apn : apns) {
+            if (apn.getId() == id) return apn;
+        }
+        return null;
+    }
+
+    private ApnSetting buildApn(Uri uri, ApnSetting existing) {
+        String entryName = queryParam(uri, "name", "entryName", "entry_name");
+        if (entryName == null && existing != null) entryName = existing.getEntryName();
+
+        String apnName = queryParam(uri, "apn", "apnName", "apn_name");
+        if (apnName == null && existing != null) apnName = existing.getApnName();
+
+        String operatorNumeric = queryParam(uri, "operator", "operatorNumeric", "operator_numeric");
+        if (operatorNumeric == null && existing != null) operatorNumeric = existing.getOperatorNumeric();
+        operatorNumeric = normalizeOperatorNumeric(operatorNumeric);
+
+        if (isBlank(entryName)) throw new IllegalArgumentException("missing name parameter");
+        if (isBlank(apnName)) throw new IllegalArgumentException("missing apn parameter");
+        if (isBlank(operatorNumeric)) throw new IllegalArgumentException("missing operator parameter");
+
+        int types = parseApnTypes(
+            queryParam(uri, "types"),
+            existing != null ? existing.getApnTypeBitmask()
+                : (ApnSetting.TYPE_DEFAULT | ApnSetting.TYPE_SUPL));
+        int protocol = parseApnProtocol(
+            queryParam(uri, "protocol"),
+            existing != null ? existing.getProtocol() : ApnSetting.PROTOCOL_IPV4V6);
+        int roamingProtocol = parseApnProtocol(
+            queryParam(uri, "roamingProtocol", "roaming_protocol"),
+            existing != null ? existing.getRoamingProtocol() : ApnSetting.PROTOCOL_IPV4V6);
+        int authType = parseApnAuthType(
+            queryParam(uri, "authType", "auth_type"),
+            existing != null ? existing.getAuthType() : ApnSetting.AUTH_TYPE_NONE);
+
+        String user = queryParam(uri, "user");
+        if (user == null && existing != null) user = existing.getUser();
+        String password = queryParam(uri, "password");
+        if (password == null && existing != null) password = existing.getPassword();
+
+        String mmsc = queryParam(uri, "mmsc", "mmsUrl", "mms_url");
+        if (mmsc == null && existing != null && existing.getMmsc() != null) {
+            mmsc = existing.getMmsc().toString();
+        }
+        String mmsProxy = queryParam(uri, "mmsProxy", "mms_proxy");
+        if (mmsProxy == null && existing != null) {
+            mmsProxy = formatInetAddress(existing.getMmsProxyAddress());
+        }
+        Integer mmsPort = parseOptionalPort(queryParam(uri, "mmsPort", "mms_port"));
+        if (mmsPort == null && existing != null && !hasQueryParam(uri, "mmsPort", "mms_port")) {
+            int existingPort = existing.getMmsProxyPort();
+            if (existingPort > 0) mmsPort = existingPort;
+        }
+        if (hasMmsConfig(mmsc, mmsProxy, mmsPort)) {
+            types |= ApnSetting.TYPE_MMS;
+        }
+
+        ApnSetting.Builder builder = new ApnSetting.Builder()
+            .setEntryName(entryName.trim())
+            .setApnName(apnName.trim())
+            .setOperatorNumeric(operatorNumeric)
+            .setApnTypeBitmask(types)
+            .setProtocol(protocol)
+            .setRoamingProtocol(roamingProtocol)
+            .setAuthType(authType)
+            .setUser(user)
+            .setPassword(password)
+            .setCarrierEnabled(true);
+
+        if (!isBlank(mmsc)) builder.setMmsc(Uri.parse(mmsc.trim()));
+        if (!isBlank(mmsProxy)) builder.setMmsProxyAddress(parseInetAddress(mmsProxy.trim(), "mmsProxy"));
+        if (mmsPort != null) builder.setMmsProxyPort(mmsPort);
+
+        return builder.build();
+    }
+
+    private String queryParam(Uri uri, String... names) {
+        for (String name : names) {
+            String value = uri.getQueryParameter(name);
+            if (value != null) return value;
+        }
+        return null;
+    }
+
+    private boolean hasQueryParam(Uri uri, String... names) {
+        for (String name : names) {
+            if (uri.getQueryParameterNames().contains(name)) return true;
+        }
+        return false;
+    }
+
+    private int intParam(Uri uri, String name, int defaultValue) {
+        String raw = uri.getQueryParameter(name);
+        if (raw == null || raw.isEmpty()) return defaultValue;
+        return Integer.parseInt(raw);
+    }
+
+    private Integer parseOptionalPort(String raw) {
+        if (raw == null || raw.trim().isEmpty()) return null;
+        int value = Integer.parseInt(raw.trim());
+        if (value < 0 || value > 65535) {
+            throw new IllegalArgumentException("mmsPort must be between 0 and 65535");
+        }
+        return value;
+    }
+
+    private InetAddress parseInetAddress(String value, String field) {
+        try {
+            return InetAddress.getByName(value);
+        } catch (UnknownHostException e) {
+            throw new IllegalArgumentException("invalid " + field + ": " + value);
+        }
+    }
+
+    private String formatInetAddress(InetAddress address) {
+        return address == null ? "" : address.getHostAddress();
+    }
+
+    private boolean hasMmsConfig(String mmsc, String mmsProxy, Integer mmsPort) {
+        return !isBlank(mmsc) || !isBlank(mmsProxy) || mmsPort != null;
+    }
+
+    private String normalizeOperatorNumeric(String value) {
+        if (value == null) return null;
+        String normalized = value.replaceAll("[^0-9]", "");
+        if (normalized.length() < 5 || normalized.length() > 6) {
+            throw new IllegalArgumentException("operator must be MCC+MNC, e.g. 310240");
+        }
+        return normalized;
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.trim().isEmpty();
+    }
+
+    private String nullToEmpty(String value) {
+        return value == null ? "" : value;
+    }
+
+    private int parseApnTypes(String raw, int defaultValue) {
+        if (raw == null || raw.trim().isEmpty()) return defaultValue;
+        int result = 0;
+        for (String token : raw.toLowerCase(Locale.US).split("[,|\\s]+")) {
+            if (token.isEmpty()) continue;
+            switch (token) {
+                case "default": result |= ApnSetting.TYPE_DEFAULT; break;
+                case "mms": result |= ApnSetting.TYPE_MMS; break;
+                case "supl": result |= ApnSetting.TYPE_SUPL; break;
+                case "dun": result |= ApnSetting.TYPE_DUN; break;
+                case "hipri": result |= ApnSetting.TYPE_HIPRI; break;
+                case "fota": result |= ApnSetting.TYPE_FOTA; break;
+                case "ims": result |= ApnSetting.TYPE_IMS; break;
+                case "cbs": result |= ApnSetting.TYPE_CBS; break;
+                case "ia": result |= ApnSetting.TYPE_IA; break;
+                case "emergency": result |= ApnSetting.TYPE_EMERGENCY; break;
+                case "mcx": result |= ApnSetting.TYPE_MCX; break;
+                case "xcap": result |= ApnSetting.TYPE_XCAP; break;
+                case "enterprise": result |= ApnSetting.TYPE_ENTERPRISE; break;
+                default: throw new IllegalArgumentException("unknown APN type: " + token);
+            }
+        }
+        if (result == 0) throw new IllegalArgumentException("APN types cannot be empty");
+        return result;
+    }
+
+    private String formatApnTypes(int mask) {
+        ArrayList<String> types = new ArrayList<>();
+        appendApnType(types, mask, ApnSetting.TYPE_DEFAULT, "default");
+        appendApnType(types, mask, ApnSetting.TYPE_MMS, "mms");
+        appendApnType(types, mask, ApnSetting.TYPE_SUPL, "supl");
+        appendApnType(types, mask, ApnSetting.TYPE_DUN, "dun");
+        appendApnType(types, mask, ApnSetting.TYPE_HIPRI, "hipri");
+        appendApnType(types, mask, ApnSetting.TYPE_FOTA, "fota");
+        appendApnType(types, mask, ApnSetting.TYPE_IMS, "ims");
+        appendApnType(types, mask, ApnSetting.TYPE_CBS, "cbs");
+        appendApnType(types, mask, ApnSetting.TYPE_IA, "ia");
+        appendApnType(types, mask, ApnSetting.TYPE_EMERGENCY, "emergency");
+        appendApnType(types, mask, ApnSetting.TYPE_MCX, "mcx");
+        appendApnType(types, mask, ApnSetting.TYPE_XCAP, "xcap");
+        appendApnType(types, mask, ApnSetting.TYPE_ENTERPRISE, "enterprise");
+        return types.isEmpty() ? "" : String.join(",", types);
+    }
+
+    private void appendApnType(ArrayList<String> types, int mask, int bit, String label) {
+        if ((mask & bit) != 0) types.add(label);
+    }
+
+    private int parseApnProtocol(String raw, int defaultValue) {
+        if (raw == null || raw.trim().isEmpty()) return defaultValue;
+        String value = raw.toLowerCase(Locale.US).replace("_", "-");
+        switch (value) {
+            case "ip":
+            case "ipv4":
+                return ApnSetting.PROTOCOL_IP;
+            case "ipv6":
+                return ApnSetting.PROTOCOL_IPV6;
+            case "ipv4v6":
+            case "ipv4-v6":
+            case "ipv4/v6":
+            case "ip-v6":
+                return ApnSetting.PROTOCOL_IPV4V6;
+            case "ppp":
+                return ApnSetting.PROTOCOL_PPP;
+            case "non-ip":
+            case "nonip":
+                return ApnSetting.PROTOCOL_NON_IP;
+            case "unstructured":
+                return ApnSetting.PROTOCOL_UNSTRUCTURED;
+            default:
+                throw new IllegalArgumentException("unknown APN protocol: " + raw);
+        }
+    }
+
+    private String formatApnProtocol(int protocol) {
+        switch (protocol) {
+            case ApnSetting.PROTOCOL_IP: return "ipv4";
+            case ApnSetting.PROTOCOL_IPV6: return "ipv6";
+            case ApnSetting.PROTOCOL_IPV4V6: return "ipv4v6";
+            case ApnSetting.PROTOCOL_PPP: return "ppp";
+            case ApnSetting.PROTOCOL_NON_IP: return "non-ip";
+            case ApnSetting.PROTOCOL_UNSTRUCTURED: return "unstructured";
+            default: return String.valueOf(protocol);
+        }
+    }
+
+    private int parseApnAuthType(String raw, int defaultValue) {
+        if (raw == null || raw.trim().isEmpty()) return defaultValue;
+        String value = raw.toLowerCase(Locale.US).replace("-", "_");
+        switch (value) {
+            case "none":
+                return ApnSetting.AUTH_TYPE_NONE;
+            case "pap":
+                return ApnSetting.AUTH_TYPE_PAP;
+            case "chap":
+                return ApnSetting.AUTH_TYPE_CHAP;
+            case "pap_or_chap":
+            case "pap+chap":
+                return ApnSetting.AUTH_TYPE_PAP_OR_CHAP;
+            default:
+                throw new IllegalArgumentException("unknown APN auth type: " + raw);
+        }
+    }
+
+    private String formatApnAuthType(int authType) {
+        switch (authType) {
+            case ApnSetting.AUTH_TYPE_NONE: return "none";
+            case ApnSetting.AUTH_TYPE_PAP: return "pap";
+            case ApnSetting.AUTH_TYPE_CHAP: return "chap";
+            case ApnSetting.AUTH_TYPE_PAP_OR_CHAP: return "pap_or_chap";
+            default: return String.valueOf(authType);
+        }
     }
 
     // ==================== eSIM ====================

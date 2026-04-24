@@ -41,17 +41,20 @@ pub struct Phone {
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct PhoneConfig {
-    pub wifi_enabled: bool,
+    #[serde(default = "default_true")]
     pub bluetooth_enabled: bool,
 }
 
 impl Default for PhoneConfig {
     fn default() -> Self {
         Self {
-            wifi_enabled: true,
             bluetooth_enabled: true,
         }
     }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

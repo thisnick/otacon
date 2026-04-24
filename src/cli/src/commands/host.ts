@@ -12,8 +12,11 @@ function getRegistryClient(opts: { registry?: string }): RegistryClient {
   return new RegistryClient(resolved.registryUrl, resolved.token);
 }
 
-export function hostCommands(parentOpts: () => { registry?: string }): Command {
-  const host = new Command("host").description("Host management");
+export function hostCommands(
+  parentOpts: () => { registry?: string },
+  name = "hosts"
+): Command {
+  const host = new Command(name).description("Host management");
 
   host
     .command("list")

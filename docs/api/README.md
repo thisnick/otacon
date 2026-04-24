@@ -1,28 +1,32 @@
 # Otacon API Reference
 
-Otacon exposes a REST API and WebSocket endpoints for controlling an Android phone connected to a Raspberry Pi via USB.
+Otacon exposes a REST API and WebSocket endpoints for controlling Android phones connected to a Raspberry Pi via USB.
 
 ## Quick Start
 
 ```bash
 # Screenshot
-curl -k https://otacon-pi.<tailnet>.ts.net:8080/api/screenshot -o screen.png
+curl -k https://otacon-pi.<tailnet>.ts.net:8080/phones/<phone-id>/api/screenshot -o screen.png
 
 # Accessibility tree
-curl -k https://otacon-pi.<tailnet>.ts.net:8080/api/snapshot
+curl -k https://otacon-pi.<tailnet>.ts.net:8080/phones/<phone-id>/api/snapshot
 
 # Tap an element
 curl -k -X POST -H 'Content-Type: application/json' \
   -d '{"action":"tap","ref":"e5"}' \
-  https://otacon-pi.<tailnet>.ts.net:8080/api/action
+  https://otacon-pi.<tailnet>.ts.net:8080/phones/<phone-id>/api/action
 
 # Device info
-curl -k https://otacon-pi.<tailnet>.ts.net:8080/api/info
+curl -k https://otacon-pi.<tailnet>.ts.net:8080/phones/<phone-id>/api/info
 ```
+
+The host is multi-phone. Per-phone API paths are nested under
+`/phones/{id}/api/...`. The CLI resolves the active registry phone to the
+host-local phone id automatically.
 
 ## Specs
 
-- **REST API**: [openapi.yaml](openapi.yaml) (OpenAPI 3.1)
+- **REST API**: `/api/docs/openapi.json` on the host, with a checked-in snapshot at [openapi.json](openapi.json)
 - **WebSocket API**: [asyncapi.yaml](asyncapi.yaml) (AsyncAPI 3.0)
 
 ## REST Endpoints
@@ -30,11 +34,11 @@ curl -k https://otacon-pi.<tailnet>.ts.net:8080/api/info
 ### Screen
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/screenshot` | Phone screen as PNG |
-| GET | `/api/snapshot?format=text\|json` | Accessibility tree with element refs |
-| GET | `/api/info` | Device model, activity, resolution, backend status |
+| GET | `/phones/{id}/api/screenshot` | Phone screen as PNG |
+| GET | `/phones/{id}/api/snapshot?format=text\|json` | Accessibility tree with element refs |
+| GET | `/phones/{id}/api/info` | Device model, activity, resolution, backend status |
 
-### Actions (`POST /api/action`)
+### Actions (`POST /phones/{id}/api/action`)
 | Action | Required Fields | Description |
 |--------|----------------|-------------|
 | `tap` | `{x, y}` or `{ref}` | Tap at coordinates or element ref |
@@ -50,35 +54,72 @@ curl -k https://otacon-pi.<tailnet>.ts.net:8080/api/info
 ### Notifications
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/notifications` | List with action buttons |
-| DELETE | `/api/notifications/{key}` | Dismiss |
-| POST | `/api/notifications/{key}/action/{index}` | Trigger action button |
+| GET | `/phones/{id}/api/notifications` | List with action buttons |
+| DELETE | `/phones/{id}/api/notifications/{key}` | Dismiss |
+| POST | `/phones/{id}/api/notifications/{key}/action/{index}` | Trigger action button |
 
 ### Clipboard
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/clipboard` | Get clipboard text |
-| PUT | `/api/clipboard` | Set clipboard text |
+| GET | `/phones/{id}/api/clipboard` | Get clipboard text |
+| PUT | `/phones/{id}/api/clipboard` | Set clipboard text |
 
 ### SMS
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/sms/threads` | List conversation threads |
-| GET | `/api/sms/threads/{id}/messages` | Messages in a thread |
-| POST | `/api/sms/messages` | Send SMS `{to, body}` |
+| GET | `/phones/{id}/api/sms/threads` | List conversation threads |
+| GET | `/phones/{id}/api/sms/threads/{thread_id}/messages` | Messages in a thread |
+| POST | `/phones/{id}/api/sms/messages` | Send SMS `{to, body}` |
 
 ### Apps
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/apps` | List installed apps |
-| GET | `/api/apps/running` | Foreground apps |
-| POST | `/api/apps/running` | Launch `{package}` |
-| DELETE | `/api/apps/running/{package}` | Force stop |
+| GET | `/phones/{id}/api/apps` | List installed apps |
+| GET | `/phones/{id}/api/apps/running` | Foreground apps |
+| POST | `/phones/{id}/api/apps/running` | Launch `{package}` |
+| DELETE | `/phones/{id}/api/apps/running/{package}` | Force stop |
 
 ### Contacts
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/contacts?q=search` | Search contacts |
+| GET | `/phones/{id}/api/contacts?q=search` | Search contacts |
+
+### Wi-Fi
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/phones/{id}/api/wifi` | Get host-local desired state plus observed Wi-Fi status |
+| PUT | `/phones/{id}/api/wifi` | Turn Wi-Fi on/off immediately `{enabled}` and persist host-local state |
+
+Wi-Fi is intentionally host-local. The central registry config does not own
+Wi-Fi state; it only owns fleet-level Bluetooth pairing policy.
+
+### SIMs
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/phones/{id}/api/sims` | List physical SIMs and eSIM profiles |
+| POST | `/phones/{id}/api/sims/install` | Install eSIM `{activationCode}` |
+| POST | `/phones/{id}/api/sims/delete` | Delete eSIM `{subId}` |
+| POST | `/phones/{id}/api/sims/switch` | Switch active subscription `{subId}` |
+| POST | `/phones/{id}/api/sims/enable` | Enable/disable profile `{subId, enabled}` |
+| GET | `/phones/{id}/api/sims/defaults` | Get default SMS/voice/data subscription ids |
+| PUT | `/phones/{id}/api/sims/defaults` | Set default SMS/voice/data subscription ids |
+
+### APNs
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/phones/{id}/api/apns` | List device-owner APN overrides |
+| POST | `/phones/{id}/api/apns` | Create an APN override |
+| PUT | `/phones/{id}/api/apns/{apn_id}` | Update an APN override |
+| DELETE | `/phones/{id}/api/apns/{apn_id}` | Delete an APN override |
+| GET | `/phones/{id}/api/apns/enabled` | Check whether override APNs are enabled |
+| PUT | `/phones/{id}/api/apns/enabled` | Enable or disable override APNs |
+
+APN create/update bodies support data fields (`entryName`, `operatorNumeric`,
+`apn`, `types`, `protocol`, `roamingProtocol`, `authType`, `user`, `password`)
+and MMS fields (`mmsc`, `mmsProxy`, `mmsPort`).
+
+The CLI and device-owner bridge auto-add APN type `mms` when MMS fields are
+present.
 
 ## WebSocket Endpoints
 

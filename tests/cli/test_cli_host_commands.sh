@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Test: CLI host management commands.
-# Tests: otacon host list, otacon host status
+# Tests: otacon hosts list, otacon hosts status
 
 source "$(cd "$(dirname "$0")" && pwd)/helpers.sh"
 check_deps
@@ -20,34 +20,34 @@ registry_url = "$REGISTRY_URL"
 token = "$ADMIN_TOKEN"
 TOML
 
-# --- Test 1: host list ---
+# --- Test 1: hosts list ---
 echo ""
-echo "--- otacon host list ---"
+echo "--- otacon hosts list ---"
 LIST_OUTPUT=$(OTACON_CONFIG_DIR="$TEST_CONFIG_DIR" \
-    $OTACON_BIN host list 2>&1 || true)
-observe "host list output:"
+    $OTACON_BIN hosts list 2>&1 || true)
+observe "hosts list output:"
 echo "$LIST_OUTPUT" | head -10
 
 # Should list the Pi host
 if echo "$LIST_OUTPUT" | grep -qi "otacon-pi\|host\|id\|fqdn"; then
-    pass "host list returns host data"
+    pass "hosts list returns host data"
 else
-    fail "host_list" "host list did not return expected host data"
+    fail "hosts_list" "hosts list did not return expected host data"
 fi
 
-# --- Test 2: host status (if available) ---
+# --- Test 2: hosts status (if available) ---
 echo ""
-echo "--- otacon host status otacon-pi ---"
+echo "--- otacon hosts status otacon-pi ---"
 STATUS_OUTPUT=$(OTACON_CONFIG_DIR="$TEST_CONFIG_DIR" \
-    $OTACON_BIN host status otacon-pi 2>&1 || true)
-observe "host status output:"
+    $OTACON_BIN hosts status otacon-pi 2>&1 || true)
+observe "hosts status output:"
 echo "$STATUS_OUTPUT" | head -10
 
 # Even if this command isn't implemented, report what happens
 if echo "$STATUS_OUTPUT" | grep -qi "otacon-pi\|online\|connected\|phones\|error\|unknown"; then
-    pass "host status otacon-pi runs"
+    pass "hosts status otacon-pi runs"
 else
-    observe "host status returned no parseable output"
+    observe "hosts status returned no parseable output"
 fi
 
 echo ""

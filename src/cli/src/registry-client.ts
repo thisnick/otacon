@@ -1,6 +1,10 @@
 // Types derived from registry OpenAPI spec (components/schemas).
 // Defined inline to avoid operationId conflicts in the generated types.
 
+export interface PhoneConfig {
+  bluetooth_enabled: boolean;
+}
+
 export interface Phone {
   id: string;
   adb_serial: string;
@@ -11,7 +15,7 @@ export interface Phone {
   adapter_mac?: string | null;
   host_id?: string | null;
   status: string;
-  config: { wifi_enabled: boolean; bluetooth_enabled: boolean };
+  config: PhoneConfig;
   connected_at?: string | null;
   created_at: string;
   updated_at: string;
@@ -97,6 +101,31 @@ export class RegistryClient {
     const res = await fetch(
       `${this.baseUrl}/api/v1/admin/phones/${encodeURIComponent(id)}`,
       { headers: this.headers() }
+    );
+    await throwOnError(res);
+    return res.json();
+  }
+
+  async getPhoneConfig(id: string): Promise<PhoneConfig> {
+    const res = await fetch(
+      `${this.baseUrl}/api/v1/admin/phones/${encodeURIComponent(id)}/config`,
+      { headers: this.headers() }
+    );
+    await throwOnError(res);
+    return res.json();
+  }
+
+  async setPhoneConfig(
+    id: string,
+    config: PhoneConfig
+  ): Promise<{ ok: boolean; pushed: boolean }> {
+    const res = await fetch(
+      `${this.baseUrl}/api/v1/admin/phones/${encodeURIComponent(id)}/config`,
+      {
+        method: "PUT",
+        headers: this.headers(),
+        body: JSON.stringify(config),
+      }
     );
     await throwOnError(res);
     return res.json();

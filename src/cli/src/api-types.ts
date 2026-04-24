@@ -20,6 +20,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/apns": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listApns"];
+        put?: never;
+        post: operations["createApn"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/apns/enabled": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getApnsEnabled"];
+        put: operations["setApnsEnabled"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/apns/{apn_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["updateApn"];
+        post?: never;
+        delete: operations["deleteApn"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/apps": {
         parameters: {
             query?: never;
@@ -79,6 +127,70 @@ export interface paths {
         put?: never;
         post?: never;
         delete: operations["stopApp"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/calls/answer": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["answerCall"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/calls/dial": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["dialCall"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/calls/hangup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["hangupCall"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/calls/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getCallStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -260,6 +372,102 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sims": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["listEsimProfiles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sims/defaults": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getEsimDefaults"];
+        put: operations["setEsimDefaults"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sims/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["deleteEsimProfile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sims/enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["enableEsimProfile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sims/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["installEsimProfile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sims/switch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["switchEsimProfile"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sms/messages": {
         parameters: {
             query?: never;
@@ -324,26 +532,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/wifi": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getWifiStatus"];
+        put: operations["setWifiEnabled"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         A11yNode: {
             bounds?: null | components["schemas"]["Bounds"];
-            checkable: boolean;
-            checked: boolean;
-            children: components["schemas"]["A11yNode"][];
+            checkable?: boolean;
+            checked?: boolean;
+            children?: components["schemas"]["A11yNode"][];
             class: string;
-            clickable: boolean;
+            clickable?: boolean;
             content_desc?: string | null;
-            enabled: boolean;
-            focusable: boolean;
-            focused: boolean;
-            long_clickable: boolean;
+            enabled?: boolean;
+            focusable?: boolean;
+            focused?: boolean;
+            long_clickable?: boolean;
             ref_id?: string | null;
             resource_id?: string | null;
-            scrollable: boolean;
-            selected: boolean;
+            scrollable?: boolean;
+            selected?: boolean;
             text?: string | null;
         };
         Action: (components["schemas"]["TapParams"] & {
@@ -374,9 +598,54 @@ export interface components {
             /** @enum {string} */
             action: "scroll_backward";
         });
+        ApnBody: {
+            apn?: string | null;
+            authType?: string | null;
+            entryName?: string | null;
+            /** Format: int32 */
+            mmsPort?: number | null;
+            mmsProxy?: string | null;
+            mmsc?: string | null;
+            operatorNumeric?: string | null;
+            password?: string | null;
+            protocol?: string | null;
+            roamingProtocol?: string | null;
+            types?: string | null;
+            user?: string | null;
+        };
+        ApnEnabled: {
+            enabled: boolean;
+        };
+        ApnOverride: {
+            apnName: string;
+            authType: string;
+            enabled: boolean;
+            entryName: string;
+            /** Format: int32 */
+            id: number;
+            /** Format: int32 */
+            mmsPort?: number | null;
+            mmsProxy?: string | null;
+            mmsc?: string | null;
+            operatorNumeric: string;
+            protocol: string;
+            roamingProtocol: string;
+            types: string;
+            user?: string | null;
+        };
         App: {
             label?: string | null;
             package: string;
+            /**
+             * Format: int64
+             * @description Monotonic Android versionCode (e.g. 9270000)
+             */
+            version_code?: number | null;
+            /**
+             * @description Human versionName (e.g. "9.27.0"). Only populated when explicitly requested
+             *     (uses `dumpsys package <pkg>` per-app, which is slow).
+             */
+            version_name?: string | null;
         };
         Bounds: {
             /** Format: int32 */
@@ -388,6 +657,12 @@ export interface components {
             /** Format: int32 */
             y2: number;
         };
+        CallStatus: {
+            /** Format: int64 */
+            duration?: number | null;
+            number?: string | null;
+            state: string;
+        };
         /** @description Clipboard text content */
         ClipboardContent: {
             /** @description Current clipboard text (null if empty) */
@@ -397,23 +672,98 @@ export interface components {
             name: string;
             phones: string[];
         };
+        DeleteBody: {
+            /** Format: int64 */
+            subId: number;
+        };
         /** @description Device metadata and connection status */
         DeviceInfo: {
             /** @description Current foreground activity */
             activity?: string | null;
+            /** @description Assigned BT dongle MAC on the host */
+            adapter_mac?: string | null;
+            /** @description ADB serial of this phone */
+            adb_serial: string;
             /** @description Device owner app connected */
             bridge: boolean;
+            /** @description Whether the phone is currently BT-connected to its assigned dongle */
+            bt_connected: boolean;
+            /** @description EID (eUICC Identifier) for eSIM */
+            eid?: string | null;
+            /** @description IMEI (International Mobile Equipment Identity) — slot 0 */
+            imei?: string | null;
+            /** @description IMEI for second SIM slot (dual-SIM devices) */
+            imei2?: string | null;
             model?: string | null;
+            /** @description Fleet-agent monitor status (setup progress, health, heals) */
+            monitor?: unknown;
+            /** @description Phone's BT MAC (if known from pairing) */
+            phone_bt_mac?: string | null;
             /** @description SIM phone number (e.g. "+15551234567") */
             phone_number?: string | null;
             /** @description e.g. "1080x2316" */
             resolution?: string | null;
+            /**
+             * @description Current screen state — agents should check this before issuing
+             *     per-phone actions like screenshot/tap/etc.
+             *     Values: "unlocked", "locked", "asleep", "dozing", "dreaming", "unknown"
+             */
+            screen_state: string;
             /** @description Snapshot server (app_process) connected */
             snapshot_server: boolean;
+            /** @description Lightweight system stats (CPU/mem/battery/temp) */
+            stats: components["schemas"]["PhoneStats"];
+            /**
+             * Format: int32
+             * @description VNC port on the host that proxies this phone's screen
+             *     (connect with vnc://{host_address}:{vnc_port})
+             */
+            vnc_port: number;
+            /** @description WiFi connection state */
+            wifi: components["schemas"]["WifiStatus"];
             window?: string | null;
+        };
+        DialBody: {
+            number: string;
+        };
+        EnableBody: {
+            enabled: boolean;
+            /** Format: int64 */
+            subId: number;
         };
         ErrorResponse: {
             error: string;
+        };
+        EsimDefaults: {
+            /** Format: int64 */
+            dataSubId?: number | null;
+            /** Format: int64 */
+            smsSubId?: number | null;
+            /** Format: int64 */
+            voiceSubId?: number | null;
+        };
+        EsimProfile: {
+            carrier: string;
+            embedded: boolean;
+            /** @description Currently active on a SIM slot (slot >= 0 && apps enabled) */
+            enabled: boolean;
+            /** @description True for stale physical SIM records (only present when ?all=true) */
+            historical?: boolean;
+            iccid: string;
+            isDefault: boolean;
+            /** Format: int64 */
+            slot: number;
+            /**
+             * @description Status string: "active" (enabled, on a slot), "disabled" (installed
+             *     but not active), or "historical" (stale subscription record from a
+             *     previously-inserted physical SIM, only shown with ?all=true)
+             */
+            status: string;
+            /** Format: int64 */
+            subId: number;
+        };
+        InstallBody: {
+            activationCode: string;
         };
         KeyParams: {
             /** @description Key name (home, back, enter, power, etc.) or raw keycode number */
@@ -450,6 +800,24 @@ export interface components {
         OpenBody: {
             uri: string;
         };
+        PhoneStats: {
+            /** Format: int32 */
+            battery_pct?: number | null;
+            /**
+             * Format: float
+             * @description Approximate CPU usage percent across all cores (0-100, normalized)
+             */
+            cpu_pct?: number | null;
+            /** Format: int32 */
+            mem_total_mb?: number | null;
+            /** Format: int32 */
+            mem_used_mb?: number | null;
+            /**
+             * Format: float
+             * @description CPU temp in Celsius (if readable)
+             */
+            temp_c?: number | null;
+        };
         PinchParams: {
             /**
              * Format: int32
@@ -484,6 +852,16 @@ export interface components {
             max_duration?: number | null;
             recording: boolean;
         };
+        RunningApps: {
+            /** @description List of running/foreground apps (empty when phone is asleep) */
+            apps: components["schemas"]["App"][];
+            /**
+             * @description Current screen state — explains an empty `apps` list
+             *     (asleep/dozing/dreaming → can't enumerate; unlocked → genuinely no apps)
+             *     See /api/info screen_state docs for the full enum.
+             */
+            screen_state: string;
+        };
         ScrollParams: {
             /** @description Scrollable element ref ID */
             ref: string;
@@ -492,14 +870,28 @@ export interface components {
             body: string;
             to: string;
         };
+        SetApnEnabledBody: {
+            enabled: boolean;
+        };
         SetClipboardBody: {
             text: string;
+        };
+        SetDefaultsBody: {
+            /** Format: int64 */
+            dataSubId?: number | null;
+            /** Format: int64 */
+            smsSubId?: number | null;
+            /** Format: int64 */
+            voiceSubId?: number | null;
         };
         SetTextParams: {
             /** @description Element ref ID (must be an EditText) */
             ref: string;
             /** @description Text to set (full Unicode support) */
             text: string;
+        };
+        SetWifiEnabledBody: {
+            enabled: boolean;
         };
         SmsMessage: {
             address: string;
@@ -519,7 +911,7 @@ export interface components {
         StartRecordBody: {
             /**
              * Format: int32
-             * @description Max recording duration in seconds (default 30, max 180)
+             * @description Max recording duration in seconds (default 300, max 600)
              */
             max_duration?: number;
         };
@@ -538,6 +930,10 @@ export interface components {
             /** Format: int32 */
             y2: number;
         };
+        SwitchBody: {
+            /** Format: int64 */
+            subId: number;
+        };
         TapParams: {
             /** @description Element ref ID (if tapping by ref, e.g. "e5") */
             ref?: string | null;
@@ -555,6 +951,15 @@ export interface components {
         TypeParams: {
             /** @description Text to type (ASCII only, via ADB input) */
             text: string;
+        };
+        WifiStatus: {
+            connected: boolean;
+            /** @description Persisted host-local desired state for this phone. */
+            desired_enabled: boolean;
+            enabled: boolean;
+            /** Format: int32 */
+            rssi?: number | null;
+            ssid?: string | null;
         };
     };
     responses: never;
@@ -603,6 +1008,138 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    listApns: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApnOverride"][];
+                };
+            };
+        };
+    };
+    createApn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApnBody"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApnOverride"];
+                };
+            };
+        };
+    };
+    getApnsEnabled: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApnEnabled"];
+                };
+            };
+        };
+    };
+    setApnsEnabled: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetApnEnabledBody"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApnEnabled"];
+                };
+            };
+        };
+    };
+    updateApn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Android override APN id */
+                apn_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApnBody"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApnOverride"];
+                };
+            };
+        };
+    };
+    deleteApn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Android override APN id */
+                apn_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };
@@ -672,7 +1209,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["App"][];
+                    "application/json": components["schemas"]["RunningApps"];
                 };
             };
         };
@@ -717,6 +1254,86 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OkResponse"];
+                };
+            };
+        };
+    };
+    answerCall: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkResponse"];
+                };
+            };
+        };
+    };
+    dialCall: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DialBody"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkResponse"];
+                };
+            };
+        };
+    };
+    hangupCall: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkResponse"];
+                };
+            };
+        };
+    };
+    getCallStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallStatus"];
                 };
             };
         };
@@ -995,6 +1612,162 @@ export interface operations {
             };
         };
     };
+    listEsimProfiles: {
+        parameters: {
+            query?: {
+                /** @description Include historical (stale) physical SIM records */
+                all?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EsimProfile"][];
+                };
+            };
+        };
+    };
+    getEsimDefaults: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EsimDefaults"];
+                };
+            };
+        };
+    };
+    setEsimDefaults: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetDefaultsBody"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    deleteEsimProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeleteBody"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    enableEsimProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EnableBody"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    installEsimProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InstallBody"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    switchEsimProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SwitchBody"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
     sendSms: {
         parameters: {
             query?: never;
@@ -1076,6 +1849,48 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    getWifiStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WifiStatus"];
+                };
+            };
+        };
+    };
+    setWifiEnabled: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetWifiEnabledBody"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WifiStatus"];
+                };
             };
         };
     };

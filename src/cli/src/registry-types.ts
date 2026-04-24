@@ -373,6 +373,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/hosts/events/ingest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Ingest a typed fleet event from a host (node-scope).
+         *     The data field contains the full FleetEvent (tagged enum).
+         *     Apply functions are idempotent — no dedup needed.
+         */
+        post: operations["ingest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/hosts/heartbeat": {
         parameters: {
             query?: never;
@@ -384,6 +405,26 @@ export interface paths {
         put?: never;
         /** Heartbeat with host metadata and connected phones/dongles. */
         post: operations["heartbeat"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/hosts/identity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Register/update host identity without affecting phone/dongle status.
+         *     Use this on startup; use heartbeat for periodic state sync.
+         */
+        post: operations["identity"];
         delete?: never;
         options?: never;
         head?: never;
@@ -526,26 +567,43 @@ export interface components {
             /** Format: date-time */
             timestamp: string;
         };
+        /** @description Body for typed fleet events sent by the host outbox flusher. */
+        FleetEventBody: {
+            data: unknown;
+            entity_id?: string | null;
+            event_type: string;
+            host_id: string;
+        };
         HeartbeatBody: {
+            address?: string | null;
             /** Format: int32 */
             api_port?: number;
             dongles?: string[];
-            fqdn?: string | null;
             host_id: string;
             phones?: string[];
-            tailscale_ip?: string | null;
         };
         Host: {
+            /**
+             * @description Network address (FQDN or IP) the CLI uses to reach this host.
+             *     Transport-agnostic: could be tailnet FQDN, public hostname, plain IP, etc.
+             *     Default None for backwards compat with old hosts.json (pre-rename from fqdn).
+             */
+            address?: string | null;
             /** Format: int32 */
             api_port: number;
             /** Format: date-time */
             created_at: string;
-            fqdn?: string | null;
             id: string;
             /** Format: date-time */
             last_heartbeat?: string | null;
             status: string;
-            tailscale_ip?: string | null;
+        };
+        HostIdentityBody: {
+            /** @description Network address (FQDN or IP) where the CLI can reach this host. */
+            address?: string | null;
+            /** Format: int32 */
+            api_port?: number;
+            host_id: string;
         };
         PendingRegistration: {
             /** @description For host registrations this is the host_id; for client registrations a label. */
@@ -578,6 +636,11 @@ export interface components {
             host_id?: string | null;
             id: string;
             imei?: string | null;
+            /**
+             * Format: date-time
+             * @description Last time this phone appeared in a heartbeat (for grace period).
+             */
+            last_seen_in_heartbeat?: string | null;
             model?: string | null;
             phone_number?: string | null;
             status: string;
@@ -585,8 +648,7 @@ export interface components {
             updated_at: string;
         };
         PhoneConfig: {
-            bluetooth_enabled: boolean;
-            wifi_enabled: boolean;
+            bluetooth_enabled?: boolean;
         };
         RegisterClientBody: {
             client_id: string;
@@ -1321,6 +1383,30 @@ export interface operations {
             };
         };
     };
+    ingest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FleetEventBody"];
+            };
+        };
+        responses: {
+            /** @description Event applied */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
     heartbeat: {
         parameters: {
             query?: never;
@@ -1331,6 +1417,30 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["HeartbeatBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    identity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HostIdentityBody"];
             };
         };
         responses: {

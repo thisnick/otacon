@@ -102,7 +102,7 @@ export async function resolvePhone(
   return resolved;
 }
 
-/** Clear the resolution cache (useful after phone use / reconnect). */
+/** Clear the resolution cache (useful after phones use / reconnect). */
 export function clearResolverCache(): void {
   cache.clear();
 }

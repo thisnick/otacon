@@ -18,12 +18,12 @@ class TestRegisterWithRegistry:
     def test_sends_identity_and_adapter(self):
         with patch.dict(os.environ, {'REGISTRY_URL': 'http://reg:8080', 'HOST_ID': 'pi-1'}):
             with patch('fleet_agent.registry.client.http_post',
-                       return_value={'phone_id': 'r-123', 'config': {'wifi_enabled': True}}) as mock:
+                       return_value={'phone_id': 'r-123', 'config': {'bluetooth_enabled': True}}) as mock:
                 rid, config = register_with_registry(
                     {'adb_serial': 'S1', 'model': 'Pixel'},
                     adapter_mac='AA:BB:CC:DD:EE:01')
         assert rid == 'r-123'
-        assert config == {'wifi_enabled': True}
+        assert config == {'bluetooth_enabled': True}
         payload = mock.call_args[0][1]
         assert payload['host_id'] == 'pi-1'
         assert payload['adb_serial'] == 'S1'

@@ -195,11 +195,9 @@ function esc(s) {
 
 function configIcons(cfg) {
   if (!cfg) return '-';
-  let s = '';
-  s += cfg.wifi_enabled ? '<span class="icon" title="WiFi on">W</span>' : '<span class="icon" style="color:#484f58" title="WiFi off">W</span>';
-  s += ' ';
-  s += cfg.bluetooth_enabled ? '<span class="icon" title="BT on">B</span>' : '<span class="icon" style="color:#484f58" title="BT off">B</span>';
-  return s;
+  return cfg.bluetooth_enabled
+    ? '<span class="icon" title="BT pairing enabled">B</span>'
+    : '<span class="icon" style="color:#484f58" title="BT pairing disabled">B</span>';
 }
 
 let pollOk = true;

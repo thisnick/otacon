@@ -22,8 +22,8 @@ otacon reg list
 otacon reg approve <pending_id>
 
 # 3. Pick a default phone (avoids passing --phone every time)
-otacon phone list
-otacon phone use phone-2
+otacon phones list
+otacon phones use phone-2
 ```
 
 After this, the token + registry URL are saved to `~/.otacon/config.toml` (chmod 0600). Subsequent commands work without flags.
@@ -55,15 +55,15 @@ All examples in this skill use `otacon`.
 pnpm cli <subcommand> ...     # equivalent to: otacon <subcommand> ...
 ```
 
-So `otacon phone list` becomes `pnpm cli phone list` when working from inside the repo. Pick whichever matches your environment.
+So `otacon phones list` becomes `pnpm cli phones list` when working from inside the repo. Pick whichever matches your environment.
 
 ## Output format
 
 List/status commands default to **column-aligned tables** with colored status fields. Pass `--json` for raw JSON (for piping to `jq` or programmatic use).
 
 ```bash
-otacon phone list           # readable table
-otacon phone list --json    # JSON array
+otacon phones list          # readable table
+otacon phones list --json   # JSON array
 ```
 
 ## Fleet management
@@ -71,28 +71,30 @@ otacon phone list --json    # JSON array
 ### Phones
 
 ```bash
-otacon phone list                              # list all phones
-otacon phone list --connected                  # only connected
-otacon phone list --host otacon-pi             # filter by host
-otacon phone use <phone-id>                    # set active phone (persists in config)
-otacon phone delete <phone-id>                 # remove from registry (re-added on next heartbeat if alive)
-otacon phone factory-reset                     # active phone (DESTRUCTIVE)
-otacon phone location [<id>]                   # show host FQDN + port
-otacon phone config get                        # current config (wifi, bluetooth, etc.)
+otacon phones list                             # list all phones
+otacon phones list --connected                 # only connected
+otacon phones list --host otacon-pi            # filter by host
+otacon phones use <phone-id>                   # set active phone (persists in config)
+otacon phones delete <phone-id>                # remove from registry (re-added on next heartbeat if alive)
+otacon phones factory-reset                    # active phone (DESTRUCTIVE)
+otacon phones status [<phone-id>]              # registry status + BT pairing policy
+otacon phones location [<id>]                  # show host FQDN + port
+otacon config get                              # registry config for active phone
+otacon config set bluetooth_enabled=off        # registry-level BT pairing policy
 ```
 
-### eSIM (per phone)
+### SIM/eSIM (per phone)
 
-Maps directly to the host's `/api/esim/*` endpoints:
+Maps directly to the host's `/api/sims/*` endpoints:
 
 ```bash
-otacon phone esim list                         # all profiles (active + disabled, --json)
-otacon phone esim install <activation-code>    # install via SM-DP+ activation code
-otacon phone esim delete <sub-id>              # delete eSIM profile
-otacon phone esim switch <sub-id>              # set active subscription
-otacon phone esim enable <sub-id>              # enable a profile
-otacon phone esim disable <sub-id>             # disable a profile
-otacon phone esim defaults                     # get default SIM for SMS/voice/data
+otacon sims list                                # all profiles (active + disabled, --json)
+otacon sims install <activation-code>           # install via SM-DP+ activation code
+otacon sims delete <sub-id>                     # delete eSIM profile
+otacon sims switch <sub-id>                     # set active subscription
+otacon sims enable <sub-id>                     # enable a profile
+otacon sims disable <sub-id>                    # disable a profile
+otacon sims defaults                            # get default SIM for SMS/voice/data
 ```
 
 **eSIM install is platform-aware:**
@@ -105,9 +107,66 @@ otacon phone esim defaults                     # get default SIM for SMS/voice/d
 
 After install, the profile is typically disabled. Enable + switch to activate:
 ```bash
-otacon phone esim list                         # find the new subId
-otacon phone esim enable <sub-id>
-otacon phone esim switch <sub-id>              # assign to SIM slot, registers with carrier
+otacon sims list                                # find the new subId
+otacon sims enable <sub-id>
+otacon sims switch <sub-id>                     # assign to SIM slot, registers with carrier
+```
+
+### APN overrides (per phone)
+
+Maps directly to the host's `/api/apns/*` endpoints. APN ids are assigned by
+Android `DevicePolicyManager.addOverrideApn()` and are shown by list/create.
+
+```bash
+otacon apns list
+otacon apns upsert SpeedTalk --operator 310240 --apn stkmobi --mmsc <mms-url>
+otacon apns create SpeedTalk --operator "310 240" --apn stkmobi
+otacon apns update <apn-id> --types default,mms,supl --protocol ipv4v6 --mmsc <mms-url>
+otacon apns delete <apn-id>
+otacon apns status
+otacon apns enable                              # enable override APNs globally
+otacon apns disable                             # return to carrier/device APNs
+```
+
+`apns list` shows each APN row's enabled flag. The global Android override APN
+switch is separate; check it with `otacon apns status`.
+
+Defaults for minimal data APNs:
+- `types`: `default,supl`
+- `protocol`: `ipv4v6`
+- `roamingProtocol`: `ipv4v6`
+- `authType`: `none`
+
+MMS-capable APNs also support `--mmsc`, `--mms-proxy`, and `--mms-port`.
+Create/upsert auto-adds `mms` to `types` when MMS fields are present; for
+manual `update`, pass `--types ...mms...` if the existing APN is not already
+MMS-capable.
+
+### Wi-Fi (per phone)
+
+Wi-Fi is controlled directly on the active phone and persisted as host-local
+Rust config. There is no user-facing `wifi connect`; provisioning owns network
+selection.
+
+```bash
+otacon wifi status                              # desired + observed Wi-Fi state
+otacon wifi on
+otacon wifi off
+otacon info                                     # observed device status
+```
+
+When `wifi off` is set, the fleet-agent monitor skips Wi-Fi setup and Wi-Fi
+healing for that phone.
+
+### Registry config
+
+Registry config is fleet policy pushed through the central registry. Bluetooth
+stays here because it controls pairing/dongle assignment intent.
+
+```bash
+otacon config get
+otacon config set bluetooth_enabled=off
+otacon config set bluetooth_enabled=on
 ```
 
 **Adding a new UI variant for eSIM install (for agents):**
@@ -144,16 +203,16 @@ Add new variants by updating detection text and action targets.
 ### Hosts (Pi nodes)
 
 ```bash
-otacon host list                               # all hosts
-otacon host status <id>                        # detail for one host
-otacon host delete <id>                        # forget (re-added on next heartbeat)
+otacon hosts list                              # all hosts
+otacon hosts status <id>                       # detail for one host
+otacon hosts delete <id>                       # forget (re-added on next heartbeat)
 ```
 
 ### Dongles (USB BT adapters)
 
 ```bash
-otacon dongle list                             # all dongles, with phone bindings
-otacon dongle delete <id>                      # forget
+otacon dongles list                            # all dongles, with phone bindings
+otacon dongles delete <id>                     # forget
 ```
 
 ### Registrations
@@ -171,9 +230,9 @@ otacon reg reject-all                          # bulk reject
 ### Admin clients (other CLIs/UIs that share access)
 
 ```bash
-otacon client list                             # active admin clients
-otacon client list --all                       # include revoked
-otacon client revoke <token-id>                # revoke a client's access
+otacon clients list                            # active admin clients
+otacon clients list --all                      # include revoked
+otacon clients revoke <token-id>               # revoke a client's access
 ```
 
 ### Auth
@@ -186,7 +245,7 @@ otacon auth whoami                             # show registry, token fingerprin
 
 ## Per-phone automation (top-level commands)
 
-These operate on the active phone (set via `phone use`) or `--phone <id>`.
+These operate on the active phone (set via `phones use`) or `--phone <id>`.
 
 ### Always check screen state first
 
@@ -318,15 +377,15 @@ otacon clipboard set "copied text"
 ### Apps
 
 ```bash
-otacon app list                               # installed apps (with versionCode)
-otacon app running                            # foreground / running
-otacon app launch com.android.chrome
-otacon app stop com.android.chrome
-otacon app install /path/to/app.apk           # sideload .apk (single file)
-otacon app install /path/to/app.apkm          # sideload .apkm (APKMirror AAB bundle — auto-extracts splits)
+otacon apps list                              # installed apps (with versionCode)
+otacon apps running                           # foreground / running
+otacon apps launch com.android.chrome
+otacon apps stop com.android.chrome
+otacon apps install /path/to/app.apk          # sideload .apk (single file)
+otacon apps install /path/to/app.apkm         # sideload .apkm (APKMirror AAB bundle — auto-extracts splits)
 ```
 
-`app running` returns both the apps list AND the current `screen_state`,
+`apps running` returns both the apps list AND the current `screen_state`,
 so when the list is empty you'll see e.g. `(no running apps — phone is
 dozing. Wake with: otacon key wake)` instead of just an empty result.
 
@@ -370,7 +429,7 @@ Records video + audio (mp4). Default 5min, max 10min. Only one recording at a ti
 
 ## Tips for AI agents
 
-- **Set an active phone first** (`phone use <id>`) so subsequent commands don't need `--phone`. Or pass `OTACON_PHONE=<id>` env var per invocation.
+- **Set an active phone first** (`phones use <id>`) so subsequent commands don't need `--phone`. Or pass `OTACON_PHONE=<id>` env var per invocation.
 - **Always pass `--json`** when piping to `jq` or other tools. Default tables include ANSI color codes that won't parse cleanly.
 - **Take a snapshot before acting** — refs are only valid for the current UI state. After a tap/scroll, take another snapshot.
 - **Prefer `set-text` over `type`** for non-ASCII text or when targeting a specific input field by ref.

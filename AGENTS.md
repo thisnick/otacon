@@ -89,8 +89,10 @@ observation generates events to bring the registry into agreement.
 ## Tooling and conventions
 
 ### CLI commands
-- Subcommand groups (all singular for consistency): `auth`, `reg`, `phone`,
-  `phone esim`, `host`, `dongle`, `client`, `app`. Per-phone actions
+- Collection subcommand groups are plural for consistency: `phones`,
+  `sims`, `apns`, `hosts`, `dongles`, `clients`, `apps`. Singular collection
+  forms (`phone`, `host`, `dongle`, `client`, `app`) remain hidden compatibility
+  commands. Other top-level groups include `config` and `wifi`. Per-phone actions
   (`screenshot`, `snapshot`, `tap`, `sms`, `call`, `notifications`,
   `clipboard`, `contacts`, `record`, `open`, `info`, `key`, `swipe`, etc.)
   stay top-level for daily use.
@@ -99,6 +101,20 @@ observation generates events to bring the registry into agreement.
 - Deployed binary is `otacon`; in-repo dev wrapper is `pnpm cli`.
 - List/status commands default to column-aligned tables; `--json` opt-in
   for raw JSON.
+- APN overrides are phone-local Android `DevicePolicyManager` override APNs:
+  CLI path `apns`, host API path `/phones/{id}/api/apns`. The APN id is
+  assigned by Android on create/list and is required for update/delete. `apns
+  list` shows each row's enabled flag; global override status is separate via
+  `apns status`. MMS APNs should include `--mmsc`, and optional `--mms-proxy`
+  / `--mms-port` when the carrier provides them. CLI create/upsert and the
+  device-owner APN builder auto-add APN type `mms` when MMS fields are present.
+- Wi-Fi is host-local phone config, not registry config. CLI path `wifi`
+  supports only `status`, `on`, and `off`; host API path is
+  `/phones/{id}/api/wifi`. The Rust host persists desired state in
+  `/data/otacon/local_config.json`, and the fleet-agent monitor must not
+  provision or heal Wi-Fi when that local `wifi_enabled` is false.
+- Registry phone config is fleet policy. Keep Bluetooth pairing policy there:
+  CLI path `config`, key `bluetooth_enabled`.
 
 ### OpenAPI
 - Both servers use code-first OpenAPI via `utoipa`. Spec served at
@@ -148,7 +164,7 @@ observation generates events to bring the registry into agreement.
   empty results with `screen_state` so callers can explain why.
 - **`pnpm cli` shifts cwd to `src/cli/`** — relative file paths break.
   Use absolute paths (`$PWD/...`) when passing files to commands like
-  `app install`. Doesn't affect the deployed `otacon` binary.
+  `apps install`. Doesn't affect the deployed `otacon` binary.
 - **`.apkm` bundles** (APKMirror's AAB-derived format) install transparently
-  via `otacon app install <file.apkm>` — server detects ZIP magic, extracts
+  via `otacon apps install <file.apkm>` — server detects ZIP magic, extracts
   splits, runs `adb install-multiple`.

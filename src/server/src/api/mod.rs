@@ -1,5 +1,6 @@
 pub mod adb;
 pub mod action;
+pub mod apns;
 pub mod apps;
 pub mod autotap;
 pub mod bridge;
@@ -18,11 +19,12 @@ pub mod sms;
 pub mod snapshot;
 pub mod internal;
 pub mod test_sim;
+pub mod wifi;
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use serde::Serialize;
 use std::sync::Arc;
@@ -91,6 +93,21 @@ impl IntoResponse for ApiError {
         apps::launch_handler,
         apps::stop_handler,
         apps::install_handler,
+        wifi::status_handler,
+        wifi::set_enabled_handler,
+        esim::profiles_handler,
+        esim::install_handler,
+        esim::delete_handler,
+        esim::switch_handler,
+        esim::enable_handler,
+        esim::defaults_get_handler,
+        esim::defaults_set_handler,
+        apns::list_handler,
+        apns::create_handler,
+        apns::update_handler,
+        apns::delete_handler,
+        apns::enabled_handler,
+        apns::set_enabled_handler,
         open::handler,
         record::start_handler,
         record::stop_handler,
@@ -108,6 +125,10 @@ impl IntoResponse for ApiError {
         sms::SmsThread, sms::SmsMessage, sms::SendSmsBody,
         clipboard::ClipboardContent, clipboard::SetClipboardBody,
         apps::App, apps::LaunchBody,
+        wifi::WifiStatus, wifi::SetWifiEnabledBody,
+        esim::EsimProfile, esim::InstallBody, esim::SwitchBody, esim::EnableBody,
+        esim::DeleteBody, esim::EsimDefaults, esim::SetDefaultsBody,
+        apns::ApnOverride, apns::ApnBody, apns::ApnEnabled, apns::SetApnEnabledBody,
         contacts::Contact,
         open::OpenBody,
         record::StartRecordBody, record::RecordStatus,
@@ -157,12 +178,16 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/phones/{id}/api/apps/running/{package}", delete(phone_apps_stop))
         .route("/phones/{id}/api/apps/install", post(phone_apps_install)
             .layer(axum::extract::DefaultBodyLimit::max(512 * 1024 * 1024)))
-        .route("/phones/{id}/api/esim/profiles", get(phone_esim_profiles))
-        .route("/phones/{id}/api/esim/install", post(phone_esim_install))
-        .route("/phones/{id}/api/esim/delete", post(phone_esim_delete))
-        .route("/phones/{id}/api/esim/switch", post(phone_esim_switch))
-        .route("/phones/{id}/api/esim/enable", post(phone_esim_enable))
-        .route("/phones/{id}/api/esim/defaults", get(phone_esim_defaults_get).put(phone_esim_defaults_set))
+        .route("/phones/{id}/api/wifi", get(phone_wifi_status).put(phone_wifi_set_enabled))
+        .route("/phones/{id}/api/sims", get(phone_esim_profiles))
+        .route("/phones/{id}/api/sims/install", post(phone_esim_install))
+        .route("/phones/{id}/api/sims/delete", post(phone_esim_delete))
+        .route("/phones/{id}/api/sims/switch", post(phone_esim_switch))
+        .route("/phones/{id}/api/sims/enable", post(phone_esim_enable))
+        .route("/phones/{id}/api/sims/defaults", get(phone_esim_defaults_get).put(phone_esim_defaults_set))
+        .route("/phones/{id}/api/apns", get(phone_apns_list).post(phone_apns_create))
+        .route("/phones/{id}/api/apns/enabled", get(phone_apns_enabled).put(phone_apns_set_enabled))
+        .route("/phones/{id}/api/apns/{apn_id}", put(phone_apns_update).delete(phone_apns_delete))
         .route("/phones/{id}/api/factory-reset", post(phone_factory_reset))
         .route("/phones/{id}/api/open", post(phone_open))
         .route("/phones/{id}/api/record/start", post(phone_record_start))
@@ -358,6 +383,35 @@ async fn phone_apps_install(
     apps::install_handler(&ps.config.adb_serial, body).await
 }
 
+async fn phone_wifi_status(
+    State(state): State<Arc<AppState>>, Path(id): Path<String>,
+) -> Result<Json<wifi::WifiStatus>, ApiError> {
+    let ps = extract_phone(State(state.clone()), Path(id)).await?;
+    let desired_enabled = {
+        let configs = state.local_config.read().await;
+        crate::local_config::get_or_default(&configs, &ps.config.adb_serial).wifi_enabled
+    };
+    wifi::status_handler(&ps.config.adb_serial, desired_enabled).await
+}
+
+async fn phone_wifi_set_enabled(
+    State(state): State<Arc<AppState>>, Path(id): Path<String>,
+    Json(body): Json<wifi::SetWifiEnabledBody>,
+) -> Result<Json<wifi::WifiStatus>, ApiError> {
+    let ps = extract_phone(State(state.clone()), Path(id)).await?;
+    let serial = ps.config.adb_serial.clone();
+    let configs = {
+        let mut configs = state.local_config.write().await;
+        configs.entry(serial).or_default().wifi_enabled = body.enabled;
+        configs.clone()
+    };
+    crate::local_config::save(&state.local_config_path, &configs)
+        .await
+        .map_err(|e| ApiError::Adb(format!("save local config: {e}")))?;
+
+    wifi::set_enabled_handler(ps, body.enabled).await
+}
+
 async fn phone_esim_profiles(
     State(state): State<Arc<AppState>>, Path(id): Path<String>,
     query: axum::extract::Query<esim::ListProfilesQuery>,
@@ -411,6 +465,51 @@ async fn phone_esim_defaults_set(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let ps = extract_phone(State(state), Path(id)).await?;
     esim::defaults_set_handler(&ps.config.adb_serial, body).await
+}
+
+async fn phone_apns_list(
+    State(state): State<Arc<AppState>>, Path(id): Path<String>,
+) -> Result<Json<Vec<apns::ApnOverride>>, ApiError> {
+    let ps = extract_phone(State(state), Path(id)).await?;
+    apns::list_handler(&ps.config.adb_serial).await
+}
+
+async fn phone_apns_create(
+    State(state): State<Arc<AppState>>, Path(id): Path<String>,
+    body: Json<apns::ApnBody>,
+) -> Result<Json<apns::ApnOverride>, ApiError> {
+    let ps = extract_phone(State(state), Path(id)).await?;
+    apns::create_handler(&ps.config.adb_serial, body).await
+}
+
+async fn phone_apns_update(
+    State(state): State<Arc<AppState>>, Path((id, apn_id)): Path<(String, i32)>,
+    body: Json<apns::ApnBody>,
+) -> Result<Json<apns::ApnOverride>, ApiError> {
+    let ps = extract_phone(State(state), Path(id)).await?;
+    apns::update_handler(&ps.config.adb_serial, apn_id, body).await
+}
+
+async fn phone_apns_delete(
+    State(state): State<Arc<AppState>>, Path((id, apn_id)): Path<(String, i32)>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let ps = extract_phone(State(state), Path(id)).await?;
+    apns::delete_handler(&ps.config.adb_serial, apn_id).await
+}
+
+async fn phone_apns_enabled(
+    State(state): State<Arc<AppState>>, Path(id): Path<String>,
+) -> Result<Json<apns::ApnEnabled>, ApiError> {
+    let ps = extract_phone(State(state), Path(id)).await?;
+    apns::enabled_handler(&ps.config.adb_serial).await
+}
+
+async fn phone_apns_set_enabled(
+    State(state): State<Arc<AppState>>, Path(id): Path<String>,
+    body: Json<apns::SetApnEnabledBody>,
+) -> Result<Json<apns::ApnEnabled>, ApiError> {
+    let ps = extract_phone(State(state), Path(id)).await?;
+    apns::set_enabled_handler(&ps.config.adb_serial, body).await
 }
 
 async fn phone_factory_reset(

@@ -33,7 +33,7 @@ export async function getHostClient(opts: {
     const phoneId = resolved.activePhone;
     if (!phoneId) {
       throw new Error(
-        "No active phone. Set OTACON_PHONE, pass --phone, or run `otacon phone use <id>`"
+        "No active phone. Set OTACON_PHONE, pass --phone, or run `otacon phones use <id>`"
       );
     }
 

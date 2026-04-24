@@ -1,9 +1,11 @@
 import { Command } from "commander";
 import { resolveConfig, loadConfig, saveConfig } from "../config.js";
-import { RegistryClient } from "../registry-client.js";
+import { RegistryClient, type PhoneConfig } from "../registry-client.js";
 import { printList, printDetail, colorStatus } from "../format.js";
 
-function getRegistryClient(opts: { registry?: string }): RegistryClient {
+type ParentOpts = { registry?: string; phone?: string };
+
+function getRegistryClient(opts: ParentOpts): RegistryClient {
   const resolved = resolveConfig({ registry: opts.registry });
   if (!resolved.registryUrl || !resolved.token) {
     console.error("Not registered. Run `otacon auth register` first.");
@@ -12,8 +14,27 @@ function getRegistryClient(opts: { registry?: string }): RegistryClient {
   return new RegistryClient(resolved.registryUrl, resolved.token);
 }
 
-export function phoneCommands(parentOpts: () => { registry?: string }): Command {
-  const phone = new Command("phone").description("Phone management");
+function resolvePhoneId(parentOpts: () => ParentOpts, explicitId?: string): string {
+  if (explicitId) return explicitId;
+  const opts = parentOpts();
+  const resolved = resolveConfig({ registry: opts.registry, phone: opts.phone });
+  if (!resolved.activePhone) {
+    console.error("No phone specified. Pass an ID or run `otacon phones use <id>`");
+    process.exit(1);
+  }
+  return resolved.activePhone;
+}
+
+function desired(value: unknown): string {
+  if (value === null || value === undefined) return "-";
+  return value ? "on" : "off";
+}
+
+export function phoneCommands(
+  parentOpts: () => ParentOpts,
+  name = "phones"
+): Command {
+  const phone = new Command(name).description("Phone management");
 
   phone
     .command("list")
@@ -39,6 +60,7 @@ export function phoneCommands(parentOpts: () => { registry?: string }): Command 
         { header: "MODEL", get: (p) => p.model },
         { header: "SERIAL", get: (p) => p.adb_serial },
         { header: "STATUS", get: (p) => colorStatus(p.status) },
+        { header: "BT", get: (p) => desired(p.config?.bluetooth_enabled) },
         { header: "HOST", get: (p) => p.host_id },
         { header: "ADAPTER", get: (p) => p.adapter_mac },
       ], { json: opts.json });
@@ -66,17 +88,44 @@ export function phoneCommands(parentOpts: () => { registry?: string }): Command 
     });
 
   phone
+    .command("status")
+    .description("Show registry status and Bluetooth pairing policy for a phone")
+    .argument("[id]", "phone ID (defaults to active phone)")
+    .option("--json", "output as JSON")
+    .action(async (id: string | undefined, opts: { json?: boolean }) => {
+      const phoneId = resolvePhoneId(parentOpts, id);
+      const client = getRegistryClient(parentOpts());
+      const detail = await client.getPhone(phoneId);
+      if (opts.json) {
+        printDetail(detail, { json: true });
+        return;
+      }
+      const config = (detail.config ?? {}) as Partial<PhoneConfig>;
+      const host = (detail.host ?? null) as { id?: string; address?: string; api_port?: number } | null;
+      const sims = Array.isArray(detail.sims) ? detail.sims : [];
+      printDetail({
+        id: detail.id,
+        status: detail.status,
+        host: host?.id,
+        address: host?.address,
+        api_port: host?.api_port,
+        model: detail.model,
+        adb_serial: detail.adb_serial,
+        bluetooth_pairing: desired(config.bluetooth_enabled),
+        adapter_mac: detail.adapter_mac,
+        phone_number: detail.phone_number,
+        sims: sims.length,
+        updated_at: detail.updated_at,
+      });
+    });
+
+  phone
     .command("location")
     .description("Show host FQDN and port for a phone")
     .argument("[id]", "phone ID (defaults to active phone)")
     .option("--json", "output as JSON")
     .action(async (id: string | undefined, opts: { json?: boolean }) => {
-      const resolved = resolveConfig({ registry: parentOpts().registry });
-      const phoneId = id || resolved.activePhone;
-      if (!phoneId) {
-        console.error("No phone specified. Pass an ID or run `otacon phone use <id>`");
-        process.exit(1);
-      }
+      const phoneId = resolvePhoneId(parentOpts, id);
       const client = getRegistryClient(parentOpts());
       const detail = await client.getPhone(phoneId);
       const host = detail.host as { address?: string; api_port?: number } | null;
@@ -84,32 +133,6 @@ export function phoneCommands(parentOpts: () => { registry?: string }): Command 
         printDetail({ address: host.address, api_port: host.api_port }, { json: opts.json });
       } else {
         console.error(`Phone ${phoneId} has no connected host`);
-        process.exit(1);
-      }
-    });
-
-  phone
-    .command("config")
-    .description("Get or set phone config")
-    .argument("[action]", "get or set", "get")
-    .argument("[kv...]", "key=value pairs for set")
-    .action(async (action: string, kv: string[]) => {
-      const resolved = resolveConfig({ registry: parentOpts().registry });
-      const phoneId = resolved.activePhone;
-      if (!phoneId) {
-        console.error("No active phone. Run `otacon phone use <id>` first.");
-        process.exit(1);
-      }
-      const client = getRegistryClient(parentOpts());
-      if (action === "get" || action === "get") {
-        const detail = await client.getPhone(phoneId);
-        console.log(JSON.stringify(detail.config, null, 2));
-      } else if (action === "set" && kv.length > 0) {
-        // Not implemented yet — requires PUT to /phones/{id}/config
-        console.error("Config set not yet implemented via CLI");
-        process.exit(1);
-      } else {
-        console.error("Usage: otacon phone config [get|set <k=v>]");
         process.exit(1);
       }
     });

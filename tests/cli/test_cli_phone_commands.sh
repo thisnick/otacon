@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Test: CLI phone management commands against live registry.
-# Tests: otacon phone list, otacon phone use, otacon screenshot
+# Tests: otacon phones list, otacon phones use, otacon screenshot
 
 source "$(cd "$(dirname "$0")" && pwd)/helpers.sh"
 check_deps
@@ -21,37 +21,37 @@ registry_url = "$REGISTRY_URL"
 token = "$ADMIN_TOKEN"
 TOML
 
-# --- Test 1: phone list ---
+# --- Test 1: phones list ---
 echo ""
-echo "--- otacon phone list ---"
+echo "--- otacon phones list ---"
 LIST_OUTPUT=$(OTACON_CONFIG_DIR="$TEST_CONFIG_DIR" \
-    $OTACON_BIN phone list 2>&1 || true)
-observe "phone list output (first 10 lines):"
+    $OTACON_BIN phones list 2>&1 || true)
+observe "phones list output (first 10 lines):"
 echo "$LIST_OUTPUT" | head -10
 
 # Should list at least one phone (we have 4 real phones)
 if echo "$LIST_OUTPUT" | grep -qi "phone-\|phone_\|id\|model\|connected"; then
-    pass "phone list returns phone data"
+    pass "phones list returns phone data"
 else
-    fail "phone_list" "phone list did not return expected phone data"
+    fail "phones_list" "phones list did not return expected phone data"
 fi
 
-# --- Test 2: phone use ---
+# --- Test 2: phones use ---
 echo ""
-echo "--- otacon phone use phone-2 ---"
+echo "--- otacon phones use phone-2 ---"
 USE_OUTPUT=$(OTACON_CONFIG_DIR="$TEST_CONFIG_DIR" \
-    $OTACON_BIN phone use phone-2 2>&1 || true)
-observe "phone use output: $USE_OUTPUT"
+    $OTACON_BIN phones use phone-2 2>&1 || true)
+observe "phones use output: $USE_OUTPUT"
 
 # Verify it was set (check config file or whoami)
 WHOAMI_OUTPUT=$(OTACON_CONFIG_DIR="$TEST_CONFIG_DIR" \
     $OTACON_BIN auth whoami 2>&1 || true)
 if echo "$WHOAMI_OUTPUT" | grep -qi "phone-2"; then
-    pass "phone use phone-2 sets active phone"
+    pass "phones use phone-2 sets active phone"
 elif echo "$USE_OUTPUT" | grep -qi "phone-2\|active\|set\|selected"; then
-    pass "phone use phone-2 acknowledged"
+    pass "phones use phone-2 acknowledged"
 else
-    fail "phone_use" "phone use did not set active phone to phone-2"
+    fail "phones_use" "phones use did not set active phone to phone-2"
 fi
 
 # --- Test 3: screenshot with active phone ---
@@ -85,33 +85,33 @@ else
 fi
 rm -f "$SCREENSHOT_FILE"
 
-# --- Test 4: phone list with --connected filter ---
+# --- Test 4: phones list with --connected filter ---
 echo ""
-echo "--- otacon phone list --connected ---"
+echo "--- otacon phones list --connected ---"
 CONNECTED_OUTPUT=$(OTACON_CONFIG_DIR="$TEST_CONFIG_DIR" \
-    $OTACON_BIN phone list --connected 2>&1 || true)
-observe "phone list --connected output (first 5 lines):"
+    $OTACON_BIN phones list --connected 2>&1 || true)
+observe "phones list --connected output (first 5 lines):"
 echo "$CONNECTED_OUTPUT" | head -5
 
 # Should work (might show filtered list)
 if echo "$CONNECTED_OUTPUT" | grep -qi "phone\|connected\|id\|error\|unknown"; then
-    pass "phone list --connected runs"
+    pass "phones list --connected runs"
 else
-    observe "phone list --connected returned no parseable output (may be unimplemented)"
+    observe "phones list --connected returned no parseable output (may be unimplemented)"
 fi
 
-# --- Test 5: phone list --all ---
+# --- Test 5: phones list --all ---
 echo ""
-echo "--- otacon phone list --all ---"
+echo "--- otacon phones list --all ---"
 ALL_OUTPUT=$(OTACON_CONFIG_DIR="$TEST_CONFIG_DIR" \
-    $OTACON_BIN phone list --all 2>&1 || true)
-observe "phone list --all output (first 5 lines):"
+    $OTACON_BIN phones list --all 2>&1 || true)
+observe "phones list --all output (first 5 lines):"
 echo "$ALL_OUTPUT" | head -5
 
 if echo "$ALL_OUTPUT" | grep -qi "phone\|id\|model\|error\|unknown"; then
-    pass "phone list --all runs"
+    pass "phones list --all runs"
 else
-    observe "phone list --all returned no parseable output (may be unimplemented)"
+    observe "phones list --all returned no parseable output (may be unimplemented)"
 fi
 
 echo ""

@@ -2,11 +2,11 @@
     "openapi": "3.1.0",
     "info": {
         "title": "Otacon Phone Automation API",
-        "description": "REST API for controlling an Android phone connected to a Raspberry Pi.",
+        "description": "REST API for controlling Android phones connected to a Raspberry Pi.",
         "license": {
             "name": "MIT"
         },
-        "version": "1.0.0"
+        "version": "2.0.0"
     },
     "servers": [
         {
@@ -59,6 +59,175 @@
                                 "schema": {
                                     "$ref": "#/components/schemas/ErrorResponse"
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/apns": {
+            "get": {
+                "tags": [
+                    "APN"
+                ],
+                "operationId": "listApns",
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/ApnOverride"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "tags": [
+                    "APN"
+                ],
+                "operationId": "createApn",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/ApnBody"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApnOverride"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/apns/enabled": {
+            "get": {
+                "tags": [
+                    "APN"
+                ],
+                "operationId": "getApnsEnabled",
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApnEnabled"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "put": {
+                "tags": [
+                    "APN"
+                ],
+                "operationId": "setApnsEnabled",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SetApnEnabledBody"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApnEnabled"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/apns/{apn_id}": {
+            "put": {
+                "tags": [
+                    "APN"
+                ],
+                "operationId": "updateApn",
+                "parameters": [
+                    {
+                        "name": "apn_id",
+                        "in": "path",
+                        "description": "Android override APN id",
+                        "required": true,
+                        "schema": {
+                            "type": "integer",
+                            "format": "int32"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/ApnBody"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ApnOverride"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "tags": [
+                    "APN"
+                ],
+                "operationId": "deleteApn",
+                "parameters": [
+                    {
+                        "name": "apn_id",
+                        "in": "path",
+                        "description": "Android override APN id",
+                        "required": true,
+                        "schema": {
+                            "type": "integer",
+                            "format": "int32"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
                             }
                         }
                     }
@@ -146,10 +315,7 @@
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "type": "array",
-                                    "items": {
-                                        "$ref": "#/components/schemas/App"
-                                    }
+                                    "$ref": "#/components/schemas/RunningApps"
                                 }
                             }
                         }
@@ -208,6 +374,96 @@
                             "application/json": {
                                 "schema": {
                                     "$ref": "#/components/schemas/OkResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/calls/answer": {
+            "post": {
+                "tags": [
+                    "Calls"
+                ],
+                "operationId": "answerCall",
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/OkResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/calls/dial": {
+            "post": {
+                "tags": [
+                    "Calls"
+                ],
+                "operationId": "dialCall",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/DialBody"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/OkResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/calls/hangup": {
+            "post": {
+                "tags": [
+                    "Calls"
+                ],
+                "operationId": "hangupCall",
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/OkResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/calls/status": {
+            "get": {
+                "tags": [
+                    "Calls"
+                ],
+                "operationId": "getCallStatus",
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallStatus"
                                 }
                             }
                         }
@@ -545,6 +801,198 @@
                 }
             }
         },
+        "/api/sims": {
+            "get": {
+                "tags": [
+                    "SIM"
+                ],
+                "operationId": "listEsimProfiles",
+                "parameters": [
+                    {
+                        "name": "all",
+                        "in": "query",
+                        "description": "Include historical (stale) physical SIM records",
+                        "required": false,
+                        "schema": {
+                            "type": "boolean"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "array",
+                                    "items": {
+                                        "$ref": "#/components/schemas/EsimProfile"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/sims/defaults": {
+            "get": {
+                "tags": [
+                    "SIM"
+                ],
+                "operationId": "getEsimDefaults",
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/EsimDefaults"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "put": {
+                "tags": [
+                    "SIM"
+                ],
+                "operationId": "setEsimDefaults",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SetDefaultsBody"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/sims/delete": {
+            "post": {
+                "tags": [
+                    "SIM"
+                ],
+                "operationId": "deleteEsimProfile",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/DeleteBody"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/sims/enable": {
+            "post": {
+                "tags": [
+                    "SIM"
+                ],
+                "operationId": "enableEsimProfile",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/EnableBody"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/sims/install": {
+            "post": {
+                "tags": [
+                    "SIM"
+                ],
+                "operationId": "installEsimProfile",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/InstallBody"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/sims/switch": {
+            "post": {
+                "tags": [
+                    "SIM"
+                ],
+                "operationId": "switchEsimProfile",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SwitchBody"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/sms/messages": {
             "post": {
                 "tags": [
@@ -654,6 +1102,54 @@
                     }
                 }
             }
+        },
+        "/api/wifi": {
+            "get": {
+                "tags": [
+                    "WiFi"
+                ],
+                "operationId": "getWifiStatus",
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/WifiStatus"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "put": {
+                "tags": [
+                    "WiFi"
+                ],
+                "operationId": "setWifiEnabled",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SetWifiEnabledBody"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/WifiStatus"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     },
     "components": {
@@ -661,17 +1157,7 @@
             "A11yNode": {
                 "type": "object",
                 "required": [
-                    "class",
-                    "clickable",
-                    "checkable",
-                    "checked",
-                    "focusable",
-                    "focused",
-                    "scrollable",
-                    "enabled",
-                    "selected",
-                    "long_clickable",
-                    "children"
+                    "class"
                 ],
                 "properties": {
                     "bounds": {
@@ -939,6 +1425,164 @@
                     }
                 ]
             },
+            "ApnBody": {
+                "type": "object",
+                "properties": {
+                    "apn": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "authType": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "entryName": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "mmsPort": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ],
+                        "format": "int32"
+                    },
+                    "mmsProxy": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "mmsc": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "operatorNumeric": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "password": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "protocol": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "roamingProtocol": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "types": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "user": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    }
+                }
+            },
+            "ApnEnabled": {
+                "type": "object",
+                "required": [
+                    "enabled"
+                ],
+                "properties": {
+                    "enabled": {
+                        "type": "boolean"
+                    }
+                }
+            },
+            "ApnOverride": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "entryName",
+                    "apnName",
+                    "operatorNumeric",
+                    "types",
+                    "protocol",
+                    "roamingProtocol",
+                    "authType",
+                    "enabled"
+                ],
+                "properties": {
+                    "apnName": {
+                        "type": "string"
+                    },
+                    "authType": {
+                        "type": "string"
+                    },
+                    "enabled": {
+                        "type": "boolean"
+                    },
+                    "entryName": {
+                        "type": "string"
+                    },
+                    "id": {
+                        "type": "integer",
+                        "format": "int32"
+                    },
+                    "mmsPort": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ],
+                        "format": "int32"
+                    },
+                    "mmsProxy": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "mmsc": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "operatorNumeric": {
+                        "type": "string"
+                    },
+                    "protocol": {
+                        "type": "string"
+                    },
+                    "roamingProtocol": {
+                        "type": "string"
+                    },
+                    "types": {
+                        "type": "string"
+                    },
+                    "user": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    }
+                }
+            },
             "App": {
                 "type": "object",
                 "required": [
@@ -953,6 +1597,22 @@
                     },
                     "package": {
                         "type": "string"
+                    },
+                    "version_code": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ],
+                        "format": "int64",
+                        "description": "Monotonic Android versionCode (e.g. 9270000)",
+                        "minimum": 0
+                    },
+                    "version_name": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "description": "Human versionName (e.g. \"9.27.0\"). Only populated when explicitly requested\n(uses `dumpsys package <pkg>` per-app, which is slow)."
                     }
                 }
             },
@@ -980,6 +1640,31 @@
                     "y2": {
                         "type": "integer",
                         "format": "int32"
+                    }
+                }
+            },
+            "CallStatus": {
+                "type": "object",
+                "required": [
+                    "state"
+                ],
+                "properties": {
+                    "duration": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ],
+                        "format": "int64",
+                        "minimum": 0
+                    },
+                    "number": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
+                    },
+                    "state": {
+                        "type": "string"
                     }
                 }
             },
@@ -1014,12 +1699,30 @@
                     }
                 }
             },
+            "DeleteBody": {
+                "type": "object",
+                "required": [
+                    "subId"
+                ],
+                "properties": {
+                    "subId": {
+                        "type": "integer",
+                        "format": "int64"
+                    }
+                }
+            },
             "DeviceInfo": {
                 "type": "object",
                 "description": "Device metadata and connection status",
                 "required": [
                     "bridge",
-                    "snapshot_server"
+                    "snapshot_server",
+                    "adb_serial",
+                    "bt_connected",
+                    "vnc_port",
+                    "screen_state",
+                    "wifi",
+                    "stats"
                 ],
                 "properties": {
                     "activity": {
@@ -1029,15 +1732,61 @@
                         ],
                         "description": "Current foreground activity"
                     },
+                    "adapter_mac": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "description": "Assigned BT dongle MAC on the host"
+                    },
+                    "adb_serial": {
+                        "type": "string",
+                        "description": "ADB serial of this phone"
+                    },
                     "bridge": {
                         "type": "boolean",
                         "description": "Device owner app connected"
+                    },
+                    "bt_connected": {
+                        "type": "boolean",
+                        "description": "Whether the phone is currently BT-connected to its assigned dongle"
+                    },
+                    "eid": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "description": "EID (eUICC Identifier) for eSIM"
+                    },
+                    "imei": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "description": "IMEI (International Mobile Equipment Identity) \u2014 slot 0"
+                    },
+                    "imei2": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "description": "IMEI for second SIM slot (dual-SIM devices)"
                     },
                     "model": {
                         "type": [
                             "string",
                             "null"
                         ]
+                    },
+                    "monitor": {
+                        "description": "Fleet-agent monitor status (setup progress, health, heals)"
+                    },
+                    "phone_bt_mac": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "description": "Phone's BT MAC (if known from pairing)"
                     },
                     "phone_number": {
                         "type": [
@@ -1053,15 +1802,60 @@
                         ],
                         "description": "e.g. \"1080x2316\""
                     },
+                    "screen_state": {
+                        "type": "string",
+                        "description": "Current screen state \u2014 agents should check this before issuing\nper-phone actions like screenshot/tap/etc.\nValues: \"unlocked\", \"locked\", \"asleep\", \"dozing\", \"dreaming\", \"unknown\""
+                    },
                     "snapshot_server": {
                         "type": "boolean",
                         "description": "Snapshot server (app_process) connected"
+                    },
+                    "stats": {
+                        "$ref": "#/components/schemas/PhoneStats",
+                        "description": "Lightweight system stats (CPU/mem/battery/temp)"
+                    },
+                    "vnc_port": {
+                        "type": "integer",
+                        "format": "int32",
+                        "description": "VNC port on the host that proxies this phone's screen\n(connect with vnc://{host_address}:{vnc_port})",
+                        "minimum": 0
+                    },
+                    "wifi": {
+                        "$ref": "#/components/schemas/WifiStatus",
+                        "description": "WiFi connection state"
                     },
                     "window": {
                         "type": [
                             "string",
                             "null"
                         ]
+                    }
+                }
+            },
+            "DialBody": {
+                "type": "object",
+                "required": [
+                    "number"
+                ],
+                "properties": {
+                    "number": {
+                        "type": "string"
+                    }
+                }
+            },
+            "EnableBody": {
+                "type": "object",
+                "required": [
+                    "subId",
+                    "enabled"
+                ],
+                "properties": {
+                    "enabled": {
+                        "type": "boolean"
+                    },
+                    "subId": {
+                        "type": "integer",
+                        "format": "int64"
                     }
                 }
             },
@@ -1072,6 +1866,90 @@
                 ],
                 "properties": {
                     "error": {
+                        "type": "string"
+                    }
+                }
+            },
+            "EsimDefaults": {
+                "type": "object",
+                "properties": {
+                    "dataSubId": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ],
+                        "format": "int64"
+                    },
+                    "smsSubId": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ],
+                        "format": "int64"
+                    },
+                    "voiceSubId": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ],
+                        "format": "int64"
+                    }
+                }
+            },
+            "EsimProfile": {
+                "type": "object",
+                "required": [
+                    "subId",
+                    "iccid",
+                    "carrier",
+                    "slot",
+                    "embedded",
+                    "enabled",
+                    "status",
+                    "isDefault"
+                ],
+                "properties": {
+                    "carrier": {
+                        "type": "string"
+                    },
+                    "embedded": {
+                        "type": "boolean"
+                    },
+                    "enabled": {
+                        "type": "boolean",
+                        "description": "Currently active on a SIM slot (slot >= 0 && apps enabled)"
+                    },
+                    "historical": {
+                        "type": "boolean",
+                        "description": "True for stale physical SIM records (only present when ?all=true)"
+                    },
+                    "iccid": {
+                        "type": "string"
+                    },
+                    "isDefault": {
+                        "type": "boolean"
+                    },
+                    "slot": {
+                        "type": "integer",
+                        "format": "int64"
+                    },
+                    "status": {
+                        "type": "string",
+                        "description": "Status string: \"active\" (enabled, on a slot), \"disabled\" (installed\nbut not active), or \"historical\" (stale subscription record from a\npreviously-inserted physical SIM, only shown with ?all=true)"
+                    },
+                    "subId": {
+                        "type": "integer",
+                        "format": "int64"
+                    }
+                }
+            },
+            "InstallBody": {
+                "type": "object",
+                "required": [
+                    "activationCode"
+                ],
+                "properties": {
+                    "activationCode": {
                         "type": "string"
                     }
                 }
@@ -1185,6 +2063,51 @@
                     }
                 }
             },
+            "PhoneStats": {
+                "type": "object",
+                "properties": {
+                    "battery_pct": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ],
+                        "format": "int32",
+                        "minimum": 0
+                    },
+                    "cpu_pct": {
+                        "type": [
+                            "number",
+                            "null"
+                        ],
+                        "format": "float",
+                        "description": "Approximate CPU usage percent across all cores (0-100, normalized)"
+                    },
+                    "mem_total_mb": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ],
+                        "format": "int32",
+                        "minimum": 0
+                    },
+                    "mem_used_mb": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ],
+                        "format": "int32",
+                        "minimum": 0
+                    },
+                    "temp_c": {
+                        "type": [
+                            "number",
+                            "null"
+                        ],
+                        "format": "float",
+                        "description": "CPU temp in Celsius (if readable)"
+                    }
+                }
+            },
             "PinchParams": {
                 "type": "object",
                 "required": [
@@ -1249,6 +2172,26 @@
                     }
                 }
             },
+            "RunningApps": {
+                "type": "object",
+                "required": [
+                    "apps",
+                    "screen_state"
+                ],
+                "properties": {
+                    "apps": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/App"
+                        },
+                        "description": "List of running/foreground apps (empty when phone is asleep)"
+                    },
+                    "screen_state": {
+                        "type": "string",
+                        "description": "Current screen state \u2014 explains an empty `apps` list\n(asleep/dozing/dreaming \u2192 can't enumerate; unlocked \u2192 genuinely no apps)\nSee /api/info screen_state docs for the full enum."
+                    }
+                }
+            },
             "ScrollParams": {
                 "type": "object",
                 "required": [
@@ -1276,6 +2219,17 @@
                     }
                 }
             },
+            "SetApnEnabledBody": {
+                "type": "object",
+                "required": [
+                    "enabled"
+                ],
+                "properties": {
+                    "enabled": {
+                        "type": "boolean"
+                    }
+                }
+            },
             "SetClipboardBody": {
                 "type": "object",
                 "required": [
@@ -1284,6 +2238,32 @@
                 "properties": {
                     "text": {
                         "type": "string"
+                    }
+                }
+            },
+            "SetDefaultsBody": {
+                "type": "object",
+                "properties": {
+                    "dataSubId": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ],
+                        "format": "int64"
+                    },
+                    "smsSubId": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ],
+                        "format": "int64"
+                    },
+                    "voiceSubId": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ],
+                        "format": "int64"
                     }
                 }
             },
@@ -1301,6 +2281,17 @@
                     "text": {
                         "type": "string",
                         "description": "Text to set (full Unicode support)"
+                    }
+                }
+            },
+            "SetWifiEnabledBody": {
+                "type": "object",
+                "required": [
+                    "enabled"
+                ],
+                "properties": {
+                    "enabled": {
+                        "type": "boolean"
                     }
                 }
             },
@@ -1362,7 +2353,7 @@
                     "max_duration": {
                         "type": "integer",
                         "format": "int32",
-                        "description": "Max recording duration in seconds (default 30, max 180)",
+                        "description": "Max recording duration in seconds (default 300, max 600)",
                         "minimum": 0
                     }
                 }
@@ -1397,6 +2388,18 @@
                     "y2": {
                         "type": "integer",
                         "format": "int32"
+                    }
+                }
+            },
+            "SwitchBody": {
+                "type": "object",
+                "required": [
+                    "subId"
+                ],
+                "properties": {
+                    "subId": {
+                        "type": "integer",
+                        "format": "int64"
                     }
                 }
             },
@@ -1437,6 +2440,39 @@
                     "text": {
                         "type": "string",
                         "description": "Text to type (ASCII only, via ADB input)"
+                    }
+                }
+            },
+            "WifiStatus": {
+                "type": "object",
+                "required": [
+                    "enabled",
+                    "connected",
+                    "desired_enabled"
+                ],
+                "properties": {
+                    "connected": {
+                        "type": "boolean"
+                    },
+                    "desired_enabled": {
+                        "type": "boolean",
+                        "description": "Persisted host-local desired state for this phone."
+                    },
+                    "enabled": {
+                        "type": "boolean"
+                    },
+                    "rssi": {
+                        "type": [
+                            "integer",
+                            "null"
+                        ],
+                        "format": "int32"
+                    },
+                    "ssid": {
+                        "type": [
+                            "string",
+                            "null"
+                        ]
                     }
                 }
             }
