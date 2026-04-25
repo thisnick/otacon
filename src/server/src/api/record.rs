@@ -11,7 +11,7 @@ use utoipa::ToSchema;
 use crate::phone::PhoneState;
 
 const RECORD_PATH: &str = "/tmp/otacon_rec.mp4";
-const MAX_DURATION_LIMIT: u32 = 600;
+const MAX_DURATION_LIMIT: u32 = 3600;
 const DEFAULT_MAX_DURATION: u32 = 300;
 
 pub struct RecordingInfo {
@@ -57,7 +57,13 @@ pub async fn start_handler(
     state: Arc<PhoneState>,
     Json(body): Json<StartRecordBody>,
 ) -> Result<Json<serde_json::Value>, Response> {
-    let max_duration = body.max_duration.min(MAX_DURATION_LIMIT);
+    if body.max_duration > MAX_DURATION_LIMIT {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error": format!("max_duration {} exceeds limit of {}s", body.max_duration, MAX_DURATION_LIMIT)})),
+        ).into_response());
+    }
+    let max_duration = body.max_duration;
 
     let mut guard = state.recording.lock().await;
     if let Some(ref mut info) = *guard {

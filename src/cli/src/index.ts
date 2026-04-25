@@ -212,7 +212,8 @@ program
   .argument("<x2>", "end x")
   .argument("<y2>", "end y")
   .option("-d, --duration <ms>", "duration in ms", "300")
-  .action(async (x1: string, y1: string, x2: string, y2: string, opts: { duration: string }) => {
+  .option("-p, --pause <ms>", "pause ms at end before release (prevents fling, useful for spinners)", "0")
+  .action(async (x1: string, y1: string, x2: string, y2: string, opts: { duration: string; pause: string }) => {
     const client = await getClient();
     await client.action({
       action: "swipe",
@@ -221,6 +222,7 @@ program
       x2: parseInt(x2),
       y2: parseInt(y2),
       duration_ms: parseInt(opts.duration),
+      pause_ms: parseInt(opts.pause),
     });
   });
 

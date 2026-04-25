@@ -41,6 +41,11 @@ pub struct SwipeParams {
     /// Duration in ms (default 300)
     #[serde(default = "default_swipe_duration")]
     duration_ms: u32,
+    /// Pause in ms at end position before releasing (default 0).
+    /// Non-zero enables drag mode via sendevent which prevents
+    /// fling/momentum — useful for spinners and pickers.
+    #[serde(default)]
+    pause_ms: u32,
 }
 
 fn default_swipe_duration() -> u32 {
@@ -272,11 +277,154 @@ async fn resolve_ref(state: &Arc<PhoneState>, ref_id: &str) -> Result<RefInfo, A
 }
 
 async fn handle_swipe(serial: &str, p: SwipeParams) -> Result<(), ApiError> {
+    if p.pause_ms > 0 {
+        return handle_drag(serial, &p).await;
+    }
     adb_shell(serial, &format!(
         "input swipe {} {} {} {} {}",
         p.x1, p.y1, p.x2, p.y2, p.duration_ms
     ))
     .await?;
+    Ok(())
+}
+
+// --- Drag gesture (sendevent-based swipe with pause before release) ---
+
+struct TouchDeviceInfo {
+    device_path: String,
+    max_x: i32,
+    max_y: i32,
+}
+
+/// Discover the touch input device path and coordinate ranges via `getevent -pl`.
+async fn discover_touch_device(serial: &str) -> Result<TouchDeviceInfo, ApiError> {
+    let output = adb_shell(serial, "getevent -pl").await?;
+
+    let mut current_device: Option<String> = None;
+    let mut found_x: Option<i32> = None;
+    let mut found_y: Option<i32> = None;
+
+    for line in output.lines() {
+        let trimmed = line.trim();
+
+        if trimmed.starts_with("add device") {
+            // Return previous device if it had both axes
+            if let (Some(ref dev), Some(mx), Some(my)) = (&current_device, found_x, found_y) {
+                return Ok(TouchDeviceInfo {
+                    device_path: dev.clone(),
+                    max_x: mx,
+                    max_y: my,
+                });
+            }
+            // "add device 1: /dev/input/event0"
+            if let Some(pos) = trimmed.find(": /dev/") {
+                current_device = Some(trimmed[pos + 2..].trim().to_string());
+            }
+            found_x = None;
+            found_y = None;
+        } else if trimmed.contains("ABS_MT_POSITION_X") {
+            found_x = parse_getevent_max(trimmed);
+        } else if trimmed.contains("ABS_MT_POSITION_Y") {
+            found_y = parse_getevent_max(trimmed);
+        }
+    }
+
+    // Check last device
+    if let (Some(dev), Some(mx), Some(my)) = (current_device, found_x, found_y) {
+        return Ok(TouchDeviceInfo { device_path: dev, max_x: mx, max_y: my });
+    }
+
+    Err(ApiError::Adb("no touch device found via getevent -pl".into()))
+}
+
+/// Parse "max NNN" from a getevent -pl ABS line.
+fn parse_getevent_max(line: &str) -> Option<i32> {
+    for part in line.split(',') {
+        let part = part.trim();
+        if part.starts_with("max ") {
+            return part.split_whitespace().nth(1)?.parse().ok();
+        }
+    }
+    None
+}
+
+/// Get the logical screen size (override if set, else physical).
+async fn get_screen_size(serial: &str) -> Result<(i32, i32), ApiError> {
+    let output = adb_shell(serial, "wm size").await?;
+    let mut w = 0i32;
+    let mut h = 0i32;
+    for line in output.lines() {
+        if let Some(colon_pos) = line.find(':') {
+            let dims = line[colon_pos + 1..].trim();
+            if let Some((ws, hs)) = dims.split_once('x') {
+                if let (Ok(ww), Ok(hh)) = (ws.trim().parse::<i32>(), hs.trim().parse::<i32>()) {
+                    w = ww;
+                    h = hh;
+                }
+            }
+        }
+    }
+    if w == 0 || h == 0 {
+        return Err(ApiError::Adb(format!("failed to parse screen size from: {output}")));
+    }
+    Ok((w, h))
+}
+
+/// Drag gesture via sendevent: moves from start to end, then sends stationary
+/// touch events during the pause window to zero out the velocity tracker,
+/// preventing fling/momentum on release.
+async fn handle_drag(serial: &str, p: &SwipeParams) -> Result<(), ApiError> {
+    let touch = discover_touch_device(serial).await?;
+    let (screen_w, screen_h) = get_screen_size(serial).await?;
+
+    // Map screen coordinates to touch panel coordinates
+    let tx = |sx: i32| -> i64 { sx as i64 * touch.max_x as i64 / screen_w as i64 };
+    let ty = |sy: i32| -> i64 { sy as i64 * touch.max_y as i64 / screen_h as i64 };
+    let (tx1, ty1) = (tx(p.x1), ty(p.y1));
+    let (tx2, ty2) = (tx(p.x2), ty(p.y2));
+
+    let dev = &touch.device_path;
+    let steps = 10u32;
+    let step_delay = p.duration_ms as f64 / steps as f64 / 1000.0;
+
+    let mut parts: Vec<String> = Vec::new();
+
+    // DOWN
+    parts.push(format!("sendevent {dev} 3 57 0"));     // ABS_MT_TRACKING_ID
+    parts.push(format!("sendevent {dev} 3 53 {tx1}")); // ABS_MT_POSITION_X
+    parts.push(format!("sendevent {dev} 3 54 {ty1}")); // ABS_MT_POSITION_Y
+    parts.push(format!("sendevent {dev} 1 330 1"));    // BTN_TOUCH DOWN
+    parts.push(format!("sendevent {dev} 0 0 0"));      // SYN_REPORT
+
+    // MOVE: interpolate from start to end
+    for i in 1..=steps {
+        let t = i as f64 / steps as f64;
+        let x = tx1 + ((tx2 - tx1) as f64 * t) as i64;
+        let y = ty1 + ((ty2 - ty1) as f64 * t) as i64;
+        parts.push(format!("sleep {step_delay:.4}"));
+        parts.push(format!("sendevent {dev} 3 53 {x}"));
+        parts.push(format!("sendevent {dev} 3 54 {y}"));
+        parts.push(format!("sendevent {dev} 0 0 0"));
+    }
+
+    // SETTLE: stationary events to zero out velocity tracker
+    let settle_steps = 3u32;
+    let settle_delay = p.pause_ms as f64 / settle_steps as f64 / 1000.0;
+    for _ in 0..settle_steps {
+        parts.push(format!("sleep {settle_delay:.4}"));
+        parts.push(format!("sendevent {dev} 3 53 {tx2}"));
+        parts.push(format!("sendevent {dev} 3 54 {ty2}"));
+        parts.push(format!("sendevent {dev} 0 0 0"));
+    }
+
+    // UP
+    parts.push(format!("sendevent {dev} 3 57 -1")); // ABS_MT_TRACKING_ID = -1
+    parts.push(format!("sendevent {dev} 1 330 0"));  // BTN_TOUCH UP
+    parts.push(format!("sendevent {dev} 0 0 0"));    // SYN_REPORT
+
+    let cmd = parts.join(";");
+    adb_shell(serial, &cmd).await?;
+
     Ok(())
 }
 

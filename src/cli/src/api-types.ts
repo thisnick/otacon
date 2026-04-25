@@ -921,6 +921,11 @@ export interface components {
              * @description Duration in ms (default 300)
              */
             duration_ms?: number;
+            /**
+             * Format: int32
+             * @description Pause in ms at end position before releasing (default 0). Non-zero enables drag mode via sendevent which prevents fling/momentum — useful for spinners and pickers.
+             */
+            pause_ms?: number;
             /** Format: int32 */
             x1: number;
             /** Format: int32 */
