@@ -102,26 +102,35 @@ pnpm cli type "119103"
 **Example: Set birthday to 1985/02/18 from 2026/04/24**
 
 ```bash
-# Year: 2026 → 1985 = decrease 41 years ≈ 4 swipes (100px each)
-for i in {1..4}; do
+# STEP 1: Take initial screenshot to verify current values
+pnpm cli screenshot -o /tmp/birthday_start.png
+# (Read the screenshot to confirm current date)
+
+# STEP 2: Calculate exact swipes needed for each field
+# Year: 2026 → 1985 = decrease 41 years = 41 swipes down
+# Month: 04 → 02 = decrease 2 months = 2 swipes down  
+# Day: 24 → 18 = decrease 6 days = 6 swipes down
+
+# STEP 3: Set year with verification after
+for i in {1..41}; do
   pnpm cli swipe 284 1113 284 1213 --pause 300
   sleep 0.3
 done
+pnpm cli screenshot -o /tmp/birthday_year_check.png  # Verify year is 1985
 
-# Month: 04 → 02 = decrease 2 months = 2 swipes
+# STEP 4: Set month with verification after
 for i in {1..2}; do
   pnpm cli swipe 534 1113 534 1213 --pause 300
   sleep 0.3
 done
+pnpm cli screenshot -o /tmp/birthday_month_check.png  # Verify month is 02
 
-# Day: 24 → 18 = decrease 6 days = 6 swipes
+# STEP 5: Set day with verification after
 for i in {1..6}; do
   pnpm cli swipe 790 1113 790 1213 --pause 300
   sleep 0.3
 done
-
-# Verify with screenshot
-pnpm cli screenshot -o /tmp/birthday_check.png
+pnpm cli screenshot -o /tmp/birthday_final_check.png  # Verify day is 18
 ```
 
 **Momentum warning**: Long swipes have momentum and can overshoot. Use short 100px swipes with `--pause 300` (300ms) between each swipe.
@@ -458,14 +467,25 @@ pnpm cli type "$SMS_CODE"
 sleep 2
 
 # Birthday selection (example: 1985/02/18)
-# Year: swipe down 4 times (100px each)
-for i in {1..4}; do pnpm cli swipe 284 1113 284 1213 --pause 300; sleep 0.3; done
+# STEP 1: Take initial screenshot to verify current date
+pnpm cli screenshot -o /tmp/birthday_start.png
 
-# Month: swipe down 2 times
+# STEP 2: Calculate exact swipes needed
+# Year: 2026 → 1985 = decrease 41 = 41 swipes down
+# Month: 04 → 02 = decrease 2 = 2 swipes down
+# Day: 24 → 18 = decrease 6 = 6 swipes down
+
+# STEP 3: Set year with verification
+for i in {1..41}; do pnpm cli swipe 284 1113 284 1213 --pause 300; sleep 0.3; done
+pnpm cli screenshot -o /tmp/birthday_year_check.png  # Verify year is 1985
+
+# STEP 4: Set month with verification
 for i in {1..2}; do pnpm cli swipe 534 1113 534 1213 --pause 300; sleep 0.3; done
+pnpm cli screenshot -o /tmp/birthday_month_check.png  # Verify month is 02
 
-# Day: swipe down 6 times
+# STEP 5: Set day with verification
 for i in {1..6}; do pnpm cli swipe 790 1113 790 1213 --pause 300; sleep 0.3; done
+pnpm cli screenshot -o /tmp/birthday_final_check.png  # Verify day is 18
 
 sleep 2
 
@@ -519,7 +539,7 @@ echo "Xiaohongshu setup complete!"
 
 3. **Use screenshot + snapshot together** - screenshots help visualize what you're targeting; snapshots provide ref IDs.
 
-4. **Momentum swipes overshoot** - use 100px swipes with `--pause 300` (milliseconds!) for date pickers.
+4. **Date picker verification pattern**: Take screenshot AFTER completing each field (year, then month, then day) — never assume the calculation was perfect without verification
 
 5. **Like button pattern** - Look for LinearLayout immediately AFTER "Say something..." FrameLayout in right sidebar.
 
@@ -556,10 +576,10 @@ echo "Xiaohongshu setup complete!"
 
 ### Date Picker Overshoot
 
-- Use short 100px swipes only
-- Add `--pause 300` (300 milliseconds) between swipes
-- Count exact values needed (not estimate)
-- Verify with screenshot after each batch
+- **Use the calculate-then-verify pattern**: Count exact swipes needed, then screenshot to verify
+- Verify AFTER each field (year, month, day) — don't wait until all fields are set
+- Use short 100px swipes with `--pause 300` (300ms) between each swipe
+- If you overshoot, count how many extra swipes and compensate with opposite-direction swipes
 
 ### Ref IDs Don't Work
 
