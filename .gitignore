@@ -40,3 +40,9 @@ nohup.out
 
 # Local-only working files (downloaded APKs, scratch, etc.)
 .local/
+
+# Orchestrator
+.workflow-data/
+.orchestrator-data/
+.orchestrator/
+dist/

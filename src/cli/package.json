@@ -3,6 +3,10 @@
   "version": "0.1.0",
   "description": "CLI for otacon phone automation",
   "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./client": "./src/client.ts"
+  },
   "bin": {
     "otacon": "./dist/index.js"
   },
