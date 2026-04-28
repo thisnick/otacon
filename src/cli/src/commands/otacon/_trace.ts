@@ -141,7 +141,11 @@ function inferAnnotation(verb: string, args: string[]): Annotation | undefined {
       };
     }
   }
-  if (verb === "key" || verb === "type" || verb === "set-text" || verb === "scroll" || verb === "open") {
+  if (
+    verb === "key" || verb === "type" || verb === "set-text" || verb === "scroll" ||
+    verb === "open" || verb === "apps" || verb === "call" || verb === "clipboard" ||
+    verb === "notifications" || verb === "record" || verb === "sms"
+  ) {
     return { type: "text", label: `${verb}: ${args.join(" ")}` };
   }
   return undefined;

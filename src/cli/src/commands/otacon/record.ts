@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import type { CommandSpec } from "./types.js";
+import { captureAnnotated } from "./_trace.js";
 
 export const record: CommandSpec = {
   name: "record",
@@ -7,8 +8,11 @@ export const record: CommandSpec = {
   usage: "otacon record <start [-d secs] | stop [-o path] | status>",
   examples: ["otacon record start -d 60", "otacon record stop -o /tmp/clip.mp4", "otacon record status"],
   isMutating: true,
-  async run(args, client) {
+  async run(args, client, env) {
     const sub = args[0];
+    if ((sub === "start" || sub === "stop") && env.OTACON_TRACE_DIR) {
+      await captureAnnotated(env.OTACON_TRACE_DIR, { verb: "record", args }, client);
+    }
     if (sub === "start") {
       let duration = 30;
       for (let i = 1; i < args.length; i++) {

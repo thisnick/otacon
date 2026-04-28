@@ -97,6 +97,20 @@ Surface tests of the `service` / `agent` / `inspect` groups via `--help`.
 Confirms old top-level commands (`run`, `add-account`, `status`, `logs`)
 remain available with deprecation notices for one phase.
 
+### test-playback-integration.ts — Trace → report regression (Phase A.2)
+
+```
+npx tsx tests/test-playback-integration.ts [--conversation <id>]
+```
+
+For each mutating bash tool call in a conversation's messages, asserts the
+inspect-generated markdown embeds `![](../traces/<toolCallId>/<png>)` and that
+the linked PNG file exists on disk under the blob root. Without `--conversation`,
+targets the most recent conversation. Does NOT spawn the orchestrator — expects
+a real agent run has already happened with at least one mutating verb. Pair
+with a fresh `agent run` to verify the full chain (bash tool wrapper → trace
+dir → blob path → report image link) on every release.
+
 ### test-e2e.ts — Full orchestrator E2E pipeline
 
 ```

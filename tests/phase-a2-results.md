@@ -341,8 +341,9 @@ the test confirms the markdown's image link resolves to the file on disk.
 - Bug #1: dual-ID system regression — RESOLVED. Verified.
 - Bug #2: `otacon info` leaked adb_serial — RESOLVED. Verified.
 - Bug #3: trace dir lands at wrong filesystem path — RESOLVED. Verified by final E2E.
+- Bug #4: 6 mutating verbs (apps/call/clipboard/notifications/record/sms) lacked trace capture — RESOLVED. Verified by post-fix XHS run: 4/4 mutating tool calls have inline PNGs.
 
-**No outstanding blockers. Phase A.2 ready for sign-off.**
+**No outstanding blockers. Phase A.2 SIGNED OFF.**
 
 ---
 
@@ -357,11 +358,34 @@ the test confirms the markdown's image link resolves to the file on disk.
 | test-trace-capture.ts | **20 / 20 PASS** |
 | test-inspect.ts | **27 / 27 PASS** |
 | test-cli-restructure.ts | **32 / 32 PASS** |
+| test-playback-integration.ts | **11 / 11 PASS** (fresh post-fix conversation) |
 | Manual E2E (provision → swipe → release → inspect report) | **PASS** — activity_log, trace PNG (19,412 B), markdown report all captured |
 
-**Total across automated suites: 205 / 205 PASS**
+**Total across automated suites: 216 / 216 PASS**
 
-**Phase A.2: SIGNED OFF.** All 28 verification criteria are PASS. Three bugs surfaced during evaluation, all fixed by implementer and verified by re-runs:
+**Phase A.2: SIGNED OFF.** All 28 verification criteria are PASS. Four bugs surfaced during evaluation, all fixed by implementer and verified by re-runs:
 - Bug #1 (dual-ID phone_id) — fixed
 - Bug #2 (otacon info adb_serial leak) — fixed
 - Bug #3 (trace dir wrong filesystem path) — fixed
+- Bug #4 (6 mutating verbs missing trace capture: apps/call/clipboard/notifications/record/sms) — fixed; trace coverage now 14/14 mutating verbs. Verified on conversation `01KQ9CKPAM4GHWW82G4C7P69HN` — `apps launch` (732,954 B) + 2× `swipe` (3,096,954 B + 2,081,031 B) + `apps stop` (2,760,623 B) all produced inline PNGs, integration test 17/17 PASS.
+
+---
+
+## Trace → report integration regression test
+
+Added `tests/test-playback-integration.ts` per team-lead request (post-sign-off).
+Stitches together the components verified in isolation by test-trace-capture.ts,
+test-inspect.ts, and test-e2e.ts. For every mutating bash tool call in a
+conversation's messages, asserts the inspect-generated markdown embeds an image
+link `![](../traces/<toolCallId>/<png>)` AND the linked PNG exists on disk.
+
+Verified against fresh conversation `01KQ9C66PD2NCERW8CQNFY183X`:
+- 4 bash tool calls, 2 mutating (swipe + key BACK)
+- Both produced PNGs in the report (751,437 B + 285,099 B)
+- All linked image paths resolved to real files
+- Report at `.orchestrator-data/blobs/conversations/01KQ9C66PD2NCERW8CQNFY183X/reports/2026-04-28T06-25-23.md`
+
+Note: An earlier conversation that pre-dated the Bug #3 fix had 5 mutating
+calls; only the 1 that ran post-fix had a trace at the correct path. The
+integration test correctly flags conversations whose mutating calls predate
+the fix — useful for spotting partial-trace conversations in the wild.

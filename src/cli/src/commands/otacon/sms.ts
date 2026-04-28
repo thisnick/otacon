@@ -1,4 +1,5 @@
 import type { CommandSpec } from "./types.js";
+import { captureAnnotated } from "./_trace.js";
 
 export const sms: CommandSpec = {
   name: "sms",
@@ -10,7 +11,7 @@ export const sms: CommandSpec = {
     'otacon sms send +12135551212 "hello"',
   ],
   isMutating: true,
-  async run(args, client) {
+  async run(args, client, env) {
     const sub = args[0] ?? "list";
     if (sub === "list") {
       const threads = await client.smsThreads();
@@ -23,6 +24,9 @@ export const sms: CommandSpec = {
       return JSON.stringify(msgs, null, 2);
     }
     if (sub === "send") {
+      if (env.OTACON_TRACE_DIR) {
+        await captureAnnotated(env.OTACON_TRACE_DIR, { verb: "sms", args }, client);
+      }
       const to = args[1];
       const body = args.slice(2).join(" ");
       if (!to || !body) throw new Error("usage: otacon sms send <to> <body>");

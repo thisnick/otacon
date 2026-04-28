@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import type { CommandSpec } from "./types.js";
+import { captureAnnotated } from "./_trace.js";
 
 export const apps: CommandSpec = {
   name: "apps",
@@ -13,7 +14,7 @@ export const apps: CommandSpec = {
     "otacon apps stop com.xingin.xhs",
   ],
   isMutating: true, // launch/stop/install mutate; list/running don't but conservative
-  async run(args, client) {
+  async run(args, client, env) {
     const sub = args[0] ?? "list";
     if (sub === "list") {
       const list = await client.apps();
@@ -22,6 +23,11 @@ export const apps: CommandSpec = {
     if (sub === "running") {
       const result = await client.appsRunning();
       return JSON.stringify(result, null, 2);
+    }
+    // Mutating subcommands: capture before action.
+    const isMutatingSub = sub === "launch" || sub === "stop" || sub === "install";
+    if (isMutatingSub && env.OTACON_TRACE_DIR) {
+      await captureAnnotated(env.OTACON_TRACE_DIR, { verb: "apps", args }, client);
     }
     if (sub === "launch") {
       const pkg = args[1];
