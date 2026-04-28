@@ -3,8 +3,6 @@
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
 import { Command, program } from "commander";
-import { readFileSync, writeFileSync } from "fs";
-import type { Action } from "./client.js";
 import { getHostClient } from "./host-client.js";
 import { authCommands } from "./commands/auth.js";
 import { regCommands } from "./commands/reg.js";
@@ -14,9 +12,10 @@ import { simCommands } from "./commands/phone-esim.js";
 import { apnCommands } from "./commands/phone-apns.js";
 import { hostCommands } from "./commands/host.js";
 import { dongleCommands } from "./commands/dongle.js";
-import { printDetail, printList } from "./format.js";
 import { clientCommands } from "./commands/client.js";
 import { wifiCommands } from "./commands/wifi.js";
+import { otaconRegistry } from "./commands/otacon/index.js";
+import { printDetail, printList } from "./format.js";
 
 program
   .name("otacon")
@@ -145,7 +144,7 @@ function printDeviceInfo(info: CliRecord): void {
   }
 }
 
-// ── Subcommand groups ─────────────────────────────────────────────
+// ── Subcommand groups (other CLI areas — unchanged) ─────────────────────
 
 const getParentOpts = () => program.opts() as { host?: string; phone?: string; registry?: string };
 
@@ -164,96 +163,80 @@ program.addCommand(wifiCommands(getParentOpts));
 program.addCommand(phoneCommands(getParentOpts));
 program.addCommand(phoneCommands(getParentOpts, "phone"), { hidden: true });
 
-// ── Top-level per-phone commands (daily use) ──────────────────────
+// ── Top-level per-phone commands — thin wrappers around the shared otacon registry ──
+//
+// Each commander command parses its argv, then forwards a normalized arg array
+// into the registry's run() so the orchestrator's defineCommand and the CLI
+// binary execute identical code.
+
+async function runRegistry(verb: string, args: string[]): Promise<void> {
+  const spec = otaconRegistry[verb];
+  if (!spec) throw new Error(`unknown otacon verb: ${verb}`);
+  const client = await getClient();
+  const out = await spec.run(args, client, process.env as Record<string, string | undefined>);
+  if (out) console.log(out);
+}
 
 // --- UI Actions ---
 
 program
   .command("tap")
-  .description("Tap at coordinates or element ref")
+  .description(otaconRegistry.tap.description)
   .argument("<target...>", 'coordinates "x y" or ref "e5"')
   .action(async (target: string[]) => {
-    const client = await getClient();
-    let action: Action;
-    if (target.length === 1 && target[0].match(/^e\d+$/)) {
-      action = { action: "tap", ref: target[0] };
-    } else if (target.length === 2) {
-      action = { action: "tap", x: parseInt(target[0]), y: parseInt(target[1]) };
-    } else {
-      console.error('Usage: otacon tap <x> <y> | otacon tap <ref>');
-      process.exit(1);
-    }
-    await client.action(action);
+    await runRegistry("tap", target);
   });
 
 program
   .command("long-tap")
-  .description("Long-tap at coordinates or element ref")
+  .description(otaconRegistry["long-tap"].description)
   .argument("<target...>", 'coordinates "x y" or ref "e5"')
   .action(async (target: string[]) => {
-    const client = await getClient();
-    let action: Action;
-    if (target.length === 1 && target[0].match(/^e\d+$/)) {
-      action = { action: "long_tap", ref: target[0] };
-    } else if (target.length === 2) {
-      action = { action: "long_tap", x: parseInt(target[0]), y: parseInt(target[1]) };
-    } else {
-      console.error('Usage: otacon long-tap <x> <y> | otacon long-tap <ref>');
-      process.exit(1);
-    }
-    await client.action(action);
+    await runRegistry("long-tap", target);
   });
 
 program
   .command("swipe")
-  .description("Swipe gesture")
+  .description(otaconRegistry.swipe.description)
   .argument("<x1>", "start x")
   .argument("<y1>", "start y")
   .argument("<x2>", "end x")
   .argument("<y2>", "end y")
   .option("-d, --duration <ms>", "duration in ms", "300")
-  .option("-p, --pause <ms>", "pause ms at end before release (prevents fling, useful for spinners)", "0")
+  .option("-p, --pause <ms>", "pause ms at end before release", "0")
   .action(async (x1: string, y1: string, x2: string, y2: string, opts: { duration: string; pause: string }) => {
-    const client = await getClient();
-    await client.action({
-      action: "swipe",
-      x1: parseInt(x1),
-      y1: parseInt(y1),
-      x2: parseInt(x2),
-      y2: parseInt(y2),
-      duration_ms: parseInt(opts.duration),
-      pause_ms: parseInt(opts.pause),
-    });
+    const args = [x1, y1, x2, y2];
+    if (opts.duration) args.push("--duration", opts.duration);
+    if (opts.pause && opts.pause !== "0") args.push("--pause", opts.pause);
+    await runRegistry("swipe", args);
   });
 
 program
   .command("key")
-  .description("Press a key (home, back, enter, etc.)")
+  .description(otaconRegistry.key.description)
   .argument("<name>", "key name or keycode")
   .action(async (name: string) => {
-    const client = await getClient();
-    await client.action({ action: "key", key: name });
+    await runRegistry("key", [name]);
   });
 
 program
   .command("type")
-  .description("Type text (via ADB input, ASCII only)")
+  .description(otaconRegistry.type.description)
   .argument("<text>", "text to type")
   .action(async (text: string) => {
-    const client = await getClient();
-    await client.action({ action: "type", text });
+    await runRegistry("type", [text]);
   });
 
 program
   .command("set-text")
-  .description("Set text on a focused element (supports Unicode)")
+  .description(otaconRegistry["set-text"].description)
   .argument("<ref>", "element ref (e.g. e5)")
   .argument("<text>", "text to set")
   .action(async (ref: string, text: string) => {
-    const client = await getClient();
-    await client.action({ action: "set_text", ref, text });
+    await runRegistry("set-text", [ref, text]);
   });
 
+// pinch is a separate verb still inlined here — not yet in the registry
 program
   .command("pinch")
   .description("Pinch gesture (zoom in/out)")
@@ -276,45 +259,38 @@ program
 
 program
   .command("scroll")
-  .description("Scroll a scrollable element")
+  .description(otaconRegistry.scroll.description)
   .argument("<ref>", "element ref (e.g. e5)")
   .option("--up", "scroll up (backward)")
   .action(async (ref: string, opts: { up?: boolean }) => {
-    const client = await getClient();
-    const action = opts.up ? "scroll_backward" : "scroll_forward";
-    await client.action({ action, ref });
+    const args = [ref];
+    if (opts.up) args.push("--direction", "up");
+    await runRegistry("scroll", args);
   });
 
 // --- Screen ---
 
 program
   .command("screenshot")
-  .description("Take a screenshot")
+  .description(otaconRegistry.screenshot.description)
   .option("-o, --output <path>", "output file path (default: screenshot.png)")
   .action(async (opts: { output?: string }) => {
-    const client = await getClient();
-    const png = await client.screenshot();
-    const outPath = opts.output || "screenshot.png";
-    writeFileSync(outPath, png);
-    console.error(`Saved to ${outPath}`);
+    const args: string[] = [];
+    args.push("-o", opts.output || "screenshot.png");
+    await runRegistry("screenshot", args);
   });
 
 program
   .command("snapshot")
-  .description("Get accessibility tree")
+  .description(otaconRegistry.snapshot.description)
   .option("--json", "output as JSON")
   .action(async (opts: { json?: boolean }) => {
-    const client = await getClient();
-    if (opts.json) {
-      const result = await client.snapshot("json");
-      console.log(JSON.stringify(result, null, 2));
-    } else {
-      const result = await client.snapshot("text");
-      console.log(result);
-    }
+    const args: string[] = [];
+    if (opts.json) args.push("--json");
+    await runRegistry("snapshot", args);
   });
 
-// --- SMS ---
+// --- SMS (richer formatting via printList — not routed through registry) ---
 
 const sms = program.command("sms").description("SMS commands");
 
@@ -356,8 +332,7 @@ sms
   .argument("<to>", "phone number")
   .argument("<body>", "message body")
   .action(async (to: string, body: string) => {
-    const client = await getClient();
-    await client.smsSend(to, body);
+    await runRegistry("sms", ["send", to, body]);
   });
 
 // --- Calls ---
@@ -369,24 +344,21 @@ call
   .description("Dial a phone number")
   .argument("<number>", "phone number to dial")
   .action(async (number: string) => {
-    const client = await getClient();
-    await client.callDial(number);
+    await runRegistry("call", ["dial", number]);
   });
 
 call
   .command("answer")
   .description("Answer an incoming call")
   .action(async () => {
-    const client = await getClient();
-    await client.callAnswer();
+    await runRegistry("call", ["answer"]);
   });
 
 call
   .command("hangup")
   .description("End the current call")
   .action(async () => {
-    const client = await getClient();
-    await client.callHangup();
+    await runRegistry("call", ["hangup"]);
   });
 
 call
@@ -395,12 +367,12 @@ call
   .option("--json", "output as JSON")
   .action(async (opts: { json?: boolean }) => {
     const client = await getClient();
-    const status = await client.callStatus();
+    const st = await client.callStatus();
     if (opts.json) {
-      jsonOut(status);
+      jsonOut(st);
       return;
     }
-    const record = status as unknown as CliRecord;
+    const record = st as unknown as CliRecord;
     printDetail({
       state: record.state,
       number: record.number,
@@ -441,8 +413,7 @@ notifications
   .argument("<key>", "notification key")
   .passThroughOptions(true)
   .action(async (key: string) => {
-    const client = await getClient();
-    await client.notificationDismiss(key);
+    await runRegistry("notifications", ["dismiss", key]);
   });
 
 notifications
@@ -452,8 +423,7 @@ notifications
   .argument("<index>", "action index (from notifications list)")
   .passThroughOptions(true)
   .action(async (key: string, index: string) => {
-    const client = await getClient();
-    await client.notificationAction(key, parseInt(index));
+    await runRegistry("notifications", ["action", key, index]);
   });
 
 // --- Clipboard ---
@@ -466,11 +436,7 @@ clipboard
   .command("get")
   .description("Get clipboard text")
   .action(async () => {
-    const client = await getClient();
-    const result = await client.clipboardGet();
-    if (result.text !== null) {
-      console.log(result.text);
-    }
+    await runRegistry("clipboard", ["get"]);
   });
 
 clipboard
@@ -478,8 +444,7 @@ clipboard
   .description("Set clipboard text")
   .argument("<text>", "text to set")
   .action(async (text: string) => {
-    const client = await getClient();
-    await client.clipboardSet(text);
+    await runRegistry("clipboard", ["set", text]);
   });
 
 // --- Apps ---
@@ -530,8 +495,7 @@ function appCommands(name: string): Command {
     .description("Launch an app")
     .argument("<package>", "package name")
     .action(async (pkg: string) => {
-      const client = await getClient();
-      await client.appLaunch(pkg);
+      await runRegistry("apps", ["launch", pkg]);
     });
 
   app
@@ -539,8 +503,7 @@ function appCommands(name: string): Command {
     .description("Force stop an app")
     .argument("<package>", "package name")
     .action(async (pkg: string) => {
-      const client = await getClient();
-      await client.appStop(pkg);
+      await runRegistry("apps", ["stop", pkg]);
     });
 
   app
@@ -548,10 +511,7 @@ function appCommands(name: string): Command {
     .description("Install an APK")
     .argument("<apk>", "path to APK file")
     .action(async (apk: string) => {
-      const client = await getClient();
-      const data = readFileSync(apk);
-      await client.appInstall(data);
-      console.error(`Installed ${apk}`);
+      await runRegistry("apps", ["install", apk]);
     });
 
   return app;
@@ -584,7 +544,7 @@ contacts
 
 program
   .command("info")
-  .description("Device and activity info (default: sections; use --json for raw JSON)")
+  .description(otaconRegistry.info.description)
   .option("--monitor", "include the fleet-agent monitor status blob (verbose)")
   .option("--json", "output as JSON")
   .action(async (opts: { monitor?: boolean; json?: boolean }) => {
@@ -604,11 +564,10 @@ program
 
 program
   .command("open")
-  .description("Open a URI with the registered app")
+  .description(otaconRegistry.open.description)
   .argument("<uri>", "URI to open (https://, tel:, app deep links, etc.)")
   .action(async (uri: string) => {
-    const client = await getClient();
-    await client.open(uri);
+    await runRegistry("open", [uri]);
   });
 
 // --- Recording ---
@@ -632,6 +591,7 @@ const record = program
       process.stderr.write("\nStopping...\n");
       try {
         const mp4 = await client.recordStop();
+        const { writeFileSync } = await import("node:fs");
         writeFileSync(outPath, mp4);
         console.error(`Saved to ${outPath}`);
       } catch (e: unknown) {
@@ -640,7 +600,6 @@ const record = program
       process.exit(0);
     });
 
-    // Poll status
     for (let i = 1; i <= maxDuration; i++) {
       await new Promise((r) => setTimeout(r, 1000));
       if (stopping) return;
@@ -654,6 +613,7 @@ const record = program
     if (!stopping) {
       process.stderr.write("\nAuto-stopped. Saving...\n");
       const mp4 = await client.recordStop();
+      const { writeFileSync } = await import("node:fs");
       writeFileSync(outPath, mp4);
       console.error(`Saved to ${outPath}`);
     }
@@ -664,9 +624,7 @@ record
   .description("Start recording (headless, for agents)")
   .option("-d, --duration <seconds>", "max recording duration", "300")
   .action(async (opts: { duration: string }) => {
-    const client = await getClient();
-    await client.recordStart(parseInt(opts.duration));
-    console.error("Recording started");
+    await runRegistry("record", ["start", "-d", opts.duration]);
   });
 
 record
@@ -674,11 +632,8 @@ record
   .description("Stop recording and save video")
   .option("-o, --output <path>", "output file path (default: recording.mp4)")
   .action(async (opts: { output?: string }) => {
-    const client = await getClient();
-    const mp4 = await client.recordStop();
-    const outPath = opts.output || "recording.mp4";
-    writeFileSync(outPath, mp4);
-    console.error(`Saved to ${outPath}`);
+    const out = opts.output || "recording.mp4";
+    await runRegistry("record", ["stop", "-o", out]);
   });
 
 record
@@ -710,7 +665,6 @@ program
   .description("Stream device events")
   .option("-f, --follow", "follow event stream")
   .action(async () => {
-    // Events are a registry-level concept for now
     console.error("Events streaming not yet implemented in CLI");
     process.exit(1);
   });

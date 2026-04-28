@@ -1,50 +1,155 @@
 /**
- * Builds a just-bash sandbox with the `otacon` defineCommand wrapping OtaconClient.
- * The otacon command has 1:1 signature with the actual CLI.
+ * Builds a just-bash sandbox with two custom commands:
+ *   - `otacon`         dispatches through the shared CLI command registry
+ *                      (src/cli/src/commands/otacon/index.ts) so the agent
+ *                      and the human CLI execute the same code.
+ *   - `otacon-alloc`   provision/release/status against the AllocationContext
+ *                      + DB. The phone identity never leaks to the agent.
+ *
+ * The orchestrator owns the AllocationContext (in-memory, hidden from bash).
+ * The `otacon` command consults it to construct an OtaconClient — if no
+ * active allocation, it returns an error.
  */
 import { Bash, defineCommand, MountableFs, InMemoryFs } from 'just-bash'
 import { BlobBackedFs } from '../storage/blob-fs.js'
 import type { BlobStore } from '../storage/blob.js'
-import type { OtaconClient } from 'otacon-cli/client'
+import type { Db } from '../db/client.js'
+import { OtaconClient } from 'otacon-cli/client'
+import { otaconRegistry } from 'otacon-cli/commands/otacon'
+import type { AllocationContext } from './allocation-context.js'
+import { buildAllocRegistry } from './alloc-commands.js'
+import * as allocSvc from '../services/allocations.js'
 
-/** Which otacon subcommands mutate phone state (require approval). */
-const MUTATING_VERBS = new Set([
-  'tap', 'swipe', 'key', 'type', 'scroll', 'set-text', 'long-tap',
-  'open', 'call', 'sms',
-])
+/** Verbs in the otacon registry that mutate phone state (need approval). */
+const MUTATING_VERBS = new Set(
+  Object.entries(otaconRegistry).filter(([, spec]) => spec.isMutating).map(([k]) => k),
+)
 
 export function isMutating(command: string): boolean {
   const trimmed = command.trim()
-  // Match "otacon <verb>" or just "<verb>" if already inside the otacon command
-  const match = trimmed.match(/^(?:otacon\s+)?(\S+)/)
+  // Match "otacon <verb>" — only otacon commands gate on approval
+  const match = trimmed.match(/^otacon\s+(\S+)/)
   if (!match) return false
   return MUTATING_VERBS.has(match[1])
 }
 
 interface SandboxOptions {
-  client: OtaconClient
   blobStore: BlobStore
   accountId: string
+  conversationId: string
+  db: Db
+  allocCtx: AllocationContext
 }
 
-export function buildSandbox(opts: SandboxOptions): Bash {
-  const { client, blobStore, accountId } = opts
+export async function buildSandbox(opts: SandboxOptions): Promise<Bash> {
+  const { blobStore, accountId, conversationId, db, allocCtx } = opts
 
-  const otaconCmd = defineCommand('otacon', async (args) => {
+  // 1. Rebuild allocCtx from DB on cold start.
+  // (e.g., the orchestrator restarted mid-session and the conversation
+  //  already has an active row.)
+  if (!allocCtx.peek()) {
+    try {
+      const fromDb = await allocSvc.getActive(db, conversationId)
+      if (fromDb) {
+        const resolved = await allocSvc.resolvePhoneForAccount(db, accountId)
+        allocCtx.set({
+          allocationId: fromDb.allocationId,
+          phoneId: fromDb.phoneId,
+          localPhoneId: resolved.localPhoneId,
+          hostUrl: resolved.hostUrl,
+          clientBaseUrl: resolved.clientBaseUrl,
+          expiresAt: fromDb.expiresAt,
+        })
+      }
+    } catch {
+      // If we can't rebuild (e.g., registry unreachable), continue —
+      // agent will see "no phone" and call provision.
+    }
+  }
+
+  // 2. otacon defineCommand: dispatch through the shared registry, but
+  //    consult AllocationContext for the phone identity. Never expose
+  //    the phone ID through env vars.
+  const otaconCmd = defineCommand('otacon', async (args, ctx) => {
     const [verb, ...rest] = args
     if (!verb) {
       return {
         stdout: '',
-        stderr: 'Usage: otacon <command> [args...]\n\nCommands: screenshot, snapshot, info, tap, swipe, key, type, set-text, scroll, open, apps, sms, notifications, clipboard, contacts, call, record\n',
+        stderr: 'Usage: otacon <command> [args...]\n\nRun `otacon-alloc provision` first to acquire a phone.\n',
         exitCode: 1,
       }
     }
 
+    const spec = otaconRegistry[verb]
+    if (!spec) {
+      return {
+        stdout: '',
+        stderr: `unknown otacon verb: ${verb}. Available: ${Object.keys(otaconRegistry).sort().join(', ')}\n`,
+        exitCode: 1,
+      }
+    }
+
+    // Allocation gate
+    const peek = allocCtx.peek()
+    const active = allocCtx.get()
+    if (!active) {
+      const expired = peek && !active
+      return {
+        stdout: '',
+        stderr: expired
+          ? 'ALLOCATION_EXPIRED: lease has expired. Run `otacon-alloc provision` to renew.\n'
+          : 'NO_ALLOCATION: no phone allocated. Run `otacon-alloc provision` first.\n',
+        exitCode: 1,
+      }
+    }
+
+    // Build env for the registry: pass through OTACON_TRACE_DIR (if the
+    // bash invocation set it). Never include the phone ID.
+    const env: Record<string, string | undefined> = {}
+    const traceDir = ctx.env.get('OTACON_TRACE_DIR')
+    if (traceDir) env.OTACON_TRACE_DIR = traceDir
+
+    // Use the pre-built clientBaseUrl which embeds the host-LOCAL phone ID.
+    // NEVER use `${hostUrl}/phones/${phoneId}` — phoneId is the registry ID,
+    // which is NOT what the host serves. (See feedback_dual_id_system.md.)
+    const client = new OtaconClient(active.clientBaseUrl)
+
     try {
-      const result = await dispatchOtacon(client, verb, rest)
-      return { stdout: result + '\n', stderr: '', exitCode: 0 }
+      let out = await spec.run(rest, client, env)
+      // Redact phone-identifying fields before returning to the agent.
+      // The CLI binary still shows full info to humans — this is the
+      // orchestrator-side privacy boundary.
+      out = redactPhoneIdentifiers(out)
+      return { stdout: out + (out.endsWith('\n') ? '' : '\n'), stderr: '', exitCode: 0 }
     } catch (e: any) {
-      return { stdout: '', stderr: `otacon ${verb}: ${e.message}\n`, exitCode: 1 }
+      return { stdout: '', stderr: `otacon ${verb}: ${e.message ?? String(e)}\n`, exitCode: 1 }
+    }
+  })
+
+  // 3. otacon-alloc defineCommand
+  const allocRegistry = buildAllocRegistry({ db, accountId, conversationId, allocCtx })
+  const otaconAllocCmd = defineCommand('otacon-alloc', async (args) => {
+    const [verb, ...rest] = args
+    if (!verb) {
+      return {
+        stdout: '',
+        stderr: `Usage: otacon-alloc <command> [args...]\n\nCommands: ${Object.keys(allocRegistry).join(', ')}\n`,
+        exitCode: 1,
+      }
+    }
+    const spec = allocRegistry[verb]
+    if (!spec) {
+      return {
+        stdout: '',
+        stderr: `unknown otacon-alloc verb: ${verb}. Available: ${Object.keys(allocRegistry).join(', ')}\n`,
+        exitCode: 1,
+      }
+    }
+    try {
+      const out = await spec.run(rest)
+      return { stdout: out + (out.endsWith('\n') ? '' : '\n'), stderr: '', exitCode: 0 }
+    } catch (e: any) {
+      return { stdout: '', stderr: `otacon-alloc ${verb}: ${e.message ?? String(e)}\n`, exitCode: 1 }
     }
   })
 
@@ -61,268 +166,77 @@ export function buildSandbox(opts: SandboxOptions): Bash {
   })
 
   return new Bash({
-    customCommands: [otaconCmd],
+    customCommands: [otaconCmd, otaconAllocCmd],
     fs,
     cwd: '/workspace',
   })
 }
 
+/** Re-export for the orchestrator's tool reference + alloc registry tooling. */
+export { otaconRegistry }
+export { buildAllocRegistry }
+
 /**
- * Dispatch an otacon CLI verb to the OtaconClient.
- * Returns the string output for stdout.
+ * Phone-identifying fields that must NEVER appear in agent-visible output.
+ *
+ * These are identifiers (adb_serial, IMEI, eSIM EID, BT MACs) that would
+ * give the agent a way to learn the phone's identity even though the
+ * orchestrator hides phone IDs in env vars and tool descriptions. Stripped
+ * from the `info` and `snapshot` payloads on the orchestrator side so the
+ * CLI binary (used by humans) still gets the full data.
  */
-async function dispatchOtacon(client: OtaconClient, verb: string, args: string[]): Promise<string> {
-  switch (verb) {
-    case 'screenshot': {
-      const buf = await client.screenshot()
-      return `[screenshot captured: ${buf.length} bytes]`
-    }
+const REDACTED_FIELDS = [
+  'adb_serial',
+  'phone_bt_mac',
+  'adapter_mac',
+  'imei',
+  'imei2',
+  'eid',
+  'vnc_port',
+] as const
 
-    case 'snapshot': {
-      if (args.includes('--json')) {
-        const result = await client.snapshot('json')
-        return JSON.stringify(result, null, 2)
-      }
-      return await client.snapshot('text')
-    }
+/**
+ * Strip phone-identifying values from agent-visible command output. Handles
+ * both JSON (parsed and re-serialized) and the line-aligned `key  value`
+ * text format used by `otacon info`.
+ */
+export function redactPhoneIdentifiers(out: string): string {
+  if (!out) return out
+  const trimmed = out.trim()
 
-    case 'info': {
-      const info = await client.info()
-      if (args.includes('--json')) return JSON.stringify(info, null, 2)
-      return Object.entries(info)
-        .map(([k, v]) => `${k.padEnd(20)} ${v}`)
-        .join('\n')
+  // JSON payload: parse, redact, re-serialize.
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(trimmed)
+      const redacted = walkRedact(parsed)
+      return JSON.stringify(redacted, null, 2)
+    } catch {
+      // fall through to regex-based redaction
     }
-
-    case 'tap': {
-      const parsed = parseTapArgs(args)
-      await client.action({ action: 'tap', ...parsed } as any)
-      return `tapped ${args.join(' ')}`
-    }
-
-    case 'long-tap': {
-      const parsed = parseTapArgs(args)
-      await client.action({ action: 'long_tap', ...parsed } as any)
-      return `long-tapped ${args.join(' ')}`
-    }
-
-    case 'swipe': {
-      const parsed = parseSwipeArgs(args)
-      await client.action({ action: 'swipe', ...parsed } as any)
-      return `swiped ${args.join(' ')}`
-    }
-
-    case 'key': {
-      const key = args[0]
-      if (!key) throw new Error('missing key argument')
-      await client.action({ action: 'key', key } as any)
-      return `sent key ${key}`
-    }
-
-    case 'type': {
-      const text = args.join(' ')
-      if (!text) throw new Error('missing text argument')
-      await client.action({ action: 'type', text } as any)
-      return `typed "${text}"`
-    }
-
-    case 'set-text': {
-      const [ref, ...textParts] = args
-      if (!ref) throw new Error('usage: set-text <ref> <text>')
-      const text = textParts.join(' ')
-      await client.action({ action: 'set_text', ref, text } as any)
-      return `set text on ${ref}: "${text}"`
-    }
-
-    case 'scroll': {
-      const parsed = parseScrollArgs(args)
-      await client.action({ action: parsed.action, ref: parsed.ref } as any)
-      return `scrolled ${args.join(' ')}`
-    }
-
-    case 'open': {
-      const uri = args[0]
-      if (!uri) throw new Error('missing URI argument')
-      await client.open(uri)
-      return `opened ${uri}`
-    }
-
-    case 'apps': {
-      const sub = args[0]
-      if (sub === 'launch') {
-        const pkg = args[1]
-        if (!pkg) throw new Error('missing package name')
-        await client.appLaunch(pkg)
-        return `launched ${pkg}`
-      }
-      if (sub === 'stop') {
-        const pkg = args[1]
-        if (!pkg) throw new Error('missing package name')
-        await client.appStop(pkg)
-        return `stopped ${pkg}`
-      }
-      if (sub === 'running') {
-        const result = await client.appsRunning()
-        return JSON.stringify(result, null, 2)
-      }
-      // Default: list apps
-      const apps = await client.apps()
-      return apps.map(a => `${a.package} (${a.label || 'no label'})`).join('\n')
-    }
-
-    case 'sms': {
-      const sub = args[0]
-      if (sub === 'send') {
-        const to = args[1]
-        const body = args.slice(2).join(' ')
-        if (!to || !body) throw new Error('usage: sms send <to> <body>')
-        await client.smsSend(to, body)
-        return `sent SMS to ${to}`
-      }
-      if (sub === 'messages') {
-        const threadId = parseInt(args[1])
-        if (isNaN(threadId)) throw new Error('usage: sms messages <thread_id>')
-        const msgs = await client.smsMessages(threadId)
-        return JSON.stringify(msgs, null, 2)
-      }
-      // Default: list threads
-      const threads = await client.smsThreads()
-      return JSON.stringify(threads, null, 2)
-    }
-
-    case 'notifications': {
-      const sub = args[0]
-      if (sub === 'dismiss') {
-        const key = args[1]
-        if (!key) throw new Error('usage: notifications dismiss <key>')
-        await client.notificationDismiss(key)
-        return `dismissed notification ${key}`
-      }
-      if (sub === 'action') {
-        const key = args[1]
-        const idx = parseInt(args[2])
-        if (!key || isNaN(idx)) throw new Error('usage: notifications action <key> <index>')
-        await client.notificationAction(key, idx)
-        return `triggered action ${idx} on ${key}`
-      }
-      const notifs = await client.notifications()
-      return JSON.stringify(notifs, null, 2)
-    }
-
-    case 'clipboard': {
-      const sub = args[0]
-      if (sub === 'set') {
-        const text = args.slice(1).join(' ')
-        await client.clipboardSet(text)
-        return 'clipboard set'
-      }
-      const clip = await client.clipboardGet()
-      return clip.text ?? '(empty)'
-    }
-
-    case 'contacts': {
-      const query = args.length > 0 ? args.join(' ') : undefined
-      const contacts = await client.contacts(query)
-      return JSON.stringify(contacts, null, 2)
-    }
-
-    case 'call': {
-      const sub = args[0]
-      if (sub === 'dial') {
-        const num = args[1]
-        if (!num) throw new Error('usage: call dial <number>')
-        await client.callDial(num)
-        return `dialing ${num}`
-      }
-      if (sub === 'answer') {
-        await client.callAnswer()
-        return 'answered call'
-      }
-      if (sub === 'hangup') {
-        await client.callHangup()
-        return 'hung up'
-      }
-      if (sub === 'status') {
-        const st = await client.callStatus()
-        return JSON.stringify(st, null, 2)
-      }
-      throw new Error('usage: call <dial|answer|hangup|status>')
-    }
-
-    case 'record': {
-      const sub = args[0]
-      if (sub === 'start') {
-        const dur = parseInt(args[1]) || 30
-        await client.recordStart(dur)
-        return `recording started (max ${dur}s)`
-      }
-      if (sub === 'stop') {
-        const buf = await client.recordStop()
-        return `[recording stopped: ${buf.length} bytes]`
-      }
-      if (sub === 'status') {
-        const st = await client.recordStatus()
-        return JSON.stringify(st, null, 2)
-      }
-      throw new Error('usage: record <start|stop|status>')
-    }
-
-    case 'wifi': {
-      // WiFi commands go to the host API, not per-phone
-      // For now, produce a helpful error since WiFi is managed separately
-      throw new Error('wifi commands are managed through the host API, not the sandbox otacon command')
-    }
-
-    default:
-      throw new Error(`unknown command: ${verb}. Available: screenshot, snapshot, info, tap, swipe, key, type, set-text, scroll, open, apps, sms, notifications, clipboard, contacts, call, record`)
   }
-}
 
-function parseTapArgs(args: string[]): { x?: number; y?: number; ref?: string } {
-  if (args.length >= 2) {
-    const x = parseInt(args[0])
-    const y = parseInt(args[1])
-    if (!isNaN(x) && !isNaN(y)) return { x, y }
-  }
-  if (args.length >= 1) {
-    return { ref: args[0] }
-  }
-  throw new Error('usage: tap <x> <y> or tap <ref>')
-}
-
-function parseSwipeArgs(args: string[]): { x1: number; y1: number; x2: number; y2: number; duration_ms?: number; pause_ms?: number } {
-  // swipe x1 y1 x2 y2 [--duration ms] [--pause ms]
-  if (args.length < 4) throw new Error('usage: swipe <x1> <y1> <x2> <y2> [--duration ms] [--pause ms]')
-  const result: any = {
-    x1: parseInt(args[0]),
-    y1: parseInt(args[1]),
-    x2: parseInt(args[2]),
-    y2: parseInt(args[3]),
-  }
-  const durIdx = args.indexOf('--duration')
-  if (durIdx >= 0 && args[durIdx + 1]) {
-    result.duration_ms = parseInt(args[durIdx + 1])
-  }
-  const pauseIdx = args.indexOf('--pause')
-  if (pauseIdx >= 0 && args[pauseIdx + 1]) {
-    result.pause_ms = parseInt(args[pauseIdx + 1])
+  // Text payload (e.g. `otacon info` line-aligned output): match each line
+  // beginning with a known field key and blank its value.
+  let result = out
+  for (const key of REDACTED_FIELDS) {
+    const re = new RegExp(`^(${key}\\s+).+$`, 'gm')
+    result = result.replace(re, '$1[redacted]')
   }
   return result
 }
 
-function parseScrollArgs(args: string[]): { action: 'scroll_forward' | 'scroll_backward'; ref: string } {
-  // scroll <ref> [--direction up|down]
-  // Default direction is "down" (scroll_forward). "up" maps to scroll_backward.
-  let ref: string | undefined
-  let direction = 'down'
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === '--direction' && args[i + 1]) {
-      direction = args[++i]
-    } else if (!ref) {
-      ref = args[i]
+function walkRedact(node: any): any {
+  if (Array.isArray(node)) return node.map(walkRedact)
+  if (node && typeof node === 'object') {
+    const out: Record<string, any> = {}
+    for (const [k, v] of Object.entries(node)) {
+      if ((REDACTED_FIELDS as readonly string[]).includes(k)) {
+        out[k] = '[redacted]'
+      } else {
+        out[k] = walkRedact(v)
+      }
     }
+    return out
   }
-  if (!ref) throw new Error('usage: scroll <ref> [--direction up|down]')
-  const action = direction === 'up' ? 'scroll_backward' : 'scroll_forward'
-  return { action, ref }
+  return node
 }

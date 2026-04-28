@@ -1,16 +1,22 @@
 /**
  * Integration tests for sandbox otacon commands against the real phone API.
- * Verifies each command type sends correct payloads (no 422 errors).
+ * Verifies each command type sends correct payloads (no 422 errors) and
+ * the Phase A.2 allocation gate (NO_ALLOCATION / ALLOCATION_EXPIRED).
  *
  * Requires: phone-4 (phone-11031jec) reachable at otacon-pi.
  * Run: npx tsx tests/test-sandbox-commands.ts
  *
  * Also includes unit tests for argument parsers (isMutating, parseTapArgs, etc.)
  */
+import 'dotenv/config'
 import { OtaconClient } from 'otacon-cli/client'
-import { isMutating } from '../src/sandbox/build.js'
+import { isMutating, buildSandbox } from '../src/sandbox/build.js'
 import { LocalBlobStore } from '../src/storage/blob.js'
-import { buildSandbox } from '../src/sandbox/build.js'
+import { AllocationContext } from '../src/sandbox/allocation-context.js'
+import { createDb } from '../src/db/client.js'
+import { conversations } from '../src/db/schema.js'
+import { sql } from 'drizzle-orm'
+import { ulid } from 'ulid'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import * as os from 'node:os'
@@ -18,6 +24,30 @@ import * as os from 'node:os'
 const HOST = 'https://otacon-pi.tail0437b8.ts.net:8080'
 const PHONE_LOCAL_ID = 'phone-11031jec'
 const BASE_URL = `${HOST}/phones/${PHONE_LOCAL_ID}`
+const TEST_ACCOUNT = process.env.TEST_ACCOUNT_ID || 'xhs:test'
+
+const DATABASE_URL = process.env.DATABASE_URL
+if (!DATABASE_URL) {
+  console.error('DATABASE_URL not set — check src/orchestrator/.env')
+  process.exit(1)
+}
+const db = createDb(DATABASE_URL)
+const cleanupConvIds: string[] = []
+
+async function cleanupAll() {
+  for (const id of cleanupConvIds) {
+    await db.execute(sql`DELETE FROM phone_allocations WHERE conversation_id = ${id}`).catch(() => {})
+    await db.execute(sql`DELETE FROM conversations WHERE id = ${id}`).catch(() => {})
+  }
+}
+
+// All identifiers we expect MUST NOT appear in tool stdout/stderr —
+// the agent must never see the phone ID. (Phase A.2 invariant.)
+const PHONE_IDENTIFIERS_FORBIDDEN_IN_AGENT_OUTPUT = [
+  'phone-11031jec',
+  '11031JEC202780',
+  // The host URL itself may appear in error messages; that is acceptable.
+]
 
 let passed = 0
 let failed = 0
@@ -36,6 +66,7 @@ function assert(condition: boolean, msg: string) {
 
 function testIsMutating() {
   console.log('\n--- isMutating ---')
+  // Truly mutating verbs
   assert(isMutating('otacon tap 100 200') === true, 'otacon tap is mutating')
   assert(isMutating('otacon swipe 0 0 100 100') === true, 'otacon swipe is mutating')
   assert(isMutating('otacon key HOME') === true, 'otacon key is mutating')
@@ -46,12 +77,16 @@ function testIsMutating() {
   assert(isMutating('otacon open https://example.com') === true, 'otacon open is mutating')
   assert(isMutating('otacon call dial 555') === true, 'otacon call is mutating')
   assert(isMutating('otacon sms send 555 hi') === true, 'otacon sms is mutating')
+  // Phase A.2 reclassified as mutating because `apps launch/stop/install`,
+  // `notifications dismiss/action`, and `clipboard set` mutate. The shared
+  // registry uses a single isMutating flag per verb so these are conservative.
+  assert(isMutating('otacon apps') === true, 'otacon apps is mutating (conservative)')
+  assert(isMutating('otacon notifications') === true, 'otacon notifications is mutating (conservative)')
+  assert(isMutating('otacon clipboard') === true, 'otacon clipboard is mutating (conservative)')
+  // Truly read-only
   assert(isMutating('otacon screenshot') === false, 'otacon screenshot is NOT mutating')
   assert(isMutating('otacon snapshot') === false, 'otacon snapshot is NOT mutating')
   assert(isMutating('otacon info') === false, 'otacon info is NOT mutating')
-  assert(isMutating('otacon apps') === false, 'otacon apps is NOT mutating')
-  assert(isMutating('otacon notifications') === false, 'otacon notifications is NOT mutating')
-  assert(isMutating('otacon clipboard') === false, 'otacon clipboard is NOT mutating')
   assert(isMutating('otacon contacts') === false, 'otacon contacts is NOT mutating')
   assert(isMutating('') === false, 'empty string is NOT mutating')
 }
@@ -71,16 +106,72 @@ async function testPhoneReachable() {
   }
 }
 
-async function withSandbox(fn: (bash: ReturnType<typeof buildSandbox>) => Promise<void>) {
+type Bash = Awaited<ReturnType<typeof buildSandbox>>
+
+async function makeFixtureConversation(): Promise<string> {
+  const id = ulid()
+  await db.insert(conversations).values({
+    id,
+    conversationKey: `test:sandbox:${id}`,
+    blobPath: `conversations/${id}`,
+    status: 'active',
+  })
+  cleanupConvIds.push(id)
+  return id
+}
+
+async function withSandbox(fn: (bash: Bash) => Promise<void>) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sandbox-test-'))
+  const conversationId = await makeFixtureConversation()
   try {
-    const client = new OtaconClient(BASE_URL)
     const blobStore = new LocalBlobStore(tmpDir)
-    const bash = buildSandbox({ client, blobStore, accountId: 'test' })
+    const allocCtx = new AllocationContext()
+    const bash = await buildSandbox({
+      blobStore,
+      accountId: TEST_ACCOUNT,
+      conversationId,
+      db,
+      allocCtx,
+    })
+    const r = await bash.exec('otacon-alloc provision 10')
+    if (r.exitCode !== 0) {
+      throw new Error(`otacon-alloc provision failed: ${r.stderr.trim()}`)
+    }
+    try {
+      await fn(bash)
+    } finally {
+      await bash.exec('otacon-alloc release').catch(() => {})
+    }
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  }
+}
+
+/** Sandbox without provisioning — used to verify NO_ALLOCATION gate. */
+async function withUnallocatedSandbox(fn: (bash: Bash) => Promise<void>) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sandbox-noalloc-'))
+  const conversationId = await makeFixtureConversation()
+  try {
+    const blobStore = new LocalBlobStore(tmpDir)
+    const allocCtx = new AllocationContext()
+    const bash = await buildSandbox({
+      blobStore,
+      accountId: TEST_ACCOUNT,
+      conversationId,
+      db,
+      allocCtx,
+    })
     await fn(bash)
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true })
   }
+}
+
+function containsPhoneId(s: string): string | null {
+  for (const id of PHONE_IDENTIFIERS_FORBIDDEN_IN_AGENT_OUTPUT) {
+    if (s.includes(id)) return id
+  }
+  return null
 }
 
 async function testScreenshot() {
@@ -321,7 +412,11 @@ async function testUnknownCommand() {
   await withSandbox(async (bash) => {
     const r = await bash.exec('otacon bogus')
     assert(r.exitCode === 1, 'unknown command exit 1')
-    assert(r.stderr.includes('unknown command'), `stderr: ${r.stderr.trim()}`)
+    const stderr = r.stderr.toLowerCase()
+    assert(
+      stderr.includes('unknown') && (stderr.includes('verb') || stderr.includes('command')),
+      `stderr indicates unknown verb (got: ${r.stderr.trim()})`,
+    )
   })
 }
 
@@ -334,6 +429,130 @@ async function testNoArgs() {
   })
 }
 
+// ---- Phase A.2 allocation-gate tests ----
+
+async function testNoAllocationBlocksCommands() {
+  console.log('\n--- NO_ALLOCATION blocks otacon commands ---')
+  const verbs = [
+    'otacon snapshot',
+    'otacon screenshot',
+    'otacon info',
+    'otacon tap 100 200',
+    'otacon swipe 100 200 300 400',
+    'otacon key HOME',
+  ]
+  await withUnallocatedSandbox(async (bash) => {
+    for (const cmd of verbs) {
+      const r = await bash.exec(cmd)
+      assert(r.exitCode !== 0, `${cmd} fails without allocation (exit ${r.exitCode})`)
+      const stderr = r.stderr.toLowerCase()
+      const ok = stderr.includes('no allocation') || stderr.includes('alloc') || stderr.includes('provision')
+      assert(ok, `${cmd} stderr mentions allocation/provision (got: ${r.stderr.trim()})`)
+    }
+  })
+}
+
+async function testProvisionThenSucceed() {
+  console.log('\n--- after provision: commands succeed ---')
+  await withUnallocatedSandbox(async (bash) => {
+    const before = await bash.exec('otacon snapshot')
+    assert(before.exitCode !== 0, 'snapshot before provision fails (sanity)')
+
+    const prov = await bash.exec('otacon-alloc provision 10')
+    assert(prov.exitCode === 0, `provision succeeds (stderr: ${prov.stderr.trim()})`)
+
+    const after = await bash.exec('otacon snapshot')
+    assert(after.exitCode === 0, `snapshot after provision succeeds (stderr: ${after.stderr.trim()})`)
+
+    await bash.exec('otacon-alloc release')
+  })
+}
+
+async function testReleaseThenBlock() {
+  console.log('\n--- after release: commands fail again ---')
+  await withUnallocatedSandbox(async (bash) => {
+    const prov = await bash.exec('otacon-alloc provision 10')
+    assert(prov.exitCode === 0, 'provision setup ok')
+
+    const ok = await bash.exec('otacon snapshot')
+    assert(ok.exitCode === 0, 'snapshot ok while held')
+
+    const rel = await bash.exec('otacon-alloc release')
+    assert(rel.exitCode === 0, `release succeeds (stderr: ${rel.stderr.trim()})`)
+
+    const blocked = await bash.exec('otacon snapshot')
+    assert(blocked.exitCode !== 0, 'snapshot after release fails')
+  })
+}
+
+async function testAllocStatus() {
+  console.log('\n--- otacon-alloc status reports state ---')
+  await withUnallocatedSandbox(async (bash) => {
+    const empty = await bash.exec('otacon-alloc status')
+    assert(empty.exitCode === 0, `status (no alloc) exit 0 (stderr: ${empty.stderr.trim()})`)
+    let parsed: any
+    try { parsed = JSON.parse(empty.stdout) } catch { parsed = null }
+    if (parsed) {
+      assert(parsed.has_allocation === false, `has_allocation false (got ${parsed.has_allocation})`)
+    } else {
+      assert(empty.stdout.toLowerCase().includes('no'), `status mentions no-allocation (stdout: ${empty.stdout.trim()})`)
+    }
+
+    await bash.exec('otacon-alloc provision 10')
+    const held = await bash.exec('otacon-alloc status')
+    assert(held.exitCode === 0, 'status (held) exit 0')
+    let parsedHeld: any
+    try { parsedHeld = JSON.parse(held.stdout) } catch { parsedHeld = null }
+    if (parsedHeld) {
+      assert(parsedHeld.has_allocation === true, `has_allocation true (got ${parsedHeld.has_allocation})`)
+      assert(typeof parsedHeld.expires_at === 'string', `expires_at present (got ${parsedHeld.expires_at})`)
+      assert(typeof parsedHeld.time_remaining_seconds === 'number', `time_remaining_seconds present`)
+    }
+
+    await bash.exec('otacon-alloc release')
+  })
+}
+
+async function testProvisionIdempotent() {
+  console.log('\n--- otacon-alloc provision idempotent ---')
+  await withUnallocatedSandbox(async (bash) => {
+    const a = await bash.exec('otacon-alloc provision 10')
+    assert(a.exitCode === 0, 'first provision ok')
+
+    const b = await bash.exec('otacon-alloc provision 10')
+    assert(b.exitCode === 0, `second provision ok (stderr: ${b.stderr.trim()})`)
+
+    // Status should still report a single active allocation
+    const st = await bash.exec('otacon-alloc status')
+    let parsed: any
+    try { parsed = JSON.parse(st.stdout) } catch { parsed = null }
+    if (parsed) {
+      assert(parsed.has_allocation === true, 'has_allocation still true after re-provision')
+    }
+
+    await bash.exec('otacon-alloc release')
+  })
+}
+
+async function testAgentNeverSeesPhoneId() {
+  console.log('\n--- agent never sees the phone ID in tool output ---')
+  await withSandbox(async (bash) => {
+    const cmds = [
+      'otacon snapshot',
+      'otacon info',
+      'otacon screenshot',
+      'otacon-alloc status',
+    ]
+    for (const cmd of cmds) {
+      const r = await bash.exec(cmd)
+      const stdoutLeak = containsPhoneId(r.stdout)
+      const stderrLeak = containsPhoneId(r.stderr)
+      assert(stdoutLeak === null, `${cmd} stdout contains no phone ID (leak: ${stdoutLeak})`)
+      assert(stderrLeak === null, `${cmd} stderr contains no phone ID (leak: ${stderrLeak})`)
+    }
+  })
+}
+
 async function main() {
   console.log('=== Sandbox Command Tests ===')
 
@@ -343,6 +562,14 @@ async function main() {
   // Integration tests (require phone)
   console.log('\n--- Checking phone connectivity ---')
   await testPhoneReachable()
+
+  // Phase A.2: allocation gate
+  await testNoAllocationBlocksCommands()
+  await testProvisionThenSucceed()
+  await testReleaseThenBlock()
+  await testAllocStatus()
+  await testProvisionIdempotent()
+  await testAgentNeverSeesPhoneId()
 
   // Read-only commands
   await testScreenshot()
@@ -372,8 +599,12 @@ async function main() {
   await testUnknownCommand()
   await testNoArgs()
 
+  await cleanupAll()
   console.log(`\n=== Results: ${passed} passed, ${failed} failed ===`)
   process.exit(failed > 0 ? 1 : 0)
 }
 
-main()
+main().catch((e) => {
+  console.error('FATAL:', e)
+  cleanupAll().finally(() => process.exit(1))
+})

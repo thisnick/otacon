@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, jsonb, unique, boolean } from 'drizzle-orm/pg-core'
+import { pgTable, text, timestamp, jsonb, unique, boolean, index } from 'drizzle-orm/pg-core'
 
 export const accounts = pgTable('accounts', {
   id: text('id').primaryKey(),
@@ -56,6 +56,16 @@ export const activityLog = pgTable('activity_log', {
   details: jsonb('details').default({}),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 })
+
+export const phoneAllocations = pgTable('phone_allocations', {
+  id: text('id').primaryKey(),
+  phoneId: text('phone_id').notNull(),
+  conversationId: text('conversation_id').notNull().references(() => conversations.id),
+  allocatedAt: timestamp('allocated_at', { withTimezone: true }).notNull().defaultNow(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+}, (table) => [
+  index('ix_phone_allocations_lookup').on(table.phoneId, table.conversationId, table.allocatedAt.desc()),
+])
 
 export const agentSignals = pgTable('agent_signals', {
   id: text('id').primaryKey(),

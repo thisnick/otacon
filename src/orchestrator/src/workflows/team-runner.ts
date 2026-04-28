@@ -4,14 +4,13 @@
  */
 import { eq, and } from 'drizzle-orm'
 import { ulid } from 'ulid'
-import { OtaconClient } from 'otacon-cli/client'
 import type { Db } from '../db/client.js'
 import { accounts, accountCredentials, conversations, agentInstances } from '../db/schema.js'
 import { LocalBlobStore } from '../storage/blob.js'
 import { buildSandbox } from '../sandbox/build.js'
+import { AllocationContext } from '../sandbox/allocation-context.js'
 import { buildSystemPrompt } from '../agents/build-prompt.js'
 import { runDurableAgent } from './durable-agent.js'
-import { resolvePhone } from '../resolve/phone.js'
 import type { TeamConfig } from '../teams/social-media-engagement/config.js'
 
 // Registry of known teams
@@ -102,18 +101,18 @@ export async function runTeam(opts: RunTeamOptions) {
     },
   })
 
-  // 5. Resolve phone → host at runtime via registry
-  console.log(`[team] Resolving phone number ${phoneCred.identifier} via registry...`)
-  const resolved = await resolvePhone(phoneCred.identifier)
-  console.log(`[team] Resolved to ${resolved.phoneId} at ${resolved.baseUrl}`)
-
-  const client = new OtaconClient(resolved.baseUrl)
+  // 5. Build sandbox WITHOUT resolving the phone upfront — agent must call
+  //    `otacon-alloc provision` to acquire a lease. The sandbox rebuilds
+  //    cached allocation from DB if a non-expired row exists.
   const blobStore = new LocalBlobStore(blobRoot)
+  const allocCtx = new AllocationContext()
 
-  const bash = buildSandbox({
-    client,
+  const bash = await buildSandbox({
     blobStore,
     accountId,
+    conversationId: convo!.id,
+    db,
+    allocCtx,
   })
 
   const systemPrompt = await buildSystemPrompt({
@@ -124,18 +123,21 @@ export async function runTeam(opts: RunTeamOptions) {
 
   console.log(`[team] Sandbox ready, starting agent...`)
 
-  // 6. Run the durable agent
+  // 6. Run the durable agent. Phone identity is internal to the sandbox —
+  //    not exposed via env or config. We pass null for client/phoneId.
   try {
     await runDurableAgent({
       conversationId: convo!.id,
       accountId,
-      phoneId: resolved.phoneId,
+      phoneId: null,
+      conversationBlobPath: convo!.blobPath,
+      blobRoot,
       model: leadConfig.model,
       systemPrompt,
       bash,
       blobStore,
       db,
-      client,
+      client: null,
       initialPrompt: prompt,
     })
   } finally {

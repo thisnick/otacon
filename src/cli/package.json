@@ -5,7 +5,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./client": "./src/client.ts"
+    "./client": "./src/client.ts",
+    "./commands/otacon": "./src/commands/otacon/index.ts"
   },
   "bin": {
     "otacon": "./dist/index.js"
@@ -19,7 +20,8 @@
   },
   "dependencies": {
     "@iarna/toml": "^2.2.5",
-    "commander": "^13.0.0"
+    "commander": "^13.0.0",
+    "sharp": "^0.33.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

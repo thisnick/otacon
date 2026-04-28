@@ -10,6 +10,7 @@ import { DurableAgent } from '@workflow/ai/agent'
 import { tool } from 'ai'
 import { gateway } from '@ai-sdk/gateway'
 import { z } from 'zod'
+import * as path from 'node:path'
 import type { Bash } from 'just-bash'
 import type { ModelMessage, UIMessageChunk } from 'ai'
 import type { BlobStore } from '../storage/blob.js'
@@ -24,13 +25,23 @@ import { ulid } from 'ulid'
 export interface DurableAgentConfig {
   conversationId: string
   accountId: string
-  phoneId: string
+  /** Hidden from the agent; surfaced only for approval log/diagnostics. */
+  phoneId: string | null
+  /** Conversation's blob path (relative to blobRoot), e.g. "conversations/<id>". */
+  conversationBlobPath: string
+  /**
+   * Absolute filesystem root for blob storage (e.g. ".orchestrator-data/blobs").
+   * Used to derive the absolute trace dir per bash invocation. Without this,
+   * relative paths resolve against the orchestrator process cwd instead of
+   * the blob storage root.
+   */
+  blobRoot: string
   model: string
   systemPrompt: string
   bash: Bash
   blobStore: BlobStore
   db: Db
-  client: OtaconClient
+  client: OtaconClient | null
   initialPrompt?: string
 }
 
@@ -61,6 +72,8 @@ export async function runDurableAgent(config: DurableAgentConfig) {
     conversationId,
     accountId,
     phoneId,
+    conversationBlobPath,
+    blobRoot,
     model,
     systemPrompt,
     bash,
@@ -76,17 +89,17 @@ export async function runDurableAgent(config: DurableAgentConfig) {
   const agentTools = {
     bash: tool({
       description:
-        'Run a bash command in the sandbox. Available commands: otacon (phone control), cat, echo, ls, grep. The otacon command controls the phone: otacon screenshot, otacon snapshot, otacon info, otacon tap, otacon swipe, otacon key, otacon type, otacon set-text, otacon scroll, otacon open, otacon apps, otacon sms, otacon notifications, otacon clipboard, otacon contacts, otacon call, otacon record.',
+        'Run a bash command in the sandbox. Available commands include `otacon` for phone control and `otacon-alloc` for phone lease management, plus standard utilities (cat, echo, ls, grep). Run `otacon-alloc provision` before any otacon command. See system prompt for the full command reference.',
       inputSchema: z.object({
         command: z.string().describe('The bash command to run'),
         rationale: z.string().describe('Why you are running this command'),
       }),
-      execute: async ({ command, rationale }) => {
+      execute: async ({ command, rationale }, ctx: any) => {
         // Check if approval needed
         if (isMutating(command)) {
           const signalId = ulid()
           const decision = await requestApproval(
-            { signalId, command, rationale, accountId, phoneId },
+            { signalId, command, rationale, accountId, phoneId: phoneId ?? 'unknown' },
             client,
           )
 
@@ -98,8 +111,17 @@ export async function runDurableAgent(config: DurableAgentConfig) {
           }
         }
 
-        // Execute the command
-        const result = await bash.exec(command)
+        // Per-tool-call trace dir: every mutating otacon command will save
+        // an annotated screenshot under this dir. Read by CLI shared modules.
+        // Build an ABSOLUTE path so `_trace.ts`'s plain `fs.mkdir/writeFile`
+        // calls land inside blob storage instead of resolving against
+        // `process.cwd()` (which would put them at src/orchestrator/conversations/...).
+        const toolCallId = ctx?.toolCallId ?? ulid()
+        const traceDir = path.resolve(blobRoot, conversationBlobPath, 'traces', toolCallId)
+
+        const result = await bash.exec(command, {
+          env: { OTACON_TRACE_DIR: traceDir },
+        })
 
         // Log to activity_log
         const verb = command.trim().split(/\s+/)[0]
@@ -185,7 +207,7 @@ export async function runDurableAgent(config: DurableAgentConfig) {
             command: `[escalation] ${issue}`,
             rationale: issue,
             accountId,
-            phoneId,
+            phoneId: phoneId ?? 'unknown',
           },
           null, // no screenshot for escalations
         )

@@ -12,7 +12,7 @@
  *
  * Run: npx tsx tests/test-e2e.ts
  */
-import { spawn, execSync } from 'node:child_process'
+import { spawn, spawnSync, execSync } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -40,11 +40,13 @@ function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms))
 }
 
-/** Run orchestrator, capture log, return when it exits or timeout. */
+/** Run orchestrator, capture log, return when it exits or timeout.
+ *  Phase A.2: switched from `run` to `agent run` — old `run` still works
+ *  (deprecated) for one phase and is exercised separately. */
 function startOrchestrator(prompt: string, logFile: string): { proc: ReturnType<typeof spawn>, done: Promise<number> } {
   const logFd = fs.openSync(logFile, 'w')
   const proc = spawn('npx', [
-    'tsx', 'src/index.ts', 'run',
+    'tsx', 'src/index.ts', 'agent', 'run',
     '--account', 'xhs:test',
     '--team', 'social-media-engagement',
     '--prompt', prompt,
@@ -290,6 +292,97 @@ async function testApprovalFlow() {
   assert(approverOutput.includes('Approving signal'), 'auto-approver approved signal')
 }
 
+/** Phase A.2: agent provisions allocation, runs a mutating command, releases —
+ *  verify in DB activity_log + blob traces. */
+async function testAllocationLifecycle() {
+  console.log('\n--- E2E (A.2): allocation lifecycle ---')
+  const logFile = '/tmp/e2e-test-7-alloc.log'
+  const approverLog = '/tmp/e2e-test-7-approver.log'
+
+  // Use a mutating command (swipe) so the trace dir gets populated.
+  const approver = startAutoApprover(approverLog)
+  const { done } = startOrchestrator(
+    'Run `otacon-alloc provision 5`, then `otacon swipe 540 1200 540 600`, then `otacon-alloc release`.',
+    logFile,
+  )
+  const exitCode = await done
+  approver.kill()
+
+  const log = stripAnsi(readLog(logFile))
+  const convoMatch = log.match(/(?:Created new conversation|Resuming conversation): (\S+)/)
+  const convoId = convoMatch?.[1]
+  assert(convoId !== undefined, `conversation ID found: ${convoId}`)
+  if (!convoId) return
+
+  // Verify activity_log via inspect logs (NOT orchestrator stdout — the agent
+  // runs commands in the durable workflow, not on stdout).
+  const logsCheck = execSync(
+    `npx tsx src/index.ts inspect logs --account xhs:test --since 5m`,
+    { cwd: ORCHESTRATOR_DIR, encoding: 'utf-8' },
+  )
+  assert(logsCheck.includes('otacon-alloc provision'),
+    `inspect logs shows otacon-alloc provision`)
+  assert(logsCheck.includes('otacon-alloc release'),
+    `inspect logs shows otacon-alloc release`)
+
+  // Trace dir must exist after a mutating command
+  const traceRoot = path.join(BLOBS_DIR, `conversations/${convoId}/traces`)
+  const traceExists = fs.existsSync(traceRoot)
+  assert(traceExists, `traces dir exists at conversations/${convoId}/traces`)
+
+  if (traceExists) {
+    const tooluseDirs = fs.readdirSync(traceRoot).filter(d =>
+      fs.statSync(path.join(traceRoot, d)).isDirectory(),
+    )
+    assert(tooluseDirs.length > 0, `at least 1 tool_call trace dir (got ${tooluseDirs.length})`)
+    if (tooluseDirs.length > 0) {
+      const sample = tooluseDirs[0]
+      const files = fs.readdirSync(path.join(traceRoot, sample))
+      const pngs = files.filter(f => f.endsWith('.png'))
+      const jsons = files.filter(f => f.endsWith('.json'))
+      assert(pngs.length > 0, `trace dir ${sample} has at least 1 PNG (${pngs.length})`)
+      assert(jsons.length > 0, `trace dir ${sample} has at least 1 JSON sidecar (${jsons.length})`)
+    }
+  }
+}
+
+/** Phase A.2: inspect conversation produces a markdown report after a real run. */
+function testInspectReportAfterRun() {
+  console.log('\n--- E2E (A.2): inspect conversation generates markdown report ---')
+  // Find the most recent conversation for xhs:test
+  const conversationsDir = path.join(BLOBS_DIR, 'conversations')
+  if (!fs.existsSync(conversationsDir)) {
+    assert(false, 'conversations blob dir does not exist')
+    return
+  }
+  const dirs = fs.readdirSync(conversationsDir)
+    .map(d => ({
+      id: d,
+      mtime: fs.statSync(path.join(conversationsDir, d)).mtime.getTime(),
+    }))
+    .sort((a, b) => b.mtime - a.mtime)
+  if (dirs.length === 0) {
+    assert(false, 'no conversation dirs to inspect')
+    return
+  }
+  const recentConv = dirs[0].id
+  console.log(`  using conversation: ${recentConv}`)
+
+  const r = spawnSync('npx', ['tsx', 'src/index.ts', 'inspect', 'conversation', recentConv], {
+    cwd: ORCHESTRATOR_DIR,
+    encoding: 'utf-8',
+    timeout: 30_000,
+  })
+  assert(r.status === 0, `inspect conversation exit 0 (stderr: ${(r.stderr || '').trim()})`)
+
+  const reportDir = path.join(BLOBS_DIR, `conversations/${recentConv}/reports`)
+  assert(fs.existsSync(reportDir), `report dir created at ${reportDir}`)
+  if (fs.existsSync(reportDir)) {
+    const reports = fs.readdirSync(reportDir).filter(f => f.endsWith('.md'))
+    assert(reports.length >= 1, `at least 1 markdown report (${reports.length})`)
+  }
+}
+
 async function main() {
   console.log('=== Orchestrator E2E Tests ===')
   console.log(`  orchestrator dir: ${ORCHESTRATOR_DIR}`)
@@ -310,6 +403,10 @@ async function main() {
   await testDurableSleep()
   await testApprovalFlow()
   await testKillResume()
+
+  // Phase A.2 additions
+  await testAllocationLifecycle()
+  testInspectReportAfterRun()
 
   console.log(`\n=== Results: ${passed} passed, ${failed} failed ===`)
   process.exit(failed > 0 ? 1 : 0)
