@@ -6,6 +6,8 @@
     "orchestrator": "node --no-warnings --import tsx/esm src/index.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
+    "test": "pnpm test:unit",
+    "test:unit": "tsx ../../tests/orchestrator/unit/test-storage.ts",
     "db:generate": "npx drizzle-kit generate",
     "db:migrate": "npx tsx src/db/migrate.ts"
   },
