@@ -14,6 +14,7 @@ import {
   inspectCommandsCommand,
   inspectLogsCommand,
 } from './cli/inspect.js'
+import { seedTeamCommand } from './cli/seed-team.js'
 
 const program = new Command()
   .name('orchestrator')
@@ -75,6 +76,15 @@ service
     await new Promise<void>((resolve, reject) => {
       child.on('exit', code => code === 0 ? resolve() : reject(new Error(`drizzle-kit exited ${code}`)))
     })
+  })
+
+service
+  .command('seed-team')
+  .description('Copy an in-tree team into the runtime data dir (idempotent)')
+  .requiredOption('--name <name>', 'Team name (e.g. social-media-engagement)')
+  .option('--data-dir <dir>', 'Override ORCHESTRATOR_DATA_DIR for this invocation')
+  .action(async (opts) => {
+    await seedTeamCommand({ name: opts.name, dataDir: opts.dataDir })
   })
 
 // ── agent group ────────────────────────────────────────────────────────────

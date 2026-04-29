@@ -255,6 +255,40 @@ async function testBlobStore() {
   await expectThrow(() => stores.blobStore.read('../../etc/passwd'), 'generic read rejects traversal')
 }
 
+async function testSeedTeam() {
+  console.log('seed-team.ts')
+  const { seedTeamCommand } = await import('../../../src/orchestrator/src/cli/seed-team.js')
+  const { TeamStoreFs } = await import('../../../src/orchestrator/src/storage/team-store.js')
+
+  const dir = path.join(tmpDir, 'seed')
+  await seedTeamCommand({ name: 'social-media-engagement', dataDir: dir })
+
+  const layout = makePaths(dir)
+  const store = new TeamStoreFs(layout)
+  const cfg = await store.get('social-media-engagement')
+  assert(cfg?.name === 'social-media-engagement', 'team.json written + readable via TeamStore')
+  assert(cfg?.lead === 'engagement-lead', 'config.lead persisted')
+  assert(cfg?.agents.length === 1, 'config.agents has 1 entry')
+
+  const lead = await store.readPromptFile('social-media-engagement', 'engagement-lead.md')
+  assert(typeof lead === 'string' && lead.length > 0, 'engagement-lead.md prompt copied')
+  const soul = await store.readPromptFile('social-media-engagement', 'soul.md')
+  assert(typeof soul === 'string' && soul.includes('Persona'), 'soul.md prompt copied')
+  const tools = await store.readPromptFile('social-media-engagement', 'tools.md')
+  assert(typeof tools === 'string' && tools.includes('Tool Reference'), 'tools.md prompt copied')
+
+  // Idempotency: re-running over an existing seeded team works
+  await seedTeamCommand({ name: 'social-media-engagement', dataDir: dir })
+  const cfg2 = await store.get('social-media-engagement')
+  assert(cfg2?.name === cfg?.name, 're-running seed-team is idempotent')
+
+  // Missing team → clear error
+  await expectThrow(
+    () => seedTeamCommand({ name: 'does-not-exist', dataDir: dir }),
+    'seed-team rejects missing team name',
+  )
+}
+
 async function main() {
   await setup()
   try {
@@ -265,6 +299,7 @@ async function main() {
     await testAccountStore()
     await testSignalStore()
     await testBlobStore()
+    await testSeedTeam()
   } catch (e: any) {
     console.error('UNCAUGHT:', e?.stack ?? e)
     failed++
