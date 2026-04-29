@@ -121,6 +121,20 @@ and MMS fields (`mmsc`, `mmsProxy`, `mmsPort`).
 The CLI and device-owner bridge auto-add APN type `mms` when MMS fields are
 present.
 
+## Internal endpoints
+
+These are served on the host's `INTERNAL_PORT` (default `8081`) — the loopback
+listener that's reachable from each phone via ADB-reverse, not from external
+clients.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/watchdog-probe` | Liveness probe for the kiosk watchdog. Returns `{"ok":true,"ts":"<rfc3339>"}`. No auth, no DB hit. The kiosk hits this every 60s; 3 consecutive failures trigger a self-reboot. See [device-owner.md → Self-healing watchdog](../device-owner.md). |
+
+The shared `tcp:8081 ↔ 8081` ADB reverse is set up per phone by
+`fleet_agent/steps/snapshot.py` so every kiosk uses the same hardcoded probe URL
+regardless of its own per-phone allocated port.
+
 ## WebSocket Endpoints
 
 ### `/ws/audio/call` — Call Audio (HFP)

@@ -19,6 +19,73 @@ adb shell dpm set-device-owner com.otacon.kiosk/.DeviceOwnerReceiver
 - `DISALLOW_CONFIG_TETHERING` — prevent hotspot/tethering
 - Camera disabled
 - WiFi desired state managed by host-local Rust config and applied directly by the host
+- Self-healing watchdog (foreground service) — see below
+
+## Self-healing watchdog
+
+The kiosk reboots its own phone if it loses contact with the host for ~3
+minutes. This recovers from `adbd` wedges that previously required a human
+power-button press.
+
+**Components**:
+- `WatchdogService` — foreground service with persistent notification, started by
+  `BootReceiver` on `BOOT_COMPLETED` and `MY_PACKAGE_REPLACED`. Schedules the
+  first probe alarm 60s out.
+- `WatchdogReceiver` — alarm broadcast handler. Uses `goAsync()` + a single-thread
+  Executor so the HTTP probe never runs on the main thread (would otherwise hit
+  `NetworkOnMainThreadException`). Re-arms the next alarm before returning.
+- `HealthProbe` — `HttpURLConnection` wrapper, 5s connect+read timeout. Tests
+  inject mocks via `sProbeOverride`.
+- `WatchdogConfig` — `SharedPreferences` accessor for tunables and persisted
+  state (counter, last reboot, 24h history).
+
+**Reboot rules**:
+- 3 consecutive probe failures over the 60s interval → `dpm.reboot()`.
+- Boot grace: skip reboots for 5 min after `BOOT_COMPLETED` (lets fleet-agent
+  reattach the ADB-reverse tunnel before the watchdog could mistake the gap
+  for a wedge).
+- Cooldown: 30 min minimum between reboots, max 4 reboots per 24h.
+
+**Probe target**:
+The kiosk hits `http://127.0.0.1:8081/api/v1/watchdog-probe` on the phone's
+local interface. That address tunnels to the Pi via ADB-reverse.
+
+The Pi's host server has a per-phone allocated `internal_port` starting at 8081
+(phone-2 = 8081, phone-3 = 8082, etc.). To give every phone a single, shared
+port for the watchdog, fleet-agent's `setup_port_forwards()`
+(`src/fleet_agent/steps/snapshot.py`) runs **two** `adb reverse` commands:
+```
+adb reverse tcp:{internal_port} tcp:{internal_port}   # per-phone (snapshot service)
+adb reverse tcp:8081 tcp:8081                          # shared (watchdog probe)
+```
+
+Both reverses are checked by `check_port_forwards()` in
+`src/fleet_agent/phone/health.py` — if either drops (USB re-attach, etc.),
+the heal path re-runs `setup_port_forwards`. Without the shared 8081 reverse,
+the kiosk's `127.0.0.1:8081` request hits nothing and every probe fails.
+
+**Kill switch**:
+SharedPreferences flag `watchdog_enabled` (default true). Flip it via the
+existing `KioskProvider`:
+```
+adb shell content update --uri content://com.otacon.kiosk/watchdog --bind enabled:i:0
+adb shell content query  --uri content://com.otacon.kiosk/watchdog
+```
+Useful when an evaluator is poking around and doesn't want the phone rebooting
+under them.
+
+**Reboot evidence** lives at `getFilesDir()/watchdog-reboots.log` (JSONL). On
+the next boot, `BootReceiver` reads the last entry and emits a tagged logcat
+line if it's recent (≤10 min), so integration tests can grep:
+```
+WATCHDOG_RECOVERY_BOOT ts=<prev_reboot_ts> reason=<reason>
+```
+
+**Battery optimization** is exempted two ways: the device-owner grants
+`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` programmatically on boot, and
+fleet-agent's provisioning runs `dumpsys deviceidle whitelist +com.otacon.kiosk`
+as a safety net. Without that, AlarmManager wakeups can be deferred during
+deep Doze.
 
 ## TODO: Bluetooth pairing
 
