@@ -43,6 +43,7 @@ def provision_device_owner(serial: str):
             if 'Success' in result:
                 log.info(f'[{serial}] APK updated')
         grant_permissions(serial)
+        whitelist_deviceidle(serial)
         adb_shell(
             serial,
             f'am broadcast -a {DEVICE_OWNER_PKG}.CLEAR_RESTRICTIONS '
@@ -77,7 +78,17 @@ def provision_device_owner(serial: str):
 
     adb_shell(serial, f'cmd notification allow_listener {DEVICE_OWNER_PKG}/.OtaconNotificationListener')
     grant_permissions(serial)
+    whitelist_deviceidle(serial)
     log.info(f'[{serial}] Device owner provisioned')
+
+
+def whitelist_deviceidle(serial: str):
+    """Add the kiosk to deviceidle whitelist so AlarmManager fires during Doze.
+    Belt-and-suspenders alongside the device-owner permission grant; idempotent."""
+    try:
+        adb_shell(serial, f'dumpsys deviceidle whitelist +{DEVICE_OWNER_PKG}', timeout=5)
+    except Exception as e:
+        log.warning(f'[{serial}] deviceidle whitelist failed: {e}')
 
 
 def _needs_apk_update(serial: str) -> bool:

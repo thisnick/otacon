@@ -162,6 +162,14 @@ public class KioskProvider extends ContentProvider {
                 return enabled == null ? apnsEnabled() : apnsSetEnabled(enabled);
             }
 
+            // --- Watchdog ---
+            if (path.equals("watchdog")) {
+                return watchdogStatus();
+            }
+            if (path.equals("watchdog/set")) {
+                return watchdogSet(uri);
+            }
+
             // --- Lock (passcode management) ---
             if (path.equals("lock/status")) {
                 return lockStatus();
@@ -1653,6 +1661,28 @@ public class KioskProvider extends ContentProvider {
         return cursor;
     }
 
+    // ==================== Watchdog ====================
+
+    private Cursor watchdogStatus() {
+        boolean enabled = WatchdogConfig.isEnabled(getContext());
+        long lastReboot = WatchdogConfig.prefs(getContext())
+            .getLong(WatchdogConfig.KEY_LAST_REBOOT_TS, 0L);
+        int counter = WatchdogConfig.prefs(getContext())
+            .getInt(WatchdogConfig.KEY_FAILURES, 0);
+        MatrixCursor cursor = new MatrixCursor(new String[]{"enabled", "counter", "last_reboot_ts"});
+        cursor.addRow(new Object[]{enabled, counter, lastReboot});
+        return cursor;
+    }
+
+    private Cursor watchdogSet(Uri uri) {
+        String enabled = uri.getQueryParameter("enabled");
+        if (enabled == null) return errorCursor("missing enabled parameter");
+        boolean value = "1".equals(enabled) || "true".equalsIgnoreCase(enabled);
+        WatchdogConfig.setEnabled(getContext(), value);
+        Log.i(TAG, "watchdog enabled=" + value);
+        return watchdogStatus();
+    }
+
     // ==================== Shared ====================
 
     private MatrixCursor errorCursor(String message) {
@@ -1664,5 +1694,23 @@ public class KioskProvider extends ContentProvider {
     @Override public String getType(Uri uri) { return null; }
     @Override public Uri insert(Uri uri, ContentValues values) { return null; }
     @Override public int delete(Uri uri, String selection, String[] selectionArgs) { return 0; }
-    @Override public int update(Uri uri, ContentValues values, String selection, String[] selectionArgs) { return 0; }
+
+    /**
+     * Supports `content update --uri content://com.otacon.kiosk/watchdog --bind enabled:i:0`
+     * for the kiosk watchdog kill switch. Other paths fall through to no-op.
+     */
+    @Override
+    public int update(Uri uri, ContentValues values, String selection, String[] selectionArgs) {
+        String path = uri.getPath();
+        if (path == null) return 0;
+        if (path.startsWith("/")) path = path.substring(1);
+        if ("watchdog".equals(path) && values != null && values.containsKey("enabled")) {
+            Integer raw = values.getAsInteger("enabled");
+            boolean enabled = raw != null && raw != 0;
+            WatchdogConfig.setEnabled(getContext(), enabled);
+            Log.i(TAG, "watchdog enabled=" + enabled + " (via update)");
+            return 1;
+        }
+        return 0;
+    }
 }

@@ -21,6 +21,12 @@
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
     <uses-permission android:name="android.permission.RECEIVE_MMS" />
     <uses-permission android:name="android.permission.WRITE_EMBEDDED_SUBSCRIPTIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.REBOOT" />
 
     <application
         android:label="Otacon Kiosk"
@@ -47,6 +53,26 @@
                 <action android:name="com.otacon.kiosk.APPLY_RESTRICTIONS" />
                 <action android:name="com.otacon.kiosk.CLEAR_RESTRICTIONS" />
                 <action android:name="com.otacon.kiosk.REMOVE_DEVICE_OWNER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <service
+            android:name=".WatchdogService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="watchdog" />
+        </service>
+
+        <receiver
+            android:name=".WatchdogReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.otacon.kiosk.WATCHDOG_PROBE" />
             </intent-filter>
         </receiver>
 

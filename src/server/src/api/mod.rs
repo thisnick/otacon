@@ -211,6 +211,15 @@ pub fn router(state: Arc<AppState>) -> Router {
             let spec = ApiDoc::openapi().to_json().unwrap();
             ([("content-type", "application/json")], spec)
         }))
+        // Kiosk watchdog probe — kiosk-side watchdog asks "can I still reach my host".
+        // Deliberately purpose-named so it doesn't collide with a future generic /health.
+        // No auth, no DB, no phone introspection — must stay alive even if subsystems are degraded.
+        .route("/api/v1/watchdog-probe", get(|| async {
+            Json(serde_json::json!({
+                "ok": true,
+                "ts": chrono::Utc::now().to_rfc3339(),
+            }))
+        }))
         .with_state(state)
 }
 

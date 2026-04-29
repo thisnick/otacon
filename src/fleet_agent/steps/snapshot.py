@@ -28,4 +28,9 @@ def start_snapshot_server(serial: str):
 def setup_port_forwards(serial: str, snapshot_port: int, internal_port: int):
     adb(serial, 'forward', f'tcp:{snapshot_port}', 'tcp:9091')
     adb(serial, 'reverse', f'tcp:{internal_port}', f'tcp:{internal_port}')
+    # Shared reverse so the kiosk watchdog (hardcoded http://127.0.0.1:8081)
+    # can reach the host's internal HTTP listener regardless of which
+    # per-phone internal_port was allocated. Idempotent: `adb reverse` is a
+    # set, so a no-op when internal_port already happens to be 8081.
+    adb(serial, 'reverse', 'tcp:8081', 'tcp:8081')
     log.info(f'[{serial}] Port forwards: snapshot={snapshot_port}, internal={internal_port}')

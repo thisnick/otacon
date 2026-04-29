@@ -19,8 +19,8 @@ android {
         applicationId = "com.otacon.kiosk"
         minSdk = 33
         targetSdk = 34
-        versionCode = 38
-        versionName = "3.16.0"
+        versionCode = 41
+        versionName = "3.17.2"
     }
 
     buildTypes {
@@ -37,7 +37,15 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
 }
 
 dependencies {
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.11.1")
+    testImplementation("org.mockito:mockito-core:5.7.0")
+    testImplementation("androidx.test:core:1.5.0")
 }

@@ -191,4 +191,7 @@ def check_port_forwards(serial: str, snapshot_port: int, internal_port: int) -> 
     rev = adb(serial, 'reverse', '--list')
     has_fwd = f'tcp:{snapshot_port}' in fwd
     has_rev = f'tcp:{internal_port}' in rev
-    return has_fwd and has_rev
+    # Kiosk watchdog reverse: phone:8081 → host:8081. Always required, even
+    # when the per-phone internal_port differs.
+    has_watchdog_rev = 'tcp:8081' in rev
+    return has_fwd and has_rev and has_watchdog_rev
