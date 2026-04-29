@@ -15,6 +15,7 @@ import {
   inspectLogsCommand,
 } from './cli/inspect.js'
 import { seedTeamCommand } from './cli/seed-team.js'
+import { runV2Command } from './cli/run-v2.js'
 
 const program = new Command()
   .name('orchestrator')
@@ -95,7 +96,7 @@ const agent = program.command('agent').description('Run / control agents.')
 
 agent
   .command('run')
-  .description('Start or resume a team for an account')
+  .description('Start or resume a team for an account (legacy; uses Drizzle path)')
   .requiredOption('--account <id>', 'Account ID (e.g. xhs:test)')
   .option('--team <name>', 'Team name', 'social-media-engagement')
   .option('--prompt <text>', 'Initial prompt for the lead agent')
@@ -106,6 +107,24 @@ agent
       team: opts.team,
       prompt: opts.prompt,
       db,
+    })
+  })
+
+agent
+  .command('run-v2')
+  .description('Start a run via the orchestrator-v2 HTTP server (requires `pnpm dev` running)')
+  .requiredOption('--account <id>', 'Account ID (e.g. xhs:test)')
+  .option('--team <name>', 'Team name', 'social-media-engagement')
+  .option('--prompt <text>', 'Initial prompt for the lead agent')
+  .option('--url <url>', 'Orchestrator HTTP URL (defaults to ORCHESTRATOR_URL env or http://localhost:9090)')
+  .option('--auto-approve', 'Auto-approve every approval signal (no stdin prompt)')
+  .action(async (opts) => {
+    await runV2Command({
+      account: opts.account,
+      team: opts.team,
+      prompt: opts.prompt,
+      url: opts.url,
+      autoApprove: opts.autoApprove,
     })
   })
 

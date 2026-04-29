@@ -161,8 +161,15 @@ function bashTool(ctx: ToolFactoryCtx) {
       const toolCallId = opts.toolCallId
       const token = approvalToken(ctx.runId, toolCallId)
 
-      // Persist signal metadata (step) BEFORE awaiting the hook.
-      // External resolvers can list pending signals via SignalStore + token.
+      // IMPORTANT: hook creation must precede the data-signal-created
+      // chunk emission. Otherwise a CLI/UI that races on the chunk could
+      // POST resolve before world-local has the hook token indexed,
+      // hitting HookNotFoundError.
+      const hook = approvalHook.create({ token })
+
+      // Persist signal metadata + emit data-signal-created (step). Now
+      // that the hook is registered, external resolvers can find it via
+      // SignalStore.getByHookToken.
       await persistSignalForBashStep({
         runId: ctx.runId,
         toolCallId,
@@ -171,8 +178,18 @@ function bashTool(ctx: ToolFactoryCtx) {
       })
 
       // SUSPEND. Workflow durably waits here.
-      const hook = approvalHook.create({ token })
       const { decision, message } = await hook
+
+      // Emit data-signal-resolved (step) so observers can fold the
+      // approval card closed. Mark the SignalStore row resolved here too
+      // so the in-process resolve route doesn't have to.
+      await emitSignalResolvedStep({
+        runId: ctx.runId,
+        toolCallId,
+        kind: 'approval',
+        decision,
+        message: message ?? null,
+      })
 
       if (decision === 'reject') return `Action rejected: ${message ?? 'no reason given'}`
       if (decision === 'skip') return `Session skipped by approver: ${message ?? 'no reason given'}`
@@ -194,13 +211,22 @@ function escalateTool(ctx: ToolFactoryCtx) {
     execute: async ({ issue }, opts: { toolCallId: string }) => {
       const toolCallId = opts.toolCallId
       const token = `escalation:${ctx.runId}:${toolCallId}`
+      // Hook before chunk emission — see bashTool's note for the
+      // race-condition rationale.
+      const hook = approvalHook.create({ token })
       await persistSignalForEscalateStep({
         runId: ctx.runId,
         toolCallId,
         rationale: issue,
       })
-      const hook = approvalHook.create({ token })
       const { decision, message } = await hook
+      await emitSignalResolvedStep({
+        runId: ctx.runId,
+        toolCallId,
+        kind: 'escalation',
+        decision,
+        message: message ?? null,
+      })
       if (decision === 'approve') return `User approved. Continue with your plan.${message ? ` Note: ${message}` : ''}`
       return `User responded: ${decision}${message ? ` — ${message}` : ''}`
     },
@@ -273,6 +299,44 @@ async function emitRunFailedStep(p: { runId: string; error: string }): Promise<v
 
 // ────── signal-persisting steps (delegate to approval-bridge) ──────
 
+async function emitSignalResolvedStep(p: {
+  runId: string
+  toolCallId: string
+  kind: 'approval' | 'escalation'
+  decision: 'approve' | 'reject' | 'skip'
+  message: string | null
+}): Promise<void> {
+  'use step'
+  const { makeStores } = await import('../src/storage/factory.js')
+  const { signalIdFor } = await import('../src/run-executor/approval-bridge.js')
+  const dataDir = process.env.ORCHESTRATOR_DATA_DIR ?? '.orchestrator-data'
+  const { signalStore } = await makeStores({ dataDir })
+  const signalId = signalIdFor(p.runId, p.toolCallId, p.kind)
+  // Mark resolved (idempotent — overwrites if already-resolved by the
+  // route handler).
+  try {
+    await signalStore.markResolved(signalId, p.decision, p.message ?? undefined)
+  } catch {
+    // Signal might have been marked resolved by the HTTP route already;
+    // not fatal.
+  }
+  const writer = getWritable<UIMessageChunk>().getWriter()
+  try {
+    await writer.write({
+      type: 'data-signal-resolved',
+      id: `signal-resolved:${p.runId}:${p.toolCallId}`,
+      data: {
+        signalId,
+        kind: p.kind,
+        decision: p.decision,
+        message: p.message,
+      },
+    } as unknown as UIMessageChunk)
+  } finally {
+    writer.releaseLock()
+  }
+}
+
 async function persistSignalForBashStep(p: {
   runId: string
   toolCallId: string
@@ -281,6 +345,7 @@ async function persistSignalForBashStep(p: {
 }): Promise<void> {
   'use step'
   const { makeStores } = await import('../src/storage/factory.js')
+  const { signalIdFor } = await import('../src/run-executor/approval-bridge.js')
   const dataDir = process.env.ORCHESTRATOR_DATA_DIR ?? '.orchestrator-data'
   const { signalStore } = await makeStores({ dataDir })
   await persistSignal({
@@ -291,6 +356,24 @@ async function persistSignalForBashStep(p: {
     command: p.command,
     rationale: p.rationale,
   })
+  // Emit a chunk so the CLI / web UI knows there's a pending approval
+  // without polling the SignalStore.
+  const writer = getWritable<UIMessageChunk>().getWriter()
+  try {
+    await writer.write({
+      type: 'data-signal-created',
+      id: `signal-created:${p.runId}:${p.toolCallId}`,
+      data: {
+        signalId: signalIdFor(p.runId, p.toolCallId, 'approval'),
+        kind: 'approval',
+        toolCallId: p.toolCallId,
+        command: p.command,
+        rationale: p.rationale,
+      },
+    } as unknown as UIMessageChunk)
+  } finally {
+    writer.releaseLock()
+  }
 }
 
 async function persistSignalForEscalateStep(p: {
@@ -300,6 +383,7 @@ async function persistSignalForEscalateStep(p: {
 }): Promise<void> {
   'use step'
   const { makeStores } = await import('../src/storage/factory.js')
+  const { signalIdFor } = await import('../src/run-executor/approval-bridge.js')
   const dataDir = process.env.ORCHESTRATOR_DATA_DIR ?? '.orchestrator-data'
   const { signalStore } = await makeStores({ dataDir })
   await persistSignal({
@@ -309,6 +393,21 @@ async function persistSignalForEscalateStep(p: {
     kind: 'escalation',
     rationale: p.rationale,
   })
+  const writer = getWritable<UIMessageChunk>().getWriter()
+  try {
+    await writer.write({
+      type: 'data-signal-created',
+      id: `signal-created:${p.runId}:${p.toolCallId}`,
+      data: {
+        signalId: signalIdFor(p.runId, p.toolCallId, 'escalation'),
+        kind: 'escalation',
+        toolCallId: p.toolCallId,
+        rationale: p.rationale,
+      },
+    } as unknown as UIMessageChunk)
+  } finally {
+    writer.releaseLock()
+  }
 }
 
 // ─────────────────────── helpers ────────────────────────────
