@@ -255,6 +255,56 @@ async function testBlobStore() {
   await expectThrow(() => stores.blobStore.read('../../etc/passwd'), 'generic read rejects traversal')
 }
 
+async function testApprovalBridge() {
+  console.log('approval-bridge.ts')
+  const {
+    approvalToken,
+    escalationToken,
+    signalIdFor,
+    persistSignal,
+  } = await import('../../../src/orchestrator/src/run-executor/approval-bridge.js')
+
+  // Token derivation is deterministic (replay-safe).
+  const t1 = approvalToken('run-1', 'tc-1')
+  const t2 = approvalToken('run-1', 'tc-1')
+  assert(t1 === t2 && t1 === 'approval:run-1:tc-1', 'approvalToken format is approval:<runId>:<toolCallId>')
+
+  const e1 = escalationToken('run-1', 'tc-2')
+  assert(e1 === 'escalation:run-1:tc-2', 'escalationToken format is escalation:<runId>:<toolCallId>')
+
+  // Signal id derived from runId + toolCallId + kind, safe for filesystem
+  const sid = signalIdFor('run-1', 'tc-1', 'approval')
+  assert(/^[A-Za-z0-9._:+-]+$/.test(sid), `signalIdFor returns a safe id (got ${sid})`)
+  assert(sid.includes('approval'), 'signalIdFor includes the kind')
+  assert(sid.includes('run-1'), 'signalIdFor includes the runId')
+  assert(sid.includes('tc-1'), 'signalIdFor includes the toolCallId')
+
+  // persistSignal writes to SignalStore + record carries the deterministic token
+  const dir = path.join(tmpDir, 'apprbridge')
+  const stores = await makeStores({ dataDir: dir })
+  const run = await stores.runStore.create({
+    id: ulid(),
+    account: 'xhs:test',
+    team: 'social-media-engagement',
+    agentRole: 'engagement-lead',
+    model: 'm',
+  })
+  await persistSignal({
+    signalStore: stores.signalStore,
+    runId: run.id,
+    toolCallId: 'tc-1',
+    kind: 'approval',
+    command: 'otacon tap eN',
+    rationale: 'open search',
+  })
+  const expectedToken = approvalToken(run.id, 'tc-1')
+  const fetched = await stores.signalStore.getByHookToken(expectedToken)
+  assert(fetched !== null && fetched.kind === 'approval', 'persistSignal stored an approval row')
+  assert(fetched?.command === 'otacon tap eN', 'persistSignal preserved command')
+  assert(fetched?.rationale === 'open search', 'persistSignal preserved rationale')
+  assert(fetched?.hookToken === expectedToken, 'persistSignal stored the deterministic hook token')
+}
+
 async function testAddAccountFs() {
   console.log('add-account.ts (FS side)')
   // Test the FS-side behavior of add-account in isolation by calling the
@@ -348,6 +398,7 @@ async function main() {
     await testAccountStore()
     await testSignalStore()
     await testBlobStore()
+    await testApprovalBridge()
     await testAddAccountFs()
     await testSeedTeam()
   } catch (e: any) {
