@@ -6,7 +6,8 @@
     "rustup@latest",
     "colima@latest",
     "python312@latest",
-    "uv@latest"
+    "uv@latest",
+    "opentofu@latest"
   ],
   "shell": {
     "init_hook": [
