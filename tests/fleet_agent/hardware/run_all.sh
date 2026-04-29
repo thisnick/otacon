@@ -32,6 +32,10 @@ TESTS=(
     "$DIR/test_replug_after_cutoff.sh"
     "$DIR/test_host_failure_detection.sh"
     "$DIR/test_bt_reconnect_after_reboot.sh"
+    # Phase watchdog: self-healing kiosk reboot
+    "$DIR/test_watchdog_unit.sh"
+    "$DIR/test_watchdog_killswitch.sh"
+    "$DIR/test_watchdog_usb_cutoff.sh"
     # verify_clean must be last
     "$DIR/verify_clean.sh"
 )
