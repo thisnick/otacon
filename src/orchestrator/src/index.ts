@@ -37,10 +37,11 @@ const service = program.command('service').description('Setup, registration, and
 
 service
   .command('add-account')
-  .description('Register a new account')
+  .description('Register a new account (writes to both DB and FS backends)')
   .requiredOption('--id <id>', 'Account ID (e.g. xhs:test)')
   .option('--phone-number <number>', 'Phone number credential (e.g. +15551234567)')
   .option('--email <email>', 'Email credential')
+  .option('--data-dir <dir>', 'Override ORCHESTRATOR_DATA_DIR for the FS-side write')
   .action(async (opts) => {
     const db = getDb()
     await addAccountCommand({
@@ -48,6 +49,7 @@ service
       phoneNumber: opts.phoneNumber,
       email: opts.email,
       db,
+      dataDir: opts.dataDir,
     })
   })
 

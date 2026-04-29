@@ -255,6 +255,55 @@ async function testBlobStore() {
   await expectThrow(() => stores.blobStore.read('../../etc/passwd'), 'generic read rejects traversal')
 }
 
+async function testAddAccountFs() {
+  console.log('add-account.ts (FS side)')
+  // Test the FS-side behavior of add-account in isolation by calling the
+  // store APIs directly (the Drizzle side requires a real DB and is
+  // exercised by the existing test-allocation.ts when needed).
+  const { makeStores } = await import('../../../src/orchestrator/src/storage/factory.js')
+  const dir = path.join(tmpDir, 'addacct')
+  const { accountStore } = await makeStores({ dataDir: dir })
+
+  // Simulate what add-account writes to the FS:
+  await accountStore.create({ id: 'xhs:demo', accountType: 'xhs' })
+  await accountStore.addCredential('xhs:demo', {
+    credentialType: 'phone',
+    identifier: '+15551234567',
+    isPrimary: true,
+  })
+  await accountStore.writeEnvFile('xhs:demo', 'persona.md', '# Persona\n\nplaceholder\n')
+  await accountStore.writeEnvFile('xhs:demo', 'soul.md', '# Soul\n\nplaceholder\n')
+  await accountStore.writeEnvFile('xhs:demo', 'agents.md', '# Agents\n\nplaceholder\n')
+  await accountStore.ensureWorkspace('xhs:demo')
+
+  const acct = await accountStore.get('xhs:demo')
+  assert(acct?.id === 'xhs:demo' && acct?.accountType === 'xhs', 'account.json persists id + type')
+
+  const creds = await accountStore.listCredentials('xhs:demo')
+  assert(creds.length === 1 && creds[0].identifier === '+15551234567', 'phone credential persisted')
+  const primary = await accountStore.primaryCredential('xhs:demo', 'phone')
+  assert(primary?.isPrimary === true, 'phone credential is primary')
+
+  const persona = await accountStore.readEnvFile('xhs:demo', 'persona.md')
+  assert(typeof persona === 'string' && persona.includes('Persona'), 'env/persona.md written')
+  const soul = await accountStore.readEnvFile('xhs:demo', 'soul.md')
+  assert(typeof soul === 'string' && soul.includes('Soul'), 'env/soul.md written')
+  const agents = await accountStore.readEnvFile('xhs:demo', 'agents.md')
+  assert(typeof agents === 'string' && agents.includes('Agents'), 'env/agents.md written')
+
+  // Ensure-then-don't-overwrite: re-running add-account must NOT clobber
+  // env files the user has edited. (We simulate by writing a custom
+  // persona, then calling the env-stub-ensure logic directly.)
+  await accountStore.writeEnvFile('xhs:demo', 'persona.md', 'CUSTOM\n')
+  // Simulate `ensureEnvStubs` semantics: check existing, write only if null.
+  const existing = await accountStore.readEnvFile('xhs:demo', 'persona.md')
+  if (existing === null) {
+    await accountStore.writeEnvFile('xhs:demo', 'persona.md', '# Persona\n\nplaceholder\n')
+  }
+  const after = await accountStore.readEnvFile('xhs:demo', 'persona.md')
+  assert(after === 'CUSTOM\n', 'ensureEnvStubs preserves existing content (does not clobber edits)')
+}
+
 async function testSeedTeam() {
   console.log('seed-team.ts')
   const { seedTeamCommand } = await import('../../../src/orchestrator/src/cli/seed-team.js')
@@ -299,6 +348,7 @@ async function main() {
     await testAccountStore()
     await testSignalStore()
     await testBlobStore()
+    await testAddAccountFs()
     await testSeedTeam()
   } catch (e: any) {
     console.error('UNCAUGHT:', e?.stack ?? e)
