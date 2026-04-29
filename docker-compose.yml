@@ -13,6 +13,7 @@ services:
       - /dev/snd:/dev/snd
       - /etc/tailscale/certs:/certs:ro
       - ${HOME}/.android:/root/.android:ro
+      - /lib/modules:/lib/modules:ro
       - bt-data:/var/lib/bluetooth
       - otacon-data:/data/otacon
     environment:
