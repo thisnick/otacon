@@ -645,13 +645,29 @@
     color: var(--text-muted);
   }
   .apn-form {
-    display: grid;
-    grid-template-columns: 1.4fr 1fr 1fr 1fr 1fr auto;
-    gap: 8px;
     margin-top: 10px;
+    border-top: 1px solid var(--border);
+    padding-top: 10px;
   }
-  .apn-form input,
-  .apn-form select {
+  .apn-form-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 8px;
+  }
+  .apn-form-body {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 8px;
+  }
+  .apn-form-body .span-2 { grid-column: span 2; }
+  .apn-form-body .span-3 { grid-column: span 3; }
+  .apn-form-body input,
+  .apn-form-body select {
     min-width: 0;
     background: var(--bg);
     border: 1px solid var(--border);
@@ -661,13 +677,21 @@
     font-family: 'JetBrains Mono', monospace;
     font-size: 11px;
   }
-  .apn-form input:focus,
-  .apn-form select:focus {
+  .apn-form-body input:focus,
+  .apn-form-body select:focus {
     border-color: var(--accent);
     outline: none;
   }
+  .apn-form-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 10px;
+  }
   @media (max-width: 900px) {
-    .apn-form { grid-template-columns: 1fr 1fr; }
+    .apn-form-body { grid-template-columns: 1fr 1fr; }
+    .apn-form-body .span-2,
+    .apn-form-body .span-3 { grid-column: span 2; }
   }
 
   /* --- Monitor panel --- */
@@ -942,33 +966,40 @@
         </div>
         <input type="hidden" id="apnFormId">
         <div class="apn-form">
-          <input type="text" id="apnEntryName" placeholder="Name" value="SpeedTalk">
-          <input type="text" id="apnOperator" placeholder="MCC MNC" value="310240">
-          <input type="text" id="apnName" placeholder="APN" value="stkmobi">
-          <input type="text" id="apnTypes" placeholder="types" value="default,supl">
-          <input type="text" id="apnMmsc" placeholder="MMSC URL">
-          <select id="apnProtocol">
-            <option value="ipv4v6">ipv4v6</option>
-            <option value="ipv4">ipv4</option>
-            <option value="ipv6">ipv6</option>
-          </select>
-          <button class="pill" onclick="apnSave()">Save</button>
-          <select id="apnRoamingProtocol">
-            <option value="ipv4v6">roaming ipv4v6</option>
-            <option value="ipv4">roaming ipv4</option>
-            <option value="ipv6">roaming ipv6</option>
-          </select>
-          <select id="apnAuthType">
-            <option value="none">auth none</option>
-            <option value="pap">auth pap</option>
-            <option value="chap">auth chap</option>
-            <option value="pap_or_chap">auth pap/chap</option>
-          </select>
-          <input type="text" id="apnUser" placeholder="username">
-          <input type="password" id="apnPassword" placeholder="password">
-          <input type="text" id="apnMmsProxy" placeholder="MMS proxy">
-          <input type="text" id="apnMmsPort" placeholder="MMS port">
-          <button class="pill" onclick="apnClearForm()">New</button>
+          <div class="apn-form-header">
+            <span id="apnFormTitle">New override</span>
+          </div>
+          <div class="apn-form-body">
+            <input type="text" id="apnEntryName" placeholder="Name" value="SpeedTalk" class="span-2">
+            <input type="text" id="apnOperator" placeholder="MCC MNC" value="310240">
+            <input type="text" id="apnName" placeholder="APN" value="stkmobi">
+            <input type="text" id="apnTypes" placeholder="types" value="default,supl" class="span-2">
+            <select id="apnProtocol" class="span-2">
+              <option value="ipv4v6">ipv4v6</option>
+              <option value="ipv4">ipv4</option>
+              <option value="ipv6">ipv6</option>
+            </select>
+            <select id="apnRoamingProtocol" class="span-2">
+              <option value="ipv4v6">roaming ipv4v6</option>
+              <option value="ipv4">roaming ipv4</option>
+              <option value="ipv6">roaming ipv6</option>
+            </select>
+            <select id="apnAuthType" class="span-2">
+              <option value="none">auth none</option>
+              <option value="pap">auth pap</option>
+              <option value="chap">auth chap</option>
+              <option value="pap_or_chap">auth pap/chap</option>
+            </select>
+            <input type="text" id="apnUser" placeholder="username" class="span-3">
+            <input type="password" id="apnPassword" placeholder="password" class="span-3">
+            <input type="text" id="apnMmsc" placeholder="MMSC URL" class="span-3">
+            <input type="text" id="apnMmsProxy" placeholder="MMS proxy" class="span-2">
+            <input type="text" id="apnMmsPort" placeholder="MMS port">
+          </div>
+          <div class="apn-form-actions">
+            <button class="pill" id="apnResetBtn" onclick="apnClearForm()">Reset</button>
+            <button class="pill active" onclick="apnSave()">Save</button>
+          </div>
         </div>
       </div>
     </div>
@@ -2017,6 +2048,8 @@ function apnEdit(id) {
   document.getElementById('apnMmsc').value = apn.mmsc || '';
   document.getElementById('apnMmsProxy').value = apn.mmsProxy || '';
   document.getElementById('apnMmsPort').value = apn.mmsPort || '';
+  document.getElementById('apnFormTitle').textContent = `Editing #${apn.id}`;
+  document.getElementById('apnResetBtn').textContent = 'Cancel';
 }
 
 function apnClearForm() {
@@ -2033,6 +2066,8 @@ function apnClearForm() {
   document.getElementById('apnMmsc').value = '';
   document.getElementById('apnMmsProxy').value = '';
   document.getElementById('apnMmsPort').value = '';
+  document.getElementById('apnFormTitle').textContent = 'New override';
+  document.getElementById('apnResetBtn').textContent = 'Reset';
 }
 
 async function apnDelete(id) {
