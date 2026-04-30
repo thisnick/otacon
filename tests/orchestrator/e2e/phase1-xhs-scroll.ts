@@ -238,7 +238,7 @@ async function step1Bootstrap(): Promise<void> {
 }
 
 async function step2Server(): Promise<void> {
-  console.log('\n--- 2. Server: spawn pnpm dev + probe /health ---')
+  console.log('\n--- 2. Server: spawn Nitro + probe /health + GET /api/v1/runs ---')
 
   ctx.server = await spawnServer({
     port: PORT,
@@ -248,8 +248,7 @@ async function step2Server(): Promise<void> {
   })
   info(`server up at ${ctx.server.baseUrl}`)
 
-  // Health probe (plan + task #2 mandate this, even if implementer hasn't
-  // added the route yet — observe-report.)
+  // Health probe — landed at P1-I commit 9 (`970f779`).
   let healthStatus: number | null = null
   let healthBody = ''
   try {
@@ -259,14 +258,28 @@ async function step2Server(): Promise<void> {
   } catch (e) {
     info(`/health fetch threw: ${(e as Error).message}`)
   }
-  if (healthStatus === 200 && healthBody.includes('ok')) {
-    assert(true, '/health returns 200 with ok body')
-  } else {
-    info(
-      `/health returned status=${healthStatus}, body=${JSON.stringify(healthBody).slice(0, 200)}`,
-    )
-    assert(false, '/health returns 200 with ok body (plan + task #2 require it)')
+  assert(
+    healthStatus === 200 && healthBody.includes('ok'),
+    `/health returns 200 with ok body (got status=${healthStatus}, body=${JSON.stringify(healthBody).slice(0, 120)})`,
+  )
+
+  // GET /api/v1/runs — landed at P1-I task #11. Empty list expected on a
+  // fresh data dir; the post-run rerun in step6Replay will assert the run
+  // appears here after creation.
+  let runsListStatus: number | null = null
+  let runsListBody: { runs?: unknown[] } = {}
+  try {
+    const res = await fetch(`${ctx.server.baseUrl}/api/v1/runs`)
+    runsListStatus = res.status
+    runsListBody = await res.json().catch(() => ({}))
+  } catch (e) {
+    info(`GET /api/v1/runs fetch threw: ${(e as Error).message}`)
   }
+  assert(runsListStatus === 200, `GET /api/v1/runs returns 200 on empty store (got ${runsListStatus})`)
+  assert(
+    Array.isArray(runsListBody.runs) && runsListBody.runs.length === 0,
+    `GET /api/v1/runs returns {runs: []} on empty store (got ${JSON.stringify(runsListBody).slice(0, 200)})`,
+  )
 }
 
 interface AgentRunResult {
@@ -290,7 +303,7 @@ async function step3RunAgent(): Promise<AgentRunResult> {
   assert(typeof startResp.runId === 'string' && startResp.runId.length > 0, `POST /api/v1/runs returns runId (${startResp.runId})`)
   assert(typeof startResp.workflowRunId === 'string' && startResp.workflowRunId.startsWith('wrun_'), `POST /api/v1/runs returns workflowRunId starting with wrun_ (${startResp.workflowRunId})`)
 
-  info(`tailing /stream — agent is talking to phone-3 + LLM. This may take ${Math.round(AGENT_TIMEOUT_MS / 60_000)}min.`)
+  info(`tailing /stream — agent is talking to phone (${ACCOUNT_PHONE}) + LLM. This may take ${Math.round(AGENT_TIMEOUT_MS / 60_000)}min.`)
   let chunkCount = 0
   const tail = await tailRun({
     baseUrl: ctx.server.baseUrl,
@@ -324,7 +337,7 @@ async function step3RunAgent(): Promise<AgentRunResult> {
   }
 }
 
-function step4Verify(run: AgentRunResult): void {
+async function step4Verify(run: AgentRunResult): Promise<void> {
   console.log('\n--- 4-9. Verify run artifacts on disk ---')
   const { runId, workflowRunId } = run.startResp
 
@@ -362,7 +375,18 @@ function step4Verify(run: AgentRunResult): void {
   // And the run record at workflow/runs/{wid}.json
   const wfRunFile = path.join(workflowDir, 'runs', `${workflowRunId}.json`)
   assert(fs.existsSync(wfRunFile), `workflow/runs/${workflowRunId}.json exists`)
-  const wfRun = readJson<{ status?: string }>(wfRunFile)
+  // The Workflow SDK flushes its run record asynchronously after the workflow
+  // body returns. data-run-completed reaches the chunk stream first; the
+  // run-record status may briefly lag at "running". Poll up to 5s before
+  // asserting (matches the smoke test pattern).
+  let wfRun: { status?: string } | null = null
+  const wfDeadline = Date.now() + 5_000
+  while (Date.now() < wfDeadline) {
+    wfRun = readJson<{ status?: string }>(wfRunFile)
+    if (wfRun?.status === 'completed') break
+    if (wfRun?.status === 'failed' || wfRun?.status === 'cancelled') break
+    await new Promise(r => setTimeout(r, 250))
+  }
   assert(wfRun?.status === 'completed', `workflow run status === "completed" (got ${wfRun?.status})`)
 
   // ── 7. Replay via /stream?startIndex=0 matches live observation ──────────
@@ -433,6 +457,33 @@ function step4Verify(run: AgentRunResult): void {
   }
 }
 
+async function step5VerifyRunsEndpoint(run: AgentRunResult): Promise<void> {
+  console.log('\n--- 9b. GET /api/v1/runs lists the completed run ---')
+  if (!ctx.server) throw new Error('server not initialized')
+  const { runId } = run.startResp
+
+  const res = await fetch(`${ctx.server.baseUrl}/api/v1/runs`)
+  assert(res.status === 200, `GET /api/v1/runs returns 200 (got ${res.status})`)
+  const body = (await res.json().catch(() => ({}))) as { runs?: Array<{ id: string; status: string; account?: string; team?: string }> }
+  const runs = Array.isArray(body.runs) ? body.runs : []
+  const found = runs.find(r => r.id === runId)
+  assert(found !== undefined, `GET /api/v1/runs includes runId ${runId} (got ${runs.length} runs)`)
+  if (found) {
+    assert(found.status === 'completed', `GET /api/v1/runs entry status === "completed" (got ${found.status})`)
+    assert(found.account === ACCOUNT_ID, `GET /api/v1/runs entry account === "${ACCOUNT_ID}" (got ${found.account})`)
+    assert(found.team === TEAM_NAME, `GET /api/v1/runs entry team === "${TEAM_NAME}" (got ${found.team})`)
+  }
+
+  // Also verify the account-filter form
+  const filteredRes = await fetch(`${ctx.server.baseUrl}/api/v1/runs?account=${encodeURIComponent(ACCOUNT_ID)}`)
+  assert(filteredRes.status === 200, `GET /api/v1/runs?account=... returns 200 (got ${filteredRes.status})`)
+  const filteredBody = (await filteredRes.json().catch(() => ({}))) as { runs?: Array<{ id: string }> }
+  assert(
+    Array.isArray(filteredBody.runs) && filteredBody.runs.some(r => r.id === runId),
+    `GET /api/v1/runs?account=${ACCOUNT_ID} includes runId ${runId}`,
+  )
+}
+
 async function step5Replay(run: AgentRunResult): Promise<void> {
   console.log('\n--- 10. Replay: GET /stream?startIndex=0 on completed run matches live ---')
   if (!ctx.server) throw new Error('server not initialized')
@@ -449,8 +500,8 @@ async function step5Replay(run: AgentRunResult): Promise<void> {
   assert(replay.terminal?.type === 'data-run-completed', `replay terminal === data-run-completed (got ${replay.terminal?.type})`)
 
   // Replay should have at least as many chunks as the live observation. The
-  // live tail starts at startIndex=0 (per run-v2 client), so they should be
-  // very close — same chunk count is the strict invariant.
+  // live tail starts at startIndex=0 (per `agent run` client), so they
+  // should be very close — same chunk count is the strict invariant.
   assert(
     replay.chunks.length === run.liveChunks.length,
     `replay chunk count matches live observation (live=${run.liveChunks.length} replay=${replay.chunks.length})`,
@@ -483,7 +534,8 @@ async function main(): Promise<void> {
       return
     }
     const runResult = await step3RunAgent()
-    step4Verify(runResult)
+    await step4Verify(runResult)
+    await step5VerifyRunsEndpoint(runResult)
     await step5Replay(runResult)
   } catch (e) {
     const err = e as Error
