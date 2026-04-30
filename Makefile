@@ -6,7 +6,8 @@
        generate generate-api generate-types validate-api \
        registry-build registry-deploy registry-logs registry-restart \
        admin-logs admin-restart admin-token bootstrap-admin-token \
-       orchestrator-build orchestrator-push orchestrator-logs orchestrator-restart \
+       orchestrator-build orchestrator-push orchestrator-deploy \
+       orchestrator-logs orchestrator-restart \
        orchestrator-tofu-init orchestrator-tofu-plan orchestrator-tofu-apply
 
 PI_HOST ?= otacon-pi
@@ -171,7 +172,10 @@ orchestrator-build:
 
 orchestrator-push:
 	docker compose -f docker-compose.orchestrator.yml build
-	docker push ghcr.io/thisnick/$(OTACON_REPO)/orchestrator:latest
+	docker compose -f docker-compose.orchestrator.yml push otacon-orchestrator
+
+orchestrator-deploy:
+	./scripts/deploy-orchestrator.sh $(ORCH_HOST)
 
 orchestrator-logs:
 	ssh $(ORCH_SSH) 'cd /opt/orchestrator && docker compose logs -f --tail=50 otacon-orchestrator'
