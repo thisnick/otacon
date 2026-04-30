@@ -42,25 +42,20 @@ load_from_env() {
         eval "$(grep -E "^${key}=" .env 2>/dev/null || true)"
     fi
 }
-load_from_env TS_AUTH_KEY_ORCHESTRATOR
-load_from_env TS_AUTH_KEY_REGISTRY
 load_from_env REGISTRY_BOOTSTRAP_ADMIN_TOKEN
 load_from_env AI_GATEWAY_API_KEY
 load_from_env OTACON_REPO
-
-# Tailscale auth: prefer a dedicated orchestrator key, fall back to
-# the registry's. Brief: "Reused — don't generate a new one."
-TS_AUTH_KEY_ORCHESTRATOR="${TS_AUTH_KEY_ORCHESTRATOR:-${TS_AUTH_KEY_REGISTRY:-}}"
 
 # OTACON_TOKEN for the orchestrator IS the registry's admin bootstrap
 # token (same value the local CLI uses to call the registry). Per
 # lead's brief.
 OTACON_TOKEN="${OTACON_TOKEN:-${REGISTRY_BOOTSTRAP_ADMIN_TOKEN:-}}"
 
-if [ -z "${TS_AUTH_KEY_ORCHESTRATOR}" ]; then
-    echo "WARNING: TS_AUTH_KEY_ORCHESTRATOR (or TS_AUTH_KEY_REGISTRY) not set."
-    echo "         Tailscale sidecar will not enroll on first start."
-fi
+# Tailscale: the host's `tailscale up` (set up by cloud-init on first
+# boot) handles both admin SSH AND HTTPS Serve for the orchestrator
+# container. No sidecar, so the deploy script doesn't write a
+# TS_AUTH_KEY anywhere — that key was only needed at first-boot time.
+
 if [ -z "${OTACON_TOKEN}" ]; then
     echo "WARNING: OTACON_TOKEN (or REGISTRY_BOOTSTRAP_ADMIN_TOKEN) not set."
     echo "         Orchestrator → registry calls will 401."
@@ -83,13 +78,13 @@ rsync -az docker-compose.orchestrator.yml "${REMOTE}:${REMOTE_DIR}/docker-compos
 # Write .env on the remote. Cloud-init pre-populates this on first
 # boot but each deploy refreshes it so secret rotations land cleanly.
 ssh "${REMOTE}" "cat > ${REMOTE_DIR}/.env" <<EOF
-TS_AUTH_KEY_ORCHESTRATOR=${TS_AUTH_KEY_ORCHESTRATOR}
 OTACON_REPO=${OTACON_REPO:-otacon-dev}
 OTACON_REGISTRY_URL=${OTACON_REGISTRY_URL:-https://otacon-registry.tail0437b8.ts.net:9080}
 OTACON_TOKEN=${OTACON_TOKEN}
 AI_GATEWAY_API_KEY=${AI_GATEWAY_API_KEY}
 ORCHESTRATOR_AUTH_REQUIRED=0
 ORCHESTRATOR_DATA_DIR=/data/orchestrator
+PORT=9090
 ORCHESTRATOR_PORT=9090
 EOF
 

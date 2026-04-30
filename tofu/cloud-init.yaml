@@ -3,7 +3,17 @@
 # First-boot setup for the otacon-orchestrator VPS.
 # Provisions Docker + Tailscale, writes the compose stack to
 # /opt/orchestrator, runs `docker compose up -d`, exposes the
-# orchestrator HTTP server (port 9090) via Tailscale Serve.
+# orchestrator HTTP server (port 9090) at https://otacon-orchestrator.
+# <tailnet_domain>/ via `tailscale serve`.
+#
+# Topology: ONE Tailscale node per VM. The host's `tailscale up`
+# handles both:
+#   - admin SSH (`ssh ubuntu@otacon-orchestrator.<tailnet_domain>`)
+#   - HTTPS Serve (`tailscale serve --https=443 http://127.0.0.1:9090`)
+# No tailscale sidecar — the orchestrator container binds directly to
+# 127.0.0.1:9090 on the host. This avoids the duplicate-hostname
+# problem (host + sidecar both claiming `otacon-orchestrator` →
+# second auto-suffixed `-1`).
 #
 # Variables come from `templatefile()` in main.tf:
 #   ${hostname}            — VM + Tailscale node name (otacon-orchestrator)
@@ -32,46 +42,33 @@ write_files:
     owner: root:root
     content: |
       ORCHESTRATOR_DATA_DIR=/data/orchestrator
+      # Nitro reads PORT for its listener; ORCHESTRATOR_PORT kept for
+      # any orchestrator code that might key on it.
+      PORT=9090
       ORCHESTRATOR_PORT=9090
       ORCHESTRATOR_AUTH_REQUIRED=0
       OTACON_TOKEN=${otacon_token}
       AI_GATEWAY_API_KEY=${ai_gateway_api_key}
       OTACON_REPO=${otacon_repo}
       OTACON_REGISTRY_URL=https://otacon-registry.${tailnet_domain}:9080
-      TS_AUTH_KEY_ORCHESTRATOR=${tailscale_auth_key}
 
   - path: /opt/orchestrator/docker-compose.yml
     permissions: "0644"
     owner: root:root
     content: |
       services:
-        # Tailscale sidecar — orchestrator network namespace lives in
-        # this container so the orchestrator HTTP port is only reachable
-        # over the tailnet.
-        tailscale-orchestrator:
-          image: tailscale/tailscale:latest
-          hostname: otacon-orchestrator
-          cap_add: [NET_ADMIN, NET_RAW]
-          devices: [/dev/net/tun]
-          restart: unless-stopped
-          environment:
-            - TS_AUTHKEY=$${TS_AUTH_KEY_ORCHESTRATOR}
-            - TS_HOSTNAME=otacon-orchestrator
-            - TS_EXTRA_ARGS=--ssh
-            - TS_STATE_DIR=/var/lib/tailscale
-            - TS_USERSPACE=false
-            - TS_SERVE_CONFIG=/config/serve.json
-          volumes:
-            - tailscale-orchestrator-state:/var/lib/tailscale
-            - ./tailscale-serve.json:/config/serve.json:ro
-
         otacon-orchestrator:
           image: ghcr.io/thisnick/$${OTACON_REPO:-otacon-dev}/orchestrator:latest
           restart: unless-stopped
-          network_mode: service:tailscale-orchestrator
-          depends_on: [tailscale-orchestrator]
+          # Bind to host loopback only; the host's `tailscale serve`
+          # proxies 443 → 127.0.0.1:9090 for tailnet HTTPS access. The
+          # OCI security list blocks 9090 publicly anyway (only UDP
+          # 41641 for Tailscale is allowed in).
+          ports:
+            - "127.0.0.1:9090:9090"
           environment:
             - ORCHESTRATOR_DATA_DIR=$${ORCHESTRATOR_DATA_DIR:-/data/orchestrator}
+            - PORT=$${PORT:-9090}
             - ORCHESTRATOR_PORT=$${ORCHESTRATOR_PORT:-9090}
             - ORCHESTRATOR_AUTH_REQUIRED=$${ORCHESTRATOR_AUTH_REQUIRED:-0}
             - OTACON_REGISTRY_URL=$${OTACON_REGISTRY_URL:-https://otacon-registry.${tailnet_domain}:9080}
@@ -82,43 +79,32 @@ write_files:
 
         # Watchtower — auto-pulls the orchestrator image when a newer
         # tag lands in ghcr.io. Same pattern as the registry's
-        # docker-compose, plus a 60s poll for snappier dev iteration.
+        # docker-compose. DOCKER_API_VERSION pin avoids the 1.25-
+        # default-too-old restart-loop.
         watchtower:
           image: containrrr/watchtower:latest
           restart: unless-stopped
+          environment:
+            - DOCKER_API_VERSION=1.40
           volumes:
             - /var/run/docker.sock:/var/run/docker.sock
             - /root/.docker/config.json:/config.json:ro
           command: --interval 60 --cleanup --include-restarting otacon-orchestrator
 
       volumes:
-        tailscale-orchestrator-state:
         orchestrator-data:
-
-  - path: /opt/orchestrator/tailscale-serve.json
-    permissions: "0644"
-    owner: root:root
-    content: |
-      {
-        "TCP": {
-          "443": { "HTTPS": true }
-        },
-        "Web": {
-          "$${TS_CERT_DOMAIN}:443": {
-            "Handlers": {
-              "/": { "Proxy": "http://127.0.0.1:9090" }
-            }
-          }
-        }
-      }
 
 runcmd:
   # ── Tailscale ─────────────────────────────────────────────
-  # Install host-level Tailscale too (the sidecar handles container
-  # networking; this lets `ssh ubuntu@otacon-orchestrator.${tailnet_domain}`
-  # work for direct VM admin).
+  # Single host-level node. Handles both admin SSH AND HTTPS Serve for
+  # the orchestrator container.
   - curl -fsSL https://tailscale.com/install.sh | sh
   - tailscale up --ssh --hostname=${hostname} --authkey=${tailscale_auth_key}
+  # Expose the orchestrator container at https://${hostname}.${tailnet_domain}/
+  # (Tailscale Serve issues a Let's Encrypt cert against the magic-DNS
+  # name automatically). Backgrounded so subsequent runcmd steps
+  # aren't blocked.
+  - tailscale serve --bg --https=443 http://127.0.0.1:9090
 
   # ── Docker ────────────────────────────────────────────────
   - install -m 0755 -d /etc/apt/keyrings
