@@ -16,25 +16,11 @@
  * tests.
  */
 import * as fs from 'node:fs'
-// Resolve sharp from the orchestrator package (it's not in the repo root deps).
-import * as path from 'node:path'
-import { fileURLToPath } from 'node:url'
-
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
-const ORCH_NM = path.resolve(__dirname, '../../../../src/orchestrator/node_modules')
-
-// Dynamic-import so the helper doesn't choke if sharp is unavailable; we
-// surface a clear error at call time instead.
-async function loadSharp(): Promise<typeof import('sharp')> {
-  // The orchestrator's sharp is reachable from its own node_modules. Try
-  // the standard resolution first, fall back to the orchestrator-scoped one.
-  try {
-    return (await import('sharp')) as unknown as typeof import('sharp')
-  } catch {
-    return (await import(path.join(ORCH_NM, 'sharp'))) as unknown as typeof import('sharp')
-  }
-}
+// `pnpm test:e2e:phase2` runs from `src/orchestrator/`, so Node's
+// node_modules walk-up resolves `sharp` from the orchestrator package
+// directly. The earlier dynamic-import dance landed on a non-existent
+// `sharp/index.jsx` and silently failed every meta read.
+import sharpDefault from 'sharp'
 
 export interface PngMeta {
   ok: boolean
@@ -53,9 +39,7 @@ export async function readPngMeta(filePath: string): Promise<PngMeta> {
     return { ok: false, width: null, height: null, format: null, bytes: 0, error: 'file not found' }
   }
   try {
-    const sharpMod = await loadSharp()
-    const sharp = (sharpMod as unknown as { default?: typeof import('sharp') }).default ?? sharpMod
-    const meta = await (sharp as unknown as (...a: unknown[]) => { metadata: () => Promise<{ format?: string; width?: number; height?: number }> })(filePath).metadata()
+    const meta = await sharpDefault(filePath).metadata()
     return {
       ok: meta.format === 'png' && (meta.width ?? 0) > 0 && (meta.height ?? 0) > 0,
       width: meta.width ?? null,
@@ -74,19 +58,7 @@ export async function readPngMeta(filePath: string): Promise<PngMeta> {
  */
 export async function pHash(filePath: string): Promise<string | null> {
   try {
-    const sharpMod = await loadSharp()
-    const sharp = (sharpMod as unknown as { default?: typeof import('sharp') }).default ?? sharpMod
-    type SharpFn = (...a: unknown[]) => {
-      resize: (w: number, h: number) => unknown
-    }
-    type SharpStage = {
-      grayscale: () => SharpStage
-      raw: () => SharpStage
-      toBuffer: () => Promise<Buffer>
-    }
-    const pipeline = (sharp as unknown as SharpFn)(filePath)
-    const stage = (pipeline as { resize: (w: number, h: number) => SharpStage }).resize(8, 8)
-    const raw = await stage.grayscale().raw().toBuffer()
+    const raw = await sharpDefault(filePath).resize(8, 8).grayscale().raw().toBuffer()
     // raw is 64 grayscale bytes (1 byte per pixel)
     const px = Array.from(raw.values())
     const mean = px.reduce((a, b) => a + b, 0) / px.length

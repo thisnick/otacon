@@ -174,6 +174,10 @@ async function teardown(): Promise<void> {
     console.error('teardown: server kill failed', e)
   }
   try {
+    if (process.env.KEEP_TMP_DIR === '1') {
+      console.log(`KEEP_TMP_DIR=1 — preserving ${ctx.tmpDir} for manual inspection`)
+      return
+    }
     if (ctx.tmpDir && fs.existsSync(ctx.tmpDir)) {
       fs.rmSync(ctx.tmpDir, { recursive: true, force: true })
     }
@@ -327,21 +331,24 @@ async function step4VerifyChunks(run: AgentRunResult): Promise<{
   }
   assert(urlShapeFails === 0, `every screenshot URL matches /api/v1/runs/{id}/traces/{tcid}/{kind}.png shape (${urlShapeFails} mis-shaped)`)
 
-  // Verify bash tool-call + tool-result chunks ALSO present and share
+  // Verify bash tool-input/tool-output chunks ALSO present and share
   // tool_call_ids with phone-action chunks (additive emission).
+  // AI SDK v7-beta renamed `tool-call` → `tool-input-available` (final input
+  // ready) and `tool-result` → `tool-output-available`. The toolCallId field
+  // is still on each.
   const toolCallTcids = new Set<string>()
   const toolResultTcids = new Set<string>()
   for (const c of run.liveChunks) {
-    if (c.type === 'tool-call') {
+    if (c.type === 'tool-input-available') {
       const id = (c as { toolCallId?: string }).toolCallId
       if (typeof id === 'string') toolCallTcids.add(id)
-    } else if (c.type === 'tool-result') {
+    } else if (c.type === 'tool-output-available') {
       const id = (c as { toolCallId?: string }).toolCallId
       if (typeof id === 'string') toolResultTcids.add(id)
     }
   }
-  assert(toolCallTcids.size > 0, `live stream has at least one bash tool-call chunk (got ${toolCallTcids.size})`)
-  assert(toolResultTcids.size > 0, `live stream has at least one bash tool-result chunk (got ${toolResultTcids.size})`)
+  assert(toolCallTcids.size > 0, `live stream has at least one bash tool-input-available chunk (got ${toolCallTcids.size})`)
+  assert(toolResultTcids.size > 0, `live stream has at least one bash tool-output-available chunk (got ${toolResultTcids.size})`)
 
   let missingBashCall = 0
   let missingBashResult = 0
@@ -351,11 +358,11 @@ async function step4VerifyChunks(run: AgentRunResult): Promise<{
   }
   assert(
     missingBashCall === 0,
-    `every data-phone-action tool_call_id has a matching bash tool-call (${missingBashCall} missing)`,
+    `every data-phone-action tool_call_id has a matching tool-input-available (${missingBashCall} missing)`,
   )
   assert(
     missingBashResult === 0,
-    `every data-phone-action tool_call_id has a matching bash tool-result (${missingBashResult} missing)`,
+    `every data-phone-action tool_call_id has a matching tool-output-available (${missingBashResult} missing)`,
   )
 
   // Sanity: subcommand values are recognized mutating verbs.
