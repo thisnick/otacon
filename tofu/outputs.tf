@@ -4,8 +4,8 @@ output "instance_public_ip" {
 }
 
 output "tailnet_url" {
-  description = "Tailscale-magic-DNS URL for the orchestrator HTTP server (port 9090)"
-  value       = "https://otacon-orchestrator.${var.tailnet_domain}:9090"
+  description = "Tailscale-magic-DNS URL for the orchestrator HTTP server. The host's `tailscale serve --https=443 http://127.0.0.1:9090` (set up by cloud-init) terminates TLS on 443, so users hit the URL with no port number."
+  value       = "https://otacon-orchestrator.${var.tailnet_domain}/"
 }
 
 output "ssh_private_key" {
