@@ -1,0 +1,68 @@
+# Stage 1: install + build
+FROM node:22-bookworm-slim AS builder
+
+# Build deps for native modules (sharp needs libvips at install time on
+# arm64; the prebuilt artifacts skip the cmake step but pkg-config keeps
+# the install-time fall-back working when the prebuilt mismatch happens).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# pnpm via corepack — same lock-file, no separate install step.
+RUN corepack enable && corepack prepare pnpm@9.12.3 --activate
+
+WORKDIR /src
+
+# Copy lock + workspace manifests first for better layer caching. The
+# orchestrator depends on the otacon-cli workspace (`workspace:*`) which
+# in turn pulls api-types, so we copy ALL the package.json files before
+# `pnpm install`.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY src/cli/package.json ./src/cli/
+COPY src/orchestrator/package.json ./src/orchestrator/
+RUN pnpm install --frozen-lockfile
+
+# Now copy sources and build.
+COPY src/cli/ ./src/cli/
+COPY src/orchestrator/ ./src/orchestrator/
+RUN pnpm --filter otacon-orchestrator build:server
+
+# Stage 2: minimal runtime
+FROM node:22-bookworm-slim AS runtime
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Run as a non-root user owning the data dir.
+RUN groupadd -r orchestrator && useradd -r -g orchestrator -d /data -m orchestrator \
+    && mkdir -p /data/orchestrator && chown -R orchestrator:orchestrator /data
+
+WORKDIR /app
+
+# Nitro's `nitro build` writes a self-contained server bundle to
+# `.output/`. Copy the whole tree (it's small — node_modules excluded
+# from the bundle, only what's used at runtime).
+COPY --from=builder /src/src/orchestrator/.output ./.output
+COPY --from=builder /src/src/orchestrator/static ./static
+
+# Static UI lives where nitro.config.ts's publicAssets points (`static/`
+# resolved relative to the orchestrator package root). The bundled
+# server resolves `static/` relative to its own cwd, so we put it
+# alongside `.output/`.
+
+ENV NODE_ENV=production
+ENV ORCHESTRATOR_DATA_DIR=/data/orchestrator
+ENV ORCHESTRATOR_PORT=9090
+
+EXPOSE 9090
+
+USER orchestrator
+WORKDIR /app
+
+# Volume mount — orchestrator state lives outside the image so the
+# container is replaceable.
+VOLUME ["/data/orchestrator"]
+
+CMD ["node", "--no-warnings", ".output/server/index.mjs"]

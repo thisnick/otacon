@@ -1,0 +1,136 @@
+#cloud-config
+#
+# First-boot setup for the otacon-orchestrator VPS.
+# Provisions Docker + Tailscale, writes the compose stack to
+# /opt/orchestrator, runs `docker compose up -d`, exposes the
+# orchestrator HTTP server (port 9090) via Tailscale Serve.
+#
+# Variables come from `templatefile()` in main.tf:
+#   ${hostname}            — VM + Tailscale node name (otacon-orchestrator)
+#   ${tailscale_auth_key}  — Tailscale pre-auth key
+#   ${tailnet_domain}      — e.g. tail0437b8.ts.net
+#   ${ghcr_pull_user}      — GHCR username for `docker login`
+#   ${ghcr_pull_token}     — GHCR token (read:packages)
+#   ${otacon_repo}         — image repo slug (otacon-dev | otacon)
+#   ${otacon_token}        — bearer for calling the otacon registry
+#   ${ai_gateway_api_key}  — Vercel AI Gateway key
+
+hostname: ${hostname}
+manage_etc_hosts: true
+
+package_update: true
+package_upgrade: true
+packages:
+  - ca-certificates
+  - curl
+  - gnupg
+  - jq
+
+write_files:
+  - path: /opt/orchestrator/.env
+    permissions: "0600"
+    owner: root:root
+    content: |
+      ORCHESTRATOR_DATA_DIR=/data/orchestrator
+      ORCHESTRATOR_PORT=9090
+      OTACON_TOKEN=${otacon_token}
+      AI_GATEWAY_API_KEY=${ai_gateway_api_key}
+      OTACON_REPO=${otacon_repo}
+      TS_AUTH_KEY_ORCHESTRATOR=${tailscale_auth_key}
+
+  - path: /opt/orchestrator/docker-compose.yml
+    permissions: "0644"
+    owner: root:root
+    content: |
+      services:
+        # Tailscale sidecar — orchestrator network namespace lives in
+        # this container so the orchestrator HTTP port is only reachable
+        # over the tailnet.
+        tailscale-orchestrator:
+          image: tailscale/tailscale:latest
+          hostname: otacon-orchestrator
+          cap_add: [NET_ADMIN, NET_RAW]
+          devices: [/dev/net/tun]
+          restart: unless-stopped
+          environment:
+            - TS_AUTHKEY=$${TS_AUTH_KEY_ORCHESTRATOR}
+            - TS_HOSTNAME=otacon-orchestrator
+            - TS_EXTRA_ARGS=--ssh
+            - TS_STATE_DIR=/var/lib/tailscale
+            - TS_USERSPACE=false
+            - TS_SERVE_CONFIG=/config/serve.json
+          volumes:
+            - tailscale-orchestrator-state:/var/lib/tailscale
+            - ./tailscale-serve.json:/config/serve.json:ro
+
+        otacon-orchestrator:
+          image: ghcr.io/thisnick/$${OTACON_REPO:-otacon-dev}/orchestrator:latest
+          restart: unless-stopped
+          network_mode: service:tailscale-orchestrator
+          depends_on: [tailscale-orchestrator]
+          environment:
+            - ORCHESTRATOR_DATA_DIR=$${ORCHESTRATOR_DATA_DIR:-/data/orchestrator}
+            - ORCHESTRATOR_PORT=$${ORCHESTRATOR_PORT:-9090}
+            - OTACON_REGISTRY_URL=https://otacon-registry.${tailnet_domain}:9080
+            - OTACON_TOKEN=$${OTACON_TOKEN}
+            - AI_GATEWAY_API_KEY=$${AI_GATEWAY_API_KEY}
+          volumes:
+            - orchestrator-data:/data/orchestrator
+
+        # Watchtower — auto-pulls the orchestrator image when a newer
+        # tag lands in ghcr.io. Same pattern as the registry's
+        # docker-compose, plus a 60s poll for snappier dev iteration.
+        watchtower:
+          image: containrrr/watchtower:latest
+          restart: unless-stopped
+          volumes:
+            - /var/run/docker.sock:/var/run/docker.sock
+            - /root/.docker/config.json:/config.json:ro
+          command: --interval 60 --cleanup --include-restarting otacon-orchestrator
+
+      volumes:
+        tailscale-orchestrator-state:
+        orchestrator-data:
+
+  - path: /opt/orchestrator/tailscale-serve.json
+    permissions: "0644"
+    owner: root:root
+    content: |
+      {
+        "TCP": {
+          "443": { "HTTPS": true }
+        },
+        "Web": {
+          "$${TS_CERT_DOMAIN}:443": {
+            "Handlers": {
+              "/": { "Proxy": "http://127.0.0.1:9090" }
+            }
+          }
+        }
+      }
+
+runcmd:
+  # ── Tailscale ─────────────────────────────────────────────
+  # Install host-level Tailscale too (the sidecar handles container
+  # networking; this lets `ssh ubuntu@otacon-orchestrator.${tailnet_domain}`
+  # work for direct VM admin).
+  - curl -fsSL https://tailscale.com/install.sh | sh
+  - tailscale up --ssh --hostname=${hostname} --authkey=${tailscale_auth_key}
+
+  # ── Docker ────────────────────────────────────────────────
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+  - chmod a+r /etc/apt/keyrings/docker.gpg
+  - echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" > /etc/apt/sources.list.d/docker.list
+  - apt-get update
+  - apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  - systemctl enable docker
+  - systemctl start docker
+  - usermod -aG docker ubuntu
+
+  # ── ghcr.io login (so Watchtower + initial pull can access private images) ──
+  - echo "${ghcr_pull_token}" | docker login ghcr.io -u "${ghcr_pull_user}" --password-stdin
+
+  # ── Stack ──────────────────────────────────────────────────
+  - cd /opt/orchestrator && docker compose pull
+  - cd /opt/orchestrator && docker compose up -d

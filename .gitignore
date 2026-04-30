@@ -46,3 +46,11 @@ nohup.out
 .orchestrator-data/
 .orchestrator/
 dist/
+
+# OpenTofu (orchestrator VPS deploy — local apply only, no remote state)
+tofu/.terraform/
+tofu/.terraform.lock.hcl
+tofu/*.tfplan
+tofu/*.tfstate
+tofu/*.tfstate.backup
+tofu/.envrc

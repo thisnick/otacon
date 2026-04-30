@@ -5,7 +5,9 @@
        clear-restrictions apply-restrictions \
        generate generate-api generate-types validate-api \
        registry-build registry-deploy registry-logs registry-restart \
-       admin-logs admin-restart admin-token bootstrap-admin-token
+       admin-logs admin-restart admin-token bootstrap-admin-token \
+       orchestrator-build orchestrator-push orchestrator-logs orchestrator-restart \
+       orchestrator-tofu-init orchestrator-tofu-plan orchestrator-tofu-apply
 
 PI_HOST ?= otacon-pi
 PI_USER ?= nick
@@ -154,3 +156,35 @@ admin-token:
 
 bootstrap-admin-token:
 	./scripts/bootstrap-admin-token.sh
+
+# ── Orchestrator (separate VPS lifecycle from registry/Pi) ────────────
+#
+# Image hosted at ghcr.io/thisnick/$(OTACON_REPO)/orchestrator:latest.
+# Watchtower on the VPS auto-pulls when a newer tag lands; no SSH push
+# required after the initial `tofu apply`.
+ORCH_HOST ?= otacon-orchestrator.tail0437b8.ts.net
+ORCH_SSH := ubuntu@$(ORCH_HOST)
+OTACON_REPO ?= otacon-dev
+
+orchestrator-build:
+	docker compose -f docker-compose.orchestrator.yml build
+
+orchestrator-push:
+	docker compose -f docker-compose.orchestrator.yml build
+	docker push ghcr.io/thisnick/$(OTACON_REPO)/orchestrator:latest
+
+orchestrator-logs:
+	ssh $(ORCH_SSH) 'cd /opt/orchestrator && docker compose logs -f --tail=50 otacon-orchestrator'
+
+orchestrator-restart:
+	ssh $(ORCH_SSH) 'cd /opt/orchestrator && docker compose restart otacon-orchestrator'
+
+# OpenTofu wrappers — run from `tofu/` with direnv supplying TF_VAR_*.
+orchestrator-tofu-init:
+	cd tofu && tofu init
+
+orchestrator-tofu-plan:
+	cd tofu && tofu plan -out=plan.tfplan
+
+orchestrator-tofu-apply:
+	cd tofu && tofu apply plan.tfplan

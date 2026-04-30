@@ -1,0 +1,51 @@
+# direnv template for `tofu/`. Copy to `.envrc`, then `direnv allow`.
+#
+# Two source .env files supply the OpenTofu variables:
+#
+# 1. `../../openclaw-yingjiang/.env` already exports `TF_VAR_encryption_
+#    passphrase`, `TF_VAR_tenancy_ocid`, `TF_VAR_user_ocid`,
+#    `TF_VAR_fingerprint`, `TF_VAR_region`, `TF_VAR_compartment_ocid`,
+#    `TF_VAR_tailscale_auth_key`. We source it as-is — no renames.
+#
+# 2. `../.env` (the otacon repo's local `.env`) supplies the
+#    orchestrator-specific variables (ghcr token, OTACON_TOKEN,
+#    AI_GATEWAY_API_KEY). We re-export those into `TF_VAR_*` shapes.
+#
+# If either file is missing the corresponding section is skipped — useful
+# for piecewise auth (e.g. running locally with only OCI vars in your
+# environment).
+
+set -a
+
+# ── from openclaw .env (already TF_VAR_-prefixed) ──────────
+if [ -f ../../openclaw-yingjiang/.env ]; then
+  . ../../openclaw-yingjiang/.env
+fi
+
+# ── from local otacon .env ─────────────────────────────────
+if [ -f ../.env ]; then
+  . ../.env
+fi
+
+set +a
+
+# ── Tailscale: per-orchestrator key, fall back to registry's ──
+# openclaw .env exports TF_VAR_tailscale_auth_key for openclaw's tailnet
+# node. We override it for the orchestrator unless the otacon .env
+# carries TS_AUTH_KEY_ORCHESTRATOR (a separate key minted in Tailscale
+# admin) — fall back to TS_AUTH_KEY_REGISTRY otherwise.
+export TF_VAR_tailscale_auth_key="${TS_AUTH_KEY_ORCHESTRATOR:-${TS_AUTH_KEY_REGISTRY:-${TF_VAR_tailscale_auth_key}}}"
+export TF_VAR_tailnet_domain="${TS_TAILNET_DOMAIN:-tail0437b8.ts.net}"
+
+# ── ghcr.io pull credentials (Watchtower needs these on the VM) ──
+export TF_VAR_ghcr_pull_user="${GHCR_PULL_USER:-thisnick}"
+export TF_VAR_ghcr_pull_token="$GHCR_PULL_TOKEN"
+export TF_VAR_otacon_repo="${OTACON_REPO:-otacon-dev}"
+
+# ── Orchestrator runtime secrets (cloud-init writes /opt/orchestrator/.env) ──
+export TF_VAR_otacon_token="$OTACON_TOKEN"
+export TF_VAR_ai_gateway_api_key="$AI_GATEWAY_API_KEY"
+
+# ── Optional: extra SSH keys without rotating tofu's deploy key ──
+# To add ad-hoc SSH access keys, append them as a HCL list:
+#   export TF_VAR_extra_ssh_public_keys='["ssh-ed25519 AAA...","ssh-ed25519 BBB..."]'

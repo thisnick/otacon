@@ -1,0 +1,56 @@
+# Local build target for the orchestrator image — mirrors what cloud-init
+# writes to /opt/orchestrator/docker-compose.yml on the deployed VM, so
+# `make orchestrator-build` + `make orchestrator-push` produce the same
+# artifact Watchtower picks up.
+#
+# Boot locally: `docker compose -f docker-compose.orchestrator.yml up -d`
+# (Tailscale sidecar will fail without a real auth key — for purely
+# local dev use `pnpm orchestrator dev` instead).
+services:
+  # ── Tailscale sidecar — orchestrator gets its own tailnet identity ──
+  tailscale-orchestrator:
+    image: tailscale/tailscale:latest
+    hostname: otacon-orchestrator
+    cap_add: [NET_ADMIN, NET_RAW]
+    devices: [/dev/net/tun]
+    restart: unless-stopped
+    environment:
+      - TS_AUTHKEY=${TS_AUTH_KEY_ORCHESTRATOR}
+      - TS_HOSTNAME=otacon-orchestrator
+      - TS_EXTRA_ARGS=--ssh
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=false
+    volumes:
+      - tailscale-orchestrator-state:/var/lib/tailscale
+
+  otacon-orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile.orchestrator
+    image: ghcr.io/thisnick/${OTACON_REPO:-otacon-dev}/orchestrator:latest
+    restart: unless-stopped
+    network_mode: service:tailscale-orchestrator
+    depends_on: [tailscale-orchestrator]
+    environment:
+      - ORCHESTRATOR_DATA_DIR=${ORCHESTRATOR_DATA_DIR:-/data/orchestrator}
+      - ORCHESTRATOR_PORT=${ORCHESTRATOR_PORT:-9090}
+      - OTACON_REGISTRY_URL=${OTACON_REGISTRY_URL:-}
+      - OTACON_TOKEN=${OTACON_TOKEN:-}
+      - AI_GATEWAY_API_KEY=${AI_GATEWAY_API_KEY:-}
+    volumes:
+      - orchestrator-data:/data/orchestrator
+
+  # Watchtower — auto-pulls the orchestrator image when a newer tag
+  # lands in ghcr.io. 60s polling is fine for the dev iteration tempo;
+  # production deploys can extend with --schedule.
+  watchtower:
+    image: containrrr/watchtower:latest
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${HOME}/.docker/config.json:/config.json:ro
+    command: --interval 60 --cleanup --include-restarting otacon-orchestrator
+
+volumes:
+  tailscale-orchestrator-state:
+  orchestrator-data:
