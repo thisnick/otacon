@@ -30,6 +30,24 @@ tr:hover { background: #161b22; cursor: pointer; }
 .empty { color: #484f58; padding: 24px; text-align: center; }
 .prompt-cell { color: #8b949e; max-width: 400px; }
 .error { color: #f85149; padding: 12px; background: #25171c; border: 1px solid #5d2a3a; border-radius: 4px; margin-top: 12px; }
+.btn-primary { background: #1a4d2e; color: #d6f0db; border: 1px solid #2a6d4a; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-family: inherit; font-size: 12px; }
+.btn-primary:hover { background: #235e3a; }
+.btn-primary:disabled { opacity: 0.6; cursor: wait; }
+.btn-secondary { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-family: inherit; font-size: 12px; }
+.btn-secondary:hover { background: #30363d; }
+.modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.85); z-index: 100; align-items: center; justify-content: center; padding: 24px; }
+.modal.open { display: flex; }
+.modal .panel { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 18px; min-width: 480px; max-width: 720px; max-height: 90vh; overflow-y: auto; }
+.modal h2 { font-size: 14px; color: #58a6ff; margin-bottom: 12px; }
+.modal .row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.modal label { font-size: 11px; color: #8b949e; text-transform: uppercase; letter-spacing: 0.5px; }
+.modal select, .modal textarea, .modal input[type=text] { background: #161b22; color: #c9d1d9; border: 1px solid #30363d; padding: 6px 10px; border-radius: 4px; font-family: inherit; font-size: 13px; }
+.modal textarea { resize: vertical; min-height: 80px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.modal .actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+.modal .helper { font-size: 11px; color: #8b949e; }
+.modal .form-error { color: #f85149; padding: 8px 10px; background: #25171c; border: 1px solid #5d2a3a; border-radius: 4px; font-size: 12px; margin-top: 8px; }
+.modal .form-error pre { margin-top: 6px; max-height: 200px; overflow-y: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; white-space: pre-wrap; }
+.modal .form-error summary { cursor: pointer; }
 </style>
 </head>
 <body data-testid="otacon-orchestrator-runs">
@@ -37,7 +55,33 @@ tr:hover { background: #161b22; cursor: pointer; }
 <div class="header">
   <h1>Otacon Orchestrator</h1>
   <span class="stats" id="stats">loading…</span>
-  <a href="/health" target="_blank">/health</a>
+  <button class="btn-primary" id="btn-new-run" data-testid="btn-new-run" style="margin-left:auto">+ New run</button>
+  <a href="/health" target="_blank" style="margin-left:8px">/health</a>
+</div>
+
+<div class="modal" id="new-run-modal" data-testid="new-run-modal">
+  <div class="panel">
+    <h2>Start a new run</h2>
+    <div class="row">
+      <label for="nr-account">Account</label>
+      <select id="nr-account" data-testid="nr-account"><option value="">loading…</option></select>
+      <span class="helper" id="nr-account-helper"></span>
+    </div>
+    <div class="row">
+      <label for="nr-team">Team</label>
+      <select id="nr-team" data-testid="nr-team"><option value="">loading…</option></select>
+      <span class="helper" id="nr-team-helper"></span>
+    </div>
+    <div class="row">
+      <label for="nr-prompt">Initial prompt (optional)</label>
+      <textarea id="nr-prompt" data-testid="nr-prompt" placeholder="Open the Xiaohongshu app and scroll the home feed once."></textarea>
+    </div>
+    <div id="nr-error"></div>
+    <div class="actions">
+      <button class="btn-secondary" id="nr-cancel" type="button">Cancel</button>
+      <button class="btn-primary" id="nr-submit" type="button" data-testid="nr-submit">Start run</button>
+    </div>
+  </div>
 </div>
 
 <div class="filters">
@@ -190,6 +234,152 @@ $('f-status').addEventListener('change', loadRuns);
 
 applyUrlFiltersToInputs();
 loadRuns();
+
+// ─────────── New-run modal ───────────────────────────────────
+//
+// Lazy-loads the account + team dropdowns when the modal opens so the
+// initial runs-list page-load doesn't pay for two extra API calls when
+// the user never opens the form. Each dropdown failure surfaces an
+// inline retry button rather than blocking submit (the user might still
+// type a known account/team — but we don't expose that fallback path
+// in the UI; submit is disabled when either dropdown is empty).
+
+let nrAccountsLoaded = false;
+let nrTeamsLoaded = false;
+
+async function loadAccountsForModal() {
+  const sel = $('nr-account');
+  const helper = $('nr-account-helper');
+  helper.textContent = '';
+  sel.disabled = true;
+  sel.innerHTML = '<option value="">loading…</option>';
+  try {
+    const res = await fetch('/api/v1/accounts');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const body = await res.json();
+    const accounts = Array.isArray(body.accounts) ? body.accounts : [];
+    if (accounts.length === 0) {
+      sel.innerHTML = '<option value="">(no accounts)</option>';
+      helper.innerHTML = `No accounts yet. <a href="#" id="nr-account-retry">Retry</a> · or run <code>pnpm orchestrator service add-account --id ...</code>`;
+      $('nr-account-retry').onclick = (e) => { e.preventDefault(); loadAccountsForModal(); };
+      sel.disabled = true;
+      nrAccountsLoaded = false;
+      return;
+    }
+    sel.innerHTML = accounts.map(a => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.id)}${a.displayName ? ' (' + escapeHtml(a.displayName) + ')' : ''}</option>`).join('');
+    sel.disabled = false;
+    nrAccountsLoaded = true;
+    // Default to the same account the runs-list filter is set to (if any).
+    const filterAccount = $('f-account').value.trim();
+    if (filterAccount && accounts.some(a => a.id === filterAccount)) {
+      sel.value = filterAccount;
+    }
+  } catch (err) {
+    sel.innerHTML = '<option value="">load failed</option>';
+    helper.innerHTML = `Error: ${escapeHtml(err.message)}. <a href="#" id="nr-account-retry">Retry</a>`;
+    $('nr-account-retry').onclick = (e) => { e.preventDefault(); loadAccountsForModal(); };
+    nrAccountsLoaded = false;
+  }
+}
+
+async function loadTeamsForModal() {
+  const sel = $('nr-team');
+  const helper = $('nr-team-helper');
+  helper.textContent = '';
+  sel.disabled = true;
+  sel.innerHTML = '<option value="">loading…</option>';
+  try {
+    const res = await fetch('/api/v1/teams');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const body = await res.json();
+    const teams = Array.isArray(body.teams) ? body.teams : [];
+    if (teams.length === 0) {
+      sel.innerHTML = '<option value="">(no teams)</option>';
+      helper.innerHTML = `No teams seeded. <a href="#" id="nr-team-retry">Retry</a> · or run <code>pnpm orchestrator service seed-team --name ...</code>`;
+      $('nr-team-retry').onclick = (e) => { e.preventDefault(); loadTeamsForModal(); };
+      sel.disabled = true;
+      nrTeamsLoaded = false;
+      return;
+    }
+    sel.innerHTML = teams.map(t => `<option value="${escapeHtml(t.name)}">${escapeHtml(t.name)}${t.lead ? ' · lead=' + escapeHtml(t.lead) : ''}</option>`).join('');
+    sel.disabled = false;
+    nrTeamsLoaded = true;
+    // Default to social-media-engagement (matches runs.post.ts default).
+    if (teams.some(t => t.name === 'social-media-engagement')) {
+      sel.value = 'social-media-engagement';
+    }
+  } catch (err) {
+    sel.innerHTML = '<option value="">load failed</option>';
+    helper.innerHTML = `Error: ${escapeHtml(err.message)}. <a href="#" id="nr-team-retry">Retry</a>`;
+    $('nr-team-retry').onclick = (e) => { e.preventDefault(); loadTeamsForModal(); };
+    nrTeamsLoaded = false;
+  }
+}
+
+function openNewRunModal() {
+  $('nr-error').innerHTML = '';
+  $('nr-prompt').value = '';
+  $('new-run-modal').classList.add('open');
+  // Reload dropdowns every open so newly-created accounts/teams show up.
+  loadAccountsForModal();
+  loadTeamsForModal();
+}
+
+function closeNewRunModal() {
+  $('new-run-modal').classList.remove('open');
+}
+
+async function submitNewRun() {
+  const account = $('nr-account').value;
+  const team = $('nr-team').value;
+  const prompt = $('nr-prompt').value.trim();
+  $('nr-error').innerHTML = '';
+  if (!account) {
+    $('nr-error').innerHTML = `<div class="form-error">Account is required.</div>`;
+    return;
+  }
+  if (!team) {
+    $('nr-error').innerHTML = `<div class="form-error">Team is required.</div>`;
+    return;
+  }
+  const submit = $('nr-submit');
+  submit.disabled = true;
+  submit.textContent = 'Starting…';
+  try {
+    const res = await fetch('/api/v1/runs', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ account, team, prompt: prompt || undefined }),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`HTTP ${res.status} ${res.statusText}\n${text}`);
+    }
+    const body = await res.json();
+    if (!body.runId) throw new Error('Response missing runId field');
+    // Redirect to the live-tail page for the new run.
+    window.location.href = `/run.html?id=${encodeURIComponent(body.runId)}`;
+  } catch (err) {
+    submit.disabled = false;
+    submit.textContent = 'Start run';
+    const msg = String(err.message || err);
+    $('nr-error').innerHTML = `
+      <div class="form-error">
+        Run start failed.
+        <details><summary>details</summary><pre>${escapeHtml(msg)}</pre></details>
+      </div>`;
+  }
+}
+
+$('btn-new-run').onclick = openNewRunModal;
+$('nr-cancel').onclick = closeNewRunModal;
+$('nr-submit').onclick = submitNewRun;
+$('new-run-modal').addEventListener('click', (e) => {
+  if (e.target.id === 'new-run-modal') closeNewRunModal();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && $('new-run-modal').classList.contains('open')) closeNewRunModal();
+});
 </script>
 </body>
 </html>

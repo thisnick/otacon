@@ -103,6 +103,16 @@ async function main(): Promise<void> {
     assert(body.includes('data-testid="otacon-orchestrator-runs"'), 'GET / body has data-testid for runs page')
     assert(body.includes('id="runs-body"'), 'GET / body has #runs-body table target')
     assert(body.includes('/api/v1/runs'), 'GET / body references the runs API')
+    // New-run form (P4-I commit 2)
+    assert(body.includes('data-testid="btn-new-run"'), 'GET / has the New run button')
+    assert(body.includes('data-testid="new-run-modal"'), 'GET / has the new-run modal')
+    assert(body.includes('data-testid="nr-account"'), 'new-run modal has the account dropdown')
+    assert(body.includes('data-testid="nr-team"'), 'new-run modal has the team dropdown')
+    assert(body.includes('data-testid="nr-prompt"'), 'new-run modal has the prompt textarea')
+    assert(body.includes('data-testid="nr-submit"'), 'new-run modal has the submit button')
+    assert(body.includes("'/api/v1/accounts'"), 'new-run modal fetches GET /api/v1/accounts')
+    assert(body.includes("'/api/v1/teams'"), 'new-run modal fetches GET /api/v1/teams')
+    assert(body.includes("'/api/v1/runs'"), 'new-run modal POSTs /api/v1/runs')
   }
 
   // ── GET /run.html serves run.html ───────────────────────
