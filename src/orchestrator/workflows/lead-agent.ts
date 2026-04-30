@@ -97,6 +97,19 @@ export async function leadAgentWorkflow(args: LeadAgentArgs): Promise<LeadAgentR
 
   try {
     for (let turn = 0; turn < MAX_TURNS && !terminated; turn++) {
+      // Drain the run's user-message inbox and prepend any new user
+      // messages to this turn's prompt. POST /api/v1/runs/:id/messages
+      // appends to the inbox file; this step reads + truncates it.
+      // Skip on turn 0 — initialMessages already carries the kickoff
+      // user message and there's nothing in the inbox yet.
+      if (turn > 0) {
+        const queued = await drainInboxStep({ runId: args.runId })
+        if (queued.length > 0) {
+          for (const m of queued) {
+            messages.push({ role: 'user', content: m.content } as ModelMessage)
+          }
+        }
+      }
       const result = await agent.stream({
         messages,
         writable: getWritable<UIMessageChunk>(),
@@ -608,6 +621,19 @@ function extractText(msg: ModelMessage): string {
 function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message
   return String(e)
+}
+
+/**
+ * Drain the run's user-message inbox at a turn boundary. Returns the
+ * messages in FIFO order so the workflow can prepend them to the next
+ * turn's `messages[]`. Atomic read-and-truncate via RunStore.
+ */
+async function drainInboxStep(p: { runId: string }): Promise<Array<{ id: string; content: string; ts: number }>> {
+  'use step'
+  const { makeStores } = await import('../src/storage/factory.js')
+  const dataDir = process.env.ORCHESTRATOR_DATA_DIR ?? '.orchestrator-data'
+  const { runStore } = await makeStores({ dataDir })
+  return await runStore.drainInboxMessages(p.runId)
 }
 
 interface RepairInput {

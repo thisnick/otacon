@@ -150,6 +150,29 @@ async function testRunStore() {
   assert(snap === 'You are a helpful agent.', 'getPromptSnapshot round-trips text')
   const reread = await stores.runStore.get(created.id)
   assert(reread?.promptSnapshotPath === rel, 'run.json updated with snapshot path')
+
+  // ── Inbox round-trip — enqueue + drain ──────────────────
+  const empty1 = await stores.runStore.drainInboxMessages(created.id)
+  assert(empty1.length === 0, 'drainInboxMessages on empty inbox returns []')
+  const m1 = await stores.runStore.enqueueInboxMessage(created.id, 'first user message')
+  assert(typeof m1.id === 'string' && m1.id.length > 0, 'enqueueInboxMessage returns ULID id')
+  assert(m1.content === 'first user message', 'enqueueInboxMessage round-trips content')
+  const m2 = await stores.runStore.enqueueInboxMessage(created.id, 'second')
+  const m3 = await stores.runStore.enqueueInboxMessage(created.id, 'third')
+  const drained = await stores.runStore.drainInboxMessages(created.id)
+  assert(drained.length === 3, `drainInboxMessages returns 3 entries (got ${drained.length})`)
+  assert(
+    drained[0].content === 'first user message' &&
+      drained[1].content === 'second' &&
+      drained[2].content === 'third',
+    'drainInboxMessages preserves FIFO order',
+  )
+  assert(drained[0].id === m1.id, 'drained[0].id matches first enqueue')
+  assert(drained[2].id === m3.id, 'drained[2].id matches third enqueue')
+  void m2
+  // After drain, second drain should be empty.
+  const empty2 = await stores.runStore.drainInboxMessages(created.id)
+  assert(empty2.length === 0, 'second drain after first is empty (truncated)')
 }
 
 async function testAccountStore() {

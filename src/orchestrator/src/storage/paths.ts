@@ -115,6 +115,17 @@ export function runSignalFile(layout: PathLayout, runId: string, signalId: strin
   return path.join(runSignalDir(layout, runId), `${signalId}.json`)
 }
 
+/**
+ * Inbox JSONL for `POST /api/v1/runs/:id/messages` user-injected messages.
+ * The workflow body drains it at each turn boundary inside a step and
+ * prepends new messages to the next turn's prompt. Lives at
+ * `runs/{runId}/messages-inbox.jsonl`. Append-only from the route side;
+ * read-and-truncate from the workflow step.
+ */
+export function runMessagesInboxFile(layout: PathLayout, runId: string): string {
+  return path.join(runDir(layout, runId), 'messages-inbox.jsonl')
+}
+
 export function runTraceDir(layout: PathLayout, runId: string, toolCallId: string): string {
   assertSafeId(toolCallId)
   return path.join(runDir(layout, runId), 'traces', toolCallId)

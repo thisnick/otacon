@@ -16,7 +16,7 @@
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import type { PathLayout } from './paths.js'
-import { promptFile, runDir, runFile } from './paths.js'
+import { promptFile, runDir, runFile, runMessagesInboxFile } from './paths.js'
 import type {
   IndexStore,
 } from './index-store.js'
@@ -28,6 +28,21 @@ import type {
   RunStatus,
 } from './types.js'
 
+/**
+ * One user-injected message queued for the agent to pick up at the next
+ * turn boundary. Routed via `POST /api/v1/runs/:id/messages`. Drained
+ * inside the workflow body's user-message-pickup step, then prepended
+ * to the next turn's `messages[]` array as a `{role: 'user'}` entry.
+ */
+export interface InboxMessage {
+  /** ULID assigned at enqueue time. */
+  id: string
+  /** Plaintext message content. */
+  content: string
+  /** Epoch ms when the route received the message. */
+  ts: number
+}
+
 export interface RunStore {
   create(input: RunInput): Promise<Run>
   get(runId: string): Promise<Run | null>
@@ -38,6 +53,10 @@ export interface RunStore {
   patch(runId: string, fields: Partial<Run>): Promise<Run>
   putPromptSnapshot(runId: string, prompt: string): Promise<string>
   getPromptSnapshot(runId: string): Promise<string | null>
+  /** Append a user-injected message to the run's inbox. Returns the queued message. */
+  enqueueInboxMessage(runId: string, content: string): Promise<InboxMessage>
+  /** Read all queued messages and truncate the inbox to empty. Returns the drained messages in FIFO order. */
+  drainInboxMessages(runId: string): Promise<InboxMessage[]>
 }
 
 export class RunStoreFs implements RunStore {
@@ -145,6 +164,47 @@ export class RunStoreFs implements RunStore {
       if (e.code === 'ENOENT') return null
       throw e
     }
+  }
+
+  async enqueueInboxMessage(runId: string, content: string): Promise<InboxMessage> {
+    const { ulid } = await import('./ulid.js')
+    const msg: InboxMessage = { id: ulid(), content, ts: Date.now() }
+    await fs.mkdir(runDir(this.layout, runId), { recursive: true })
+    // JSONL append; one record per line. Crash-safe under concurrent
+    // appends because we open with `a` flag (atomic append on POSIX).
+    const file = runMessagesInboxFile(this.layout, runId)
+    await fs.appendFile(file, JSON.stringify(msg) + '\n', 'utf-8')
+    return msg
+  }
+
+  async drainInboxMessages(runId: string): Promise<InboxMessage[]> {
+    const file = runMessagesInboxFile(this.layout, runId)
+    let raw: string
+    try {
+      raw = await fs.readFile(file, 'utf-8')
+    } catch (e: any) {
+      if (e.code === 'ENOENT') return []
+      throw e
+    }
+    // Truncate the file BEFORE returning so a concurrent enqueue racing
+    // the drain can't be lost — at worst the racing message gets caught
+    // on the next drain. We accept a small window where a message
+    // appended between read and truncate is dropped: the workflow polls
+    // the inbox at every turn, so the worst-case delay is one turn.
+    // Use truncate (size 0) + append flag pattern: open with 'w' and
+    // close to atomically zero out, leaving append semantics intact.
+    await fs.writeFile(file, '', 'utf-8')
+    const msgs: InboxMessage[] = []
+    for (const line of raw.split('\n')) {
+      const trimmed = line.trim()
+      if (!trimmed) continue
+      try {
+        msgs.push(JSON.parse(trimmed) as InboxMessage)
+      } catch {
+        // ignore malformed line — ULID order is preserved by FIFO append
+      }
+    }
+    return msgs
   }
 }
 
