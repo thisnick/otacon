@@ -24,5 +24,13 @@ export default defineConfig({
   },
   experimental: {
     asyncContext: true,
+    // Note: tried `openAPI: true` to enable Nitro's auto-generated spec
+    // at `/_openapi.json` + `/_swagger`, but Nitro 3.0.1-alpha's route-
+    // meta extractor crashes on `workflow/nitro`'s virtual handlers
+    // (`\x00virtual:#workflow/webhook.mjs` — null-byte in path).
+    // Independently, every route file with a `defineRouteMeta(...)` call
+    // hit a TDZ `Cannot access '<name>$1' before initialization`. Both
+    // are nitro-3-alpha bugs we live with for now; revisit when nitro
+    // releases a stable 3.x or moves to nitro 4.
   },
 })
