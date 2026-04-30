@@ -550,12 +550,33 @@ async function execBashStep(p: {
 }): Promise<ExecResult> {
   'use step'
   const { getSandbox, blobRoot } = await import('../src/run-executor/sandbox-cache.js')
+  const { makeStores } = await import('../src/storage/factory.js')
   const path = await import('node:path')
   const bash = await getSandbox({ runId: p.runId, accountId: p.accountId })
   const traceDir = path.resolve(blobRoot, 'runs', p.runId, 'traces', p.toolCallId)
   const result = await bash.exec(p.command, {
     env: { OTACON_TRACE_DIR: traceDir },
   })
+
+  // Persist the raw bash result so external readers (CLI inspect, e2e
+  // assertions, future P2 phone-action chunks) can find it without
+  // tailing the workflow chunk stream. Lands at
+  // runs/{runId}/traces/{toolCallId}/result.json under the data dir.
+  // Best-effort — a write failure shouldn't abort the agent loop.
+  const dataDir = process.env.ORCHESTRATOR_DATA_DIR ?? '.orchestrator-data'
+  try {
+    const { blobStore } = await makeStores({ dataDir })
+    await blobStore.putToolResult(p.runId, p.toolCallId, {
+      command: p.command,
+      rationale: p.rationale,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      exitCode: result.exitCode,
+    })
+  } catch (err) {
+    console.error(`[execBashStep] failed to persist result.json for ${p.toolCallId}:`, err)
+  }
+
   return {
     stdout: result.stdout,
     stderr: result.stderr,
