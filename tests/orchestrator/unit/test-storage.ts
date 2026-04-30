@@ -255,6 +255,56 @@ async function testBlobStore() {
   await expectThrow(() => stores.blobStore.read('../../etc/passwd'), 'generic read rejects traversal')
 }
 
+async function testInspectRuns() {
+  console.log('inspect-runs.ts')
+  const { inspectRunsCommand, inspectRunPromptCommand } = await import(
+    '../../../src/orchestrator/src/cli/inspect-runs.js'
+  )
+
+  const dir = path.join(tmpDir, 'inspect')
+  const stores = await makeStores({ dataDir: dir })
+  const r1 = await stores.runStore.create({
+    id: ulid(),
+    account: 'xhs:test',
+    team: 't',
+    agentRole: 'lead',
+    model: 'm',
+    initialPrompt: 'go',
+  })
+  await stores.runStore.updateStatus(r1.id, 'completed', { finalText: 'done', turnCount: 3 })
+  await stores.runStore.putPromptSnapshot(r1.id, 'You are an agent.')
+
+  // Capture stdout via a wrapper around process.stdout.write
+  const origWrite = process.stdout.write.bind(process.stdout)
+  let captured = ''
+  ;(process.stdout as { write: (s: string) => boolean }).write = (s: string) => {
+    captured += s
+    return true
+  }
+  try {
+    // inspect runs (table)
+    captured = ''
+    await inspectRunsCommand({ dataDir: dir })
+    assert(captured.includes(r1.id), 'inspect runs lists the run id')
+    assert(captured.includes('completed'), 'inspect runs shows completed status')
+    assert(captured.includes('xhs:test'), 'inspect runs shows account')
+
+    // inspect runs --json
+    captured = ''
+    await inspectRunsCommand({ dataDir: dir, json: true })
+    const parsed = JSON.parse(captured) as Array<{ id: string; status: string }>
+    assert(Array.isArray(parsed) && parsed.length === 1, 'inspect runs --json returns the run array')
+    assert(parsed[0].id === r1.id, 'inspect runs --json contains the right run')
+
+    // inspect run-prompt
+    captured = ''
+    await inspectRunPromptCommand({ runId: r1.id, dataDir: dir })
+    assert(captured === 'You are an agent.', 'inspect run-prompt prints the snapshotted prompt verbatim')
+  } finally {
+    ;(process.stdout as { write: (s: string) => boolean }).write = origWrite
+  }
+}
+
 async function testApprovalBridge() {
   console.log('approval-bridge.ts')
   const {
@@ -401,6 +451,7 @@ async function main() {
     await testApprovalBridge()
     await testAddAccountFs()
     await testSeedTeam()
+    await testInspectRuns()
   } catch (e: any) {
     console.error('UNCAUGHT:', e?.stack ?? e)
     failed++

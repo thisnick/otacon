@@ -16,6 +16,11 @@ import {
 } from './cli/inspect.js'
 import { seedTeamCommand } from './cli/seed-team.js'
 import { runV2Command } from './cli/run-v2.js'
+import {
+  inspectRunsCommand,
+  inspectRunCommand,
+  inspectRunPromptCommand,
+} from './cli/inspect-runs.js'
 
 const program = new Command()
   .name('orchestrator')
@@ -130,11 +135,48 @@ agent
 
 // ── inspect group ──────────────────────────────────────────────────────────
 
-const inspect = program.command('inspect').description('Read-only views over conversations, allocations, and activity.')
+const inspect = program.command('inspect').description('Read-only views over runs, conversations, allocations, and activity.')
+
+inspect
+  .command('runs')
+  .description('List runs (orchestrator-v2; reads RunStore)')
+  .option('--account <id>', 'Filter by account ID')
+  .option('--status <status>', 'Filter by status (created|running|completed|failed|cancelled)')
+  .option('--limit <n>', 'Max rows to return', (v: string) => parseInt(v, 10), 50)
+  .option('--json', 'Emit JSON instead of a table')
+  .option('--data-dir <dir>', 'Override ORCHESTRATOR_DATA_DIR')
+  .action(async (opts) => {
+    await inspectRunsCommand({
+      account: opts.account,
+      status: opts.status,
+      limit: opts.limit,
+      json: opts.json,
+      dataDir: opts.dataDir,
+    })
+  })
+
+inspect
+  .command('run')
+  .description('Markdown report for a run (orchestrator-v2; reads RunStore + Workflow SDK chunk replay)')
+  .argument('<run_id>', 'Run ULID (our orchestrator runId, NOT the workflow runId)')
+  .option('--json', 'Emit JSON ({run, messages, replayError}) instead of markdown')
+  .option('--data-dir <dir>', 'Override ORCHESTRATOR_DATA_DIR')
+  .action(async (runId: string, opts) => {
+    await inspectRunCommand({ runId, json: opts.json, dataDir: opts.dataDir })
+  })
+
+inspect
+  .command('run-prompt')
+  .description('Print the snapshotted system prompt for a run')
+  .argument('<run_id>', 'Run ULID')
+  .option('--data-dir <dir>', 'Override ORCHESTRATOR_DATA_DIR')
+  .action(async (runId: string, opts) => {
+    await inspectRunPromptCommand({ runId, dataDir: opts.dataDir })
+  })
 
 inspect
   .command('conversations')
-  .description('List conversations with summary stats')
+  .description('[legacy DB] List conversations with summary stats')
   .option('--account <id>', 'Filter by account ID')
   .action(async (opts) => {
     const db = getDb()
@@ -143,7 +185,7 @@ inspect
 
 inspect
   .command('conversation')
-  .description('Generate a markdown report combining messages + traces')
+  .description('[legacy DB] Generate a markdown report combining messages + traces')
   .argument('<conversation_id>', 'Conversation ULID')
   .action(async (conversationId: string) => {
     const db = getDb()
