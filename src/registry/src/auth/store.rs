@@ -24,6 +24,35 @@ impl std::fmt::Display for AuthScope {
     }
 }
 
+/// Errors returned when validating a caller-supplied raw token.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ValidationError {
+    /// Raw token did not start with the expected scope prefix
+    /// (e.g. `otc_admin_` for Admin, `otc_node_` for Node).
+    BadPrefix,
+    /// Raw token is not the expected total length.
+    /// Admin tokens are 74 chars (10-char prefix + 64 hex). Node tokens are
+    /// 73 chars (9-char prefix + 64 hex).
+    BadLength,
+    /// Hex body of the token contains non-hex characters.
+    BadHex,
+    /// A token with the same hash already exists in the store.
+    DuplicateToken,
+}
+
+impl std::fmt::Display for ValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ValidationError::BadPrefix => write!(f, "raw token has wrong prefix for scope"),
+            ValidationError::BadLength => write!(f, "raw token is not the expected length"),
+            ValidationError::BadHex => write!(f, "raw token body is not valid hex"),
+            ValidationError::DuplicateToken => write!(f, "a token with this hash already exists"),
+        }
+    }
+}
+
+impl std::error::Error for ValidationError {}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Token {
     pub id: String,
@@ -124,6 +153,66 @@ impl AuthStore {
         self.save().await;
 
         (id, raw)
+    }
+
+    /// Insert a token using a caller-supplied raw token string.
+    ///
+    /// Validates that `raw_token` matches the expected prefix + length for
+    /// `scope`, hashes it with the same SHA-256 hex hash used by
+    /// `create_token`, and persists a token record with metadata identical to
+    /// what `create_token` writes.
+    ///
+    /// Returns the new token_id (UUID). Errors if validation fails or if a
+    /// token with the same hash already exists in the store.
+    pub async fn insert_token_with_value(
+        &self,
+        raw_token: String,
+        scope: AuthScope,
+        node_id: Option<String>,
+        note: Option<String>,
+    ) -> Result<String, ValidationError> {
+        let (expected_prefix, expected_len) = match scope {
+            AuthScope::Admin => ("otc_admin_", 74),
+            AuthScope::Node => ("otc_node_", 73),
+        };
+        if !raw_token.starts_with(expected_prefix) {
+            return Err(ValidationError::BadPrefix);
+        }
+        if raw_token.len() != expected_len {
+            return Err(ValidationError::BadLength);
+        }
+        let hex_part = &raw_token[expected_prefix.len()..];
+        if !hex_part.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(ValidationError::BadHex);
+        }
+
+        let hash = Self::hash_token(&raw_token);
+        let prefix = raw_token[..12.min(raw_token.len())].to_string();
+        let id = uuid::Uuid::new_v4().to_string();
+
+        let mut tokens = self.tokens.write().await;
+        if tokens.values().any(|t| t.token_hash == hash) {
+            return Err(ValidationError::DuplicateToken);
+        }
+
+        let token = Token {
+            id: id.clone(),
+            scope,
+            node_id,
+            token_hash: hash,
+            token_prefix: prefix,
+            created_at: Utc::now(),
+            last_seen_at: None,
+            expires_at: None,
+            revoked_at: None,
+            note,
+        };
+
+        tokens.insert(id.clone(), token);
+        drop(tokens);
+        self.save().await;
+
+        Ok(id)
     }
 
     /// Validate a raw bearer token. Returns the Token if valid (not revoked/expired).
@@ -421,5 +510,148 @@ mod tests {
         let token = registry.validate(&raw).await.expect("cross-process token must validate");
         assert_eq!(token.scope, AuthScope::Node);
         assert_eq!(token.node_id.as_deref(), Some("h2"));
+    }
+
+    // ── insert_token_with_value (seeded bootstrap path) ──────────
+
+    /// Build a syntactically valid raw token without going through
+    /// `generate_raw_token` (which uses real entropy). Useful for tests that
+    /// need a deterministic value matching the prefix/length contract.
+    fn build_raw_token(scope: AuthScope, hex_body: &str) -> String {
+        assert_eq!(hex_body.len(), 64, "test helper expects 64-char hex body");
+        match scope {
+            AuthScope::Admin => format!("otc_admin_{hex_body}"),
+            AuthScope::Node => format!("otc_node_{hex_body}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn insert_token_with_value_admin_round_trip() {
+        let (store, _dir) = test_store().await;
+        let raw = build_raw_token(
+            AuthScope::Admin,
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        );
+
+        let id = store
+            .insert_token_with_value(
+                raw.clone(),
+                AuthScope::Admin,
+                None,
+                Some("seeded".into()),
+            )
+            .await
+            .expect("seeded admin token should insert");
+
+        // Same hash function as create_token: validate() must accept it.
+        let token = store.validate(&raw).await.expect("seeded token must validate");
+        assert_eq!(token.id, id);
+        assert_eq!(token.scope, AuthScope::Admin);
+        assert!(token.node_id.is_none());
+        assert_eq!(token.note.as_deref(), Some("seeded"));
+        assert_eq!(token.token_hash, AuthStore::hash_token(&raw));
+        assert_eq!(token.token_prefix, &raw[..12]);
+    }
+
+    #[tokio::test]
+    async fn insert_token_with_value_admin_satisfies_has_admin_tokens() {
+        let (store, _dir) = test_store().await;
+        assert!(!store.has_admin_tokens().await);
+
+        let raw = build_raw_token(
+            AuthScope::Admin,
+            "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+        );
+        store
+            .insert_token_with_value(raw, AuthScope::Admin, None, None)
+            .await
+            .expect("insert");
+
+        assert!(store.has_admin_tokens().await);
+    }
+
+    #[tokio::test]
+    async fn insert_token_with_value_rejects_wrong_prefix() {
+        let (store, _dir) = test_store().await;
+        // Node-prefixed token under Admin scope.
+        let raw = build_raw_token(
+            AuthScope::Node,
+            "0000000000000000000000000000000000000000000000000000000000000000",
+        );
+
+        let err = store
+            .insert_token_with_value(raw, AuthScope::Admin, None, None)
+            .await
+            .expect_err("must reject mismatched prefix");
+        assert_eq!(err, ValidationError::BadPrefix);
+    }
+
+    #[tokio::test]
+    async fn insert_token_with_value_rejects_bad_length() {
+        let (store, _dir) = test_store().await;
+        // Right prefix, wrong length (too short).
+        let raw = "otc_admin_abcdef".to_string();
+
+        let err = store
+            .insert_token_with_value(raw, AuthScope::Admin, None, None)
+            .await
+            .expect_err("must reject bad length");
+        assert_eq!(err, ValidationError::BadLength);
+    }
+
+    #[tokio::test]
+    async fn insert_token_with_value_rejects_non_hex_body() {
+        let (store, _dir) = test_store().await;
+        // Right prefix and length, but body has non-hex chars.
+        let raw = format!("otc_admin_{}", "z".repeat(64));
+
+        let err = store
+            .insert_token_with_value(raw, AuthScope::Admin, None, None)
+            .await
+            .expect_err("must reject non-hex body");
+        assert_eq!(err, ValidationError::BadHex);
+    }
+
+    #[tokio::test]
+    async fn insert_token_with_value_rejects_duplicate() {
+        let (store, _dir) = test_store().await;
+        let raw = build_raw_token(
+            AuthScope::Admin,
+            "1111111111111111111111111111111111111111111111111111111111111111",
+        );
+
+        store
+            .insert_token_with_value(raw.clone(), AuthScope::Admin, None, None)
+            .await
+            .expect("first insert");
+
+        let err = store
+            .insert_token_with_value(raw, AuthScope::Admin, None, None)
+            .await
+            .expect_err("duplicate must be rejected");
+        assert_eq!(err, ValidationError::DuplicateToken);
+    }
+
+    #[tokio::test]
+    async fn insert_token_with_value_node_scope() {
+        let (store, _dir) = test_store().await;
+        let raw = build_raw_token(
+            AuthScope::Node,
+            "2222222222222222222222222222222222222222222222222222222222222222",
+        );
+
+        store
+            .insert_token_with_value(
+                raw.clone(),
+                AuthScope::Node,
+                Some("host-7".into()),
+                None,
+            )
+            .await
+            .expect("seeded node token should insert");
+
+        let token = store.validate(&raw).await.expect("must validate");
+        assert_eq!(token.scope, AuthScope::Node);
+        assert_eq!(token.node_id.as_deref(), Some("host-7"));
     }
 }

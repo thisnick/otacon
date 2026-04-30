@@ -28,6 +28,7 @@ services:
       - OTACON_REGISTRY_PORT=9080
       - OTACON_REGISTRY_DATA=/data/registry
       - OTACON_ADMIN_USERS=${OTACON_ADMIN_USERS:-}
+      - REGISTRY_BOOTSTRAP_ADMIN_TOKEN=${REGISTRY_BOOTSTRAP_ADMIN_TOKEN:-}
       - RUST_LOG=${RUST_LOG:-info}
     volumes:
       - registry-data:/data/registry

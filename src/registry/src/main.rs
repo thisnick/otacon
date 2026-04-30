@@ -40,21 +40,38 @@ async fn main() {
         .and_then(|p| p.parse().ok())
         .unwrap_or(8080);
 
-    // Bootstrap: if no admin tokens exist, create one and print it
+    // Bootstrap: if no admin tokens exist, either seed from
+    // REGISTRY_BOOTSTRAP_ADMIN_TOKEN (deterministic) or generate a random
+    // token and print it once (legacy behavior).
     if !auth_store.has_admin_tokens().await {
-        let (token_id, raw_token) = auth_store
-            .create_token(
-                auth::AuthScope::Admin,
-                None,
-                Some("Bootstrap admin token".into()),
-            )
-            .await;
-        eprintln!("╔══════════════════════════════════════════════════════════════════╗");
-        eprintln!("║  BOOTSTRAP ADMIN TOKEN — save this immediately!                 ║");
-        eprintln!("║  Token: {raw_token}");
-        eprintln!("║  ID:    {token_id}");
-        eprintln!("║  This will NOT be shown again.                                  ║");
-        eprintln!("╚══════════════════════════════════════════════════════════════════╝");
+        if let Ok(seeded) = std::env::var("REGISTRY_BOOTSTRAP_ADMIN_TOKEN") {
+            let token_id = auth_store
+                .insert_token_with_value(
+                    seeded,
+                    auth::AuthScope::Admin,
+                    None,
+                    Some("Bootstrap admin token (seeded)".into()),
+                )
+                .await
+                .expect("REGISTRY_BOOTSTRAP_ADMIN_TOKEN invalid");
+            eprintln!(
+                "[registry] Seeded admin token from REGISTRY_BOOTSTRAP_ADMIN_TOKEN (id: {token_id})"
+            );
+        } else {
+            let (token_id, raw_token) = auth_store
+                .create_token(
+                    auth::AuthScope::Admin,
+                    None,
+                    Some("Bootstrap admin token".into()),
+                )
+                .await;
+            eprintln!("╔══════════════════════════════════════════════════════════════════╗");
+            eprintln!("║  BOOTSTRAP ADMIN TOKEN — save this immediately!                 ║");
+            eprintln!("║  Token: {raw_token}");
+            eprintln!("║  ID:    {token_id}");
+            eprintln!("║  This will NOT be shown again.                                  ║");
+            eprintln!("╚══════════════════════════════════════════════════════════════════╝");
+        }
     }
 
     let app_state = api::AppState {
