@@ -13,7 +13,7 @@ From the orchestrator package:
 cd src/orchestrator
 pnpm test:e2e:smoke         # workflow + nitro + world-local pipeline
 pnpm test                   # unit + e2e:smoke + approval-flow + failure-flow
-pnpm test:e2e:phase1        # Phase 1 sign-off (requires phone-3 + LLM)
+pnpm test:e2e:phase1        # Phase 1 sign-off (requires phone-4 + XHS + LLM)
 ```
 
 Or from the repo root: `pnpm test:e2e:phase1`.
@@ -27,17 +27,22 @@ Each test spawns its own server on a unique port and a fresh tmp data dir.
 | `test-workflow-smoke.ts` | Nitro builds + workflow/nitro transforms `"use workflow"`/`"use step"` + world-local persists chunks + `run.getReadable({startIndex:0})` replays them. | None — pure software. |
 | `test-approval-flow.ts` | CLI ↔ server ↔ workflow ↔ approval ↔ stream replay end-to-end without DurableAgent or phone hardware. | None. |
 | `test-failure-flow.ts` | Workflow failures emit `data-run-failed`, run.json reaches `failed` status. | None. |
-| `phase1-chrome-search.ts` | **Phase 1 sign-off canonical e2e.** Bootstraps a fresh `ORCHESTRATOR_DATA_DIR`, seeds the `social-media-engagement` team, adds the `xhs:test` account, spawns Nitro, runs `agent run-v2` with the prompt "Open Chrome, search for 'cats', and scroll down once. Then exit." against phone-3, asserts run.json + prompt snapshot + workflow chunk persistence + traces + index/runs.jsonl + replay-from-startIndex-0 matches live observation. | **phone-3** reachable via `$OTACON_REGISTRY_URL` with `$OTACON_TOKEN`; Chrome installed on phone-3; `phone_number` set in registry to match the account credential (default `+12136961477`); `$AI_GATEWAY_API_KEY`. |
+| `phase1-xhs-scroll.ts` | **Phase 1 sign-off canonical e2e.** Bootstraps a fresh `ORCHESTRATOR_DATA_DIR`, seeds the `social-media-engagement` team, adds the `xhs:test` account, spawns Nitro, posts a run via `POST /api/v1/runs` with the prompt "Open the Xiaohongshu app (com.xingin.xhs). Scroll the home feed three times to see different content. Then exit." against phone-4, asserts run.json + prompt snapshot + workflow chunk persistence + traces + index/runs.jsonl + replay-from-startIndex-0 matches live observation. | **phone-4** reachable via `$OTACON_REGISTRY_URL` with `$OTACON_TOKEN`; Xiaohongshu (`com.xingin.xhs`) installed on phone-4; `phone_number` set in registry to match the account credential (default `+13412137456`); `$AI_GATEWAY_API_KEY`. |
 
-## Phase 1 e2e — `phase1-chrome-search.ts`
+## Phase 1 e2e — `phase1-xhs-scroll.ts`
+
+Canonical scenario substituted from Chrome+search → Xiaohongshu+scroll at lead
+commit `579face`: phone-4 has Xiaohongshu installed (the social-media-engagement
+team's actual target app); other phones don't currently have a phone_number
+set in the registry, so phone-4 is the only resolvable target.
 
 ### Prereqs
 
 - `OTACON_REGISTRY_URL`, `OTACON_TOKEN` env vars set (or `~/.otacon/config.toml`)
 - `AI_GATEWAY_API_KEY` env var set
-- phone-3 connected to the registry, online, with Chrome installed
-- phone-3 has a `phone_number` in the registry matching the account's primary credential
-- (Currently) `DATABASE_URL` env var set — `service add-account` still dual-writes to Drizzle during the P1 → P3 migration
+- phone-4 connected to the registry, online, with `com.xingin.xhs` installed
+- phone-4 has `phone_number=+13412137456` in the registry (matches the account's primary credential)
+- (Currently) `DATABASE_URL` env var set — `service add-account` still dual-writes to Drizzle during the P1 cleanup migration. Removed at P1-I commit 10.
 
 ### Run
 
@@ -56,8 +61,8 @@ are torn down on exit. Default agent timeout is 20 minutes (override via
 | Env var | Default | Purpose |
 |---|---|---|
 | `PHASE1_PORT` | `9097` | Server port. Use a different port if you have another orch server running. |
-| `PHASE1_ACCOUNT_PHONE` | `+12136961477` | Phone number registered for `xhs:test`. Must match the registry entry for phone-3. |
-| `PHASE1_PROMPT` | "Open Chrome, search for 'cats', and scroll down once. Then exit." | Initial prompt for the agent. |
+| `PHASE1_ACCOUNT_PHONE` | `+13412137456` | Phone number registered for `xhs:test`. Must match the registry entry for phone-4 (or whichever phone you want to target). |
+| `PHASE1_PROMPT` | "Open the Xiaohongshu app (com.xingin.xhs). Scroll the home feed three times to see different content. Then exit." | Initial prompt for the agent. |
 | `PHASE1_AGENT_TIMEOUT_MS` | `1200000` (20min) | Total wall-clock budget for the agent loop. |
 
 ### Cleanup contract

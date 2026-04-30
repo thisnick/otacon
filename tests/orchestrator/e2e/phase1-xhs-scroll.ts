@@ -3,32 +3,36 @@
  *
  * Authoritative test for the orchestrator-v2 Phase 1 verification checklist
  * (per /Users/nick/.claude/plans/calm-churning-panda.md "Phase 1" + task #2).
+ * Canonical scenario substituted from Chrome+search → Xiaohongshu+scroll at
+ * lead commit `579face` because phone-4 (the only registry phone with a
+ * phone_number set) has com.xingin.xhs installed but not Chrome — and XHS
+ * is the social-media-engagement team's actual target app anyway.
  *
  * What this drives end-to-end:
  *   1. Create a fresh tmp ORCHESTRATOR_DATA_DIR.
  *   2. Seed the social-media-engagement team (FS layout).
  *   3. Add the xhs:test account (writes account/credentials/env stubs).
  *   4. Spawn `pnpm dev` (Nitro) against the tmp dir.
- *   5. Probe /health (records observable behavior — route is plan-mandated
- *      but optional for sign-off; lead has discretion).
- *   6. Run "Open Chrome, search 'cats', scroll once" via `agent run-v2`
- *      against phone-3, with --auto-approve so the test is non-interactive.
+ *   5. Probe /health.
+ *   6. Run the canonical XHS scroll prompt via the HTTP API (POST
+ *      /api/v1/runs + tail SSE) with auto-approve so the test is
+ *      non-interactive.
  *   7. Assert run.json status, prompt snapshot, workflow chunk persistence,
  *      replay (re-fetch /stream?startIndex=0 → matches live observation),
  *      traces, index/runs.jsonl.
  *   8. Cleanup spawn + tmp dir.
  *
  * Hardware required:
- *   - phone-3 reachable via the registry at $OTACON_REGISTRY_URL with
- *     $OTACON_TOKEN. Chrome must be installed on phone-3. Phone must have a
- *     phone_number set in the registry that matches the account's primary
- *     credential (default: +12136961477 for xhs:test).
+ *   - phone-4 reachable via the registry at $OTACON_REGISTRY_URL with
+ *     $OTACON_TOKEN. Xiaohongshu (com.xingin.xhs) installed. Phone must
+ *     have a phone_number set in the registry matching the account's primary
+ *     credential (default: +13412137456 for xhs:test → phone-4).
  *   - $AI_GATEWAY_API_KEY for model calls.
  *
  * Run:
  *   pnpm test:e2e:phase1
  *
- * Long-running: agent loops on phone-3 take 1-15min. Default timeout 20min.
+ * Long-running: agent loops on phone-4 take 1-15min. Default timeout 20min.
  *
  * On failure: this script prints PASS/FAIL per check and exits non-zero. The
  * evaluator's job is to capture observed-vs-expected — debugging is the
@@ -54,11 +58,13 @@ const ORCH_DIR = path.resolve(REPO_ROOT, 'src/orchestrator')
 
 const PORT = process.env.PHASE1_PORT ?? '9097'
 const ACCOUNT_ID = 'xhs:test'
-const ACCOUNT_PHONE = process.env.PHASE1_ACCOUNT_PHONE ?? '+12136961477'
+// Default targets phone-4 per lead decision at `579face` (only phone with a
+// phone_number set in current registry state).
+const ACCOUNT_PHONE = process.env.PHASE1_ACCOUNT_PHONE ?? '+13412137456'
 const TEAM_NAME = 'social-media-engagement'
 const PROMPT =
   process.env.PHASE1_PROMPT ??
-  "Open Chrome, search for 'cats', and scroll down once. Then exit."
+  'Open the Xiaohongshu app (com.xingin.xhs). Scroll the home feed three times to see different content. Then exit.'
 const AGENT_TIMEOUT_MS = Number(process.env.PHASE1_AGENT_TIMEOUT_MS ?? 20 * 60_000)
 
 let passed = 0
@@ -271,7 +277,7 @@ interface AgentRunResult {
 }
 
 async function step3RunAgent(): Promise<AgentRunResult> {
-  console.log('\n--- 3. Real agent run on phone-3 (Chrome / cats / scroll) ---')
+  console.log('\n--- 3. Real agent run on phone (Xiaohongshu / scroll feed x3) ---')
 
   if (!ctx.server) throw new Error('server not initialized')
 
