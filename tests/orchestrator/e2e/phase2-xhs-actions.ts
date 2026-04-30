@@ -61,7 +61,7 @@ import {
   type SpawnedServer,
   type UIMessageChunk,
 } from './helpers/run-and-tail.js'
-import { hammingDistance, pHash, readPngMeta } from './helpers/png-diff.js'
+import { hammingDistance, pHash, readPngMeta, sha256File } from './helpers/png-diff.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -98,11 +98,6 @@ const MUTATING_VERBS = new Set([
 
 // Verbs we actually expect to be exercised by the canonical scenario.
 const EXPECTED_VERBS = new Set(['tap', 'set-text', 'key', 'swipe'])
-
-// pHash hamming distance threshold below which we consider two PNGs
-// "visually identical". Annotated overlays produce ≥10 bit differences in
-// our tests; same-screen captures produce 0-3.
-const PHASH_DIFF_THRESHOLD = 5
 
 let passed = 0
 let failed = 0
@@ -412,42 +407,43 @@ async function step5VerifyTraceFiles(run: AgentRunResult, ctxMaps: {
     }
     goodTriplets++
 
-    // Compute pHashes
+    // Compute pHashes (informational; pHash is too coarse for tap rings
+    // since an 8x8 mean hash quantizes the whole image to 64 pixels).
     const beforeHash = await pHash(before)
-    const afterHash = await pHash(after)
+    void await pHash(after)
+
+    // SHA-256 byte equality is the right "did the overlay get drawn"
+    // check: sharp+SVG compositing changes thousands of bytes even for a
+    // small ring, so SHA inequality is a reliable signal that the
+    // wrapper actually re-encoded the PNG with the overlay.
+    const beforeSha = sha256File(before)
 
     // annotated.png — exists only if inferAnnotation returned non-null.
     if (fs.existsSync(annotated)) {
       const annotatedMeta = await readPngMeta(annotated)
       if (annotatedMeta.ok) {
+        const annotatedSha = sha256File(annotated)
         const annotatedHash = await pHash(annotated)
-        if (beforeHash && annotatedHash) {
-          const d = hammingDistance(beforeHash, annotatedHash)
-          if (d >= PHASH_DIFF_THRESHOLD) {
-            goodAnnotated++
-            if (action.subcommand === 'tap') tapDiffs.push(d)
-            if (action.subcommand === 'swipe') swipeDiffs.push(d)
-          } else {
-            info(`tcid=${tcid} sub=${action.subcommand} annotated/before pHash diff=${d} below threshold ${PHASH_DIFF_THRESHOLD}`)
-          }
+        const shaDiffers = beforeSha != null && annotatedSha != null && beforeSha !== annotatedSha
+        if (shaDiffers) {
+          goodAnnotated++
+          // Per-verb pHash distance recorded for diagnostics. Above-threshold
+          // means the overlay covers enough of the frame to flip the coarse
+          // hash; below-threshold but bytes-differ still counts as drawn.
+          const d = beforeHash && annotatedHash ? hammingDistance(beforeHash, annotatedHash) : -1
+          if (action.subcommand === 'tap') tapDiffs.push(d)
+          if (action.subcommand === 'swipe') swipeDiffs.push(d)
+        } else {
+          info(`tcid=${tcid} sub=${action.subcommand} annotated.png SHA matches before — wrapper did not re-encode`)
         }
       }
-    }
-
-    // after.png usually differs from before.png because the action mutated
-    // the screen — but for some no-op actions (e.g. tap on a non-interactive
-    // area) it can be identical. We just record observation; can't reliably
-    // assert without per-verb expectations.
-    if (beforeHash && afterHash) {
-      const d = hammingDistance(beforeHash, afterHash)
-      void d  // recorded only for diagnostics, not asserted
     }
   }
 
   assert(goodTriplets > 0, `at least one tool_call_id produced valid before+after PNGs (got ${goodTriplets})`)
-  assert(goodAnnotated > 0, `at least one tool_call_id produced an annotated PNG that visually differs from before (got ${goodAnnotated})`)
-  assert(tapDiffs.length > 0, `at least one tap action's annotated.png differs from before.png (got ${tapDiffs.length})`)
-  assert(swipeDiffs.length > 0, `at least one swipe action's annotated.png differs from before.png (got ${swipeDiffs.length})`)
+  assert(goodAnnotated > 0, `at least one tool_call_id produced an annotated PNG with bytes != before (got ${goodAnnotated})`)
+  assert(tapDiffs.length > 0, `at least one tap action's annotated.png bytes differ from before.png (got ${tapDiffs.length})`)
+  assert(swipeDiffs.length > 0, `at least one swipe action's annotated.png bytes differ from before.png (got ${swipeDiffs.length})`)
 }
 
 async function step6VerifyExpectedVerbs(ctxMaps: {

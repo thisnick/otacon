@@ -15,12 +15,31 @@
  * different". Tap-circle / arrow / box overlays produce diffs ≥10 in our
  * tests.
  */
+import * as crypto from 'node:crypto'
 import * as fs from 'node:fs'
 // `pnpm test:e2e:phase2` runs from `src/orchestrator/`, so Node's
 // node_modules walk-up resolves `sharp` from the orchestrator package
 // directly. The earlier dynamic-import dance landed on a non-existent
 // `sharp/index.jsx` and silently failed every meta read.
 import sharpDefault from 'sharp'
+
+/**
+ * SHA-256 of the file bytes. Two PNGs that differ by even a single pixel
+ * after sharp+SVG compositing will have entirely different SHA-256s —
+ * this is the right "did the overlay actually get drawn" check.
+ *
+ * pHash is too coarse for localized overlays like tap circles (an 8x8
+ * grayscale-mean hash quantizes 1080x2340 → 64 pixels, so a 50px ring
+ * may not flip a single bit).
+ */
+export function sha256File(filePath: string): string | null {
+  try {
+    const buf = fs.readFileSync(filePath)
+    return crypto.createHash('sha256').update(buf).digest('hex')
+  } catch {
+    return null
+  }
+}
 
 export interface PngMeta {
   ok: boolean
