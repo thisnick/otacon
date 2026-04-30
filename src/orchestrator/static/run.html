@@ -617,11 +617,20 @@ function openStream(startIndex) {
   eventSource = new EventSource(url);
   eventSource.onmessage = (e) => {
     if (!e.data) return;
+    // AI SDK's UI message stream emits a literal `[DONE]` sentinel at end-
+    // of-stream (OpenAI/Anthropic streaming convention). It's not JSON —
+    // close cleanly so the EventSource doesn't auto-reconnect and surface
+    // a spurious onerror.
+    if (e.data === '[DONE]') {
+      eventSource.close();
+      setConnection('done', 'stream ended');
+      return;
+    }
     try {
       const chunk = JSON.parse(e.data);
       handleChunk(chunk);
     } catch (err) {
-      console.error('chunk parse error', err, e.data);
+      console.warn('chunk parse skipped', err, e.data);
     }
   };
   eventSource.onerror = (e) => {
