@@ -17,6 +17,7 @@ import { otaconRegistry } from 'otacon-cli/commands/otacon'
 import { buildAllocRegistryFs } from './alloc-commands-fs.js'
 import { redactPhoneIdentifiers } from './redact.js'
 import { annotateScreenshot, inferAnnotation } from './annotate.js'
+import { isMutatingOtacon } from './mutating.js'
 import {
   buildScreenshotUrls,
   emitPhoneAction,
@@ -30,10 +31,6 @@ interface SandboxFsOptions {
   allocationStore: AllocationStore
   allocCtx: AllocationContext
 }
-
-const MUTATING_VERBS = new Set(
-  Object.entries(otaconRegistry).filter(([, spec]) => spec.isMutating).map(([k]) => k),
-)
 
 export async function buildSandboxFs(opts: SandboxFsOptions): Promise<Bash> {
   const { blobStore, accountId, runId, allocationStore, allocCtx } = opts
@@ -95,7 +92,10 @@ export async function buildSandboxFs(opts: SandboxFsOptions): Promise<Bash> {
 
     const toolCallId = ctx.env.get('OTACON_TOOL_CALL_ID')
     const rationale = ctx.env.get('OTACON_RATIONALE') ?? ''
-    const isMutating = MUTATING_VERBS.has(verb)
+    // Subcommand-aware: `apps list`, `sms list`, `clipboard get` etc. are
+    // read-only despite their top-level CommandSpec.isMutating=true. See
+    // SUBCOMMAND_MATRIX in mutating.ts.
+    const isMutating = isMutatingOtacon(verb, rest)
     const client = new OtaconClient(active.clientBaseUrl)
 
     // Capture before-screenshot + annotated overlay for mutating verbs.

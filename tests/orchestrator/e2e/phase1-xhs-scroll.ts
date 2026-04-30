@@ -156,6 +156,10 @@ async function teardown(): Promise<void> {
     console.error('teardown: server kill failed', e)
   }
   try {
+    if (process.env.KEEP_TMP_DIR === '1') {
+      console.log(`KEEP_TMP_DIR=1 — preserving ${ctx.tmpDir} for manual inspection`)
+      return
+    }
     if (ctx.tmpDir && fs.existsSync(ctx.tmpDir)) {
       fs.rmSync(ctx.tmpDir, { recursive: true, force: true })
     }

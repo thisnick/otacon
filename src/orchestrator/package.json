@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc",
     "test": "pnpm test:unit && pnpm test:e2e:smoke && pnpm test:e2e:approval-flow && pnpm test:e2e:failure-flow",
-    "test:unit": "tsx ../../tests/orchestrator/unit/test-storage.ts",
+    "test:unit": "tsx ../../tests/orchestrator/unit/test-storage.ts && tsx ../../tests/orchestrator/unit/test-mutating.ts",
     "test:e2e:smoke": "tsx ../../tests/orchestrator/e2e/test-workflow-smoke.ts",
     "test:e2e:approval-flow": "tsx ../../tests/orchestrator/e2e/test-approval-flow.ts",
     "test:e2e:failure-flow": "tsx ../../tests/orchestrator/e2e/test-failure-flow.ts",
