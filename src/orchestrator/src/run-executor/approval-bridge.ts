@@ -44,6 +44,24 @@ export type ApprovalPayload = z.infer<typeof approvalSchema>
  * it deterministic — replays of the workflow body produce the same
  * token, and external resolvers can reconstruct it without out-of-band
  * lookups.
+ *
+ * **Load-bearing ordering inside a tool's `execute` (no `'use step'`):**
+ *
+ *   1. `approvalHook.create({token})` — registers the token with
+ *      `world-local`'s hook index. Synchronous from the workflow's POV;
+ *      hook is queryable via `world.hooks.getByToken(token)` immediately
+ *      after.
+ *   2. Persist a SignalStore record + emit a `data-signal-created`
+ *      chunk via a `'use step'` helper. External resolvers read the
+ *      chunk over SSE and look up the signal by id.
+ *   3. `await hook` — durable suspend. Workflow resumes when an
+ *      external caller invokes `resumeHook(token, payload)` (typically
+ *      from POST `/api/v1/signals/:id/resolve`).
+ *
+ * Reversing steps 1 and 2 introduces a race: a fast resolver can POST
+ * before `createHook` has run, hitting `HookNotFoundError`. Always
+ * register the hook first. References: `workflows/lead-agent.ts`
+ * (bash + escalate tools) and `workflows/approval-flow.ts`.
  */
 export const approvalHook = defineHook({ schema: approvalSchema })
 

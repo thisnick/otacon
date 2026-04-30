@@ -1098,6 +1098,11 @@ orchestrator-restart:
 > - **Stream writes (`getWritable().getWriter().write(...)`) MUST happen inside `"use step"` functions, not in the workflow body.** The workflow body runs in a deterministic VM where `WritableStream.getWriter()` is unavailable. The plan's earlier sketches that wrote chunks directly from the workflow body (e.g. lifecycle markers) need to be wrapped in step boundaries. See `foundations/streaming.mdx` and the smoke test for the canonical pattern.
 > - Nitro plugins default-export an async function: `export default async function () { ... }` — no `defineNitroPlugin` import.
 
+> **Load-bearing patterns (don't violate without testing):**
+>
+> 1. **Hook ordering inside a tool's execute (NO `'use step'`):** `createHook({token})` first → persist signal + emit `data-signal-created` (step) → `await hook`. If you emit the chunk before `createHook` runs, an external resolver can race the chunk and POST `/signals/:id/resolve` before `world-local` indexes the token, hitting `HookNotFoundError`. References: `workflows/lead-agent.ts` (bash + escalate tools), `workflows/approval-flow.ts`, `src/run-executor/approval-bridge.ts` (TSDoc on `approvalHook`).
+> 2. **Stream writes only inside `'use step'` functions.** The workflow body runs in a deterministic VM where `WritableStream.getWriter()` throws `ENOTSUP`. Every `getWritable().getWriter().write(...)` must live in a step. The workflow body just `await`s those steps in order.
+
 Changes:
 - **Drop**: `@neondatabase/serverless`, `drizzle-orm`, `drizzle-kit` from `package.json`. Remove `src/orchestrator/src/db/`.
 - **Configure**: `@workflow/world-local` as the workflow store, pointed at `${ORCHESTRATOR_DATA_DIR}/workflow/`. (Already a dep — just wire it up at startup.)

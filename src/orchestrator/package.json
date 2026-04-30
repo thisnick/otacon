@@ -9,10 +9,11 @@
     "prepare:server": "nitro prepare",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
-    "test": "pnpm test:unit && pnpm test:e2e:smoke && pnpm test:e2e:approval-flow",
+    "test": "pnpm test:unit && pnpm test:e2e:smoke && pnpm test:e2e:approval-flow && pnpm test:e2e:failure-flow",
     "test:unit": "tsx ../../tests/orchestrator/unit/test-storage.ts",
     "test:e2e:smoke": "tsx ../../tests/orchestrator/e2e/test-workflow-smoke.ts",
     "test:e2e:approval-flow": "tsx ../../tests/orchestrator/e2e/test-approval-flow.ts",
+    "test:e2e:failure-flow": "tsx ../../tests/orchestrator/e2e/test-failure-flow.ts",
     "db:generate": "npx drizzle-kit generate",
     "db:migrate": "npx tsx src/db/migrate.ts"
   },

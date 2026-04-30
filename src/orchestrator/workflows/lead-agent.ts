@@ -25,7 +25,6 @@
  * inside the step body, writes, releases the lock.
  */
 import { DurableAgent } from '@workflow/ai/agent'
-import { gateway } from '@ai-sdk/gateway'
 import { tool } from 'ai'
 import { getWritable } from 'workflow'
 import { z } from 'zod'
@@ -74,9 +73,13 @@ export async function leadAgentWorkflow(args: LeadAgentArgs): Promise<LeadAgentR
   })
 
   const agent = new DurableAgent({
-    model: () => Promise.resolve(gateway(args.model as Parameters<typeof gateway>[0])),
+    // Pass the model identifier as a STRING. @workflow/ai resolves it via
+    // the Vercel AI Gateway internally inside its own steps. Passing a
+    // raw factory function fails serialization with `DevalueError: Cannot
+    // stringify a function` when Workflow SDK persists step arguments.
+    model: args.model,
     instructions: args.systemPrompt,
-    tools: buildTools(args.runId),
+    tools: buildTools({ runId: args.runId, accountId: args.accountId }),
   })
 
   const initialMessages: ModelMessage[] = [
@@ -98,6 +101,27 @@ export async function leadAgentWorkflow(args: LeadAgentArgs): Promise<LeadAgentR
         messages,
         writable: getWritable<UIMessageChunk>(),
         preventClose: turn < MAX_TURNS - 1,
+        // Some models emit tool-call names like "otacon-alloc" or
+        // "otacon" directly even though the only tool we expose is
+        // `bash`. Repair the call by routing it through bash with the
+        // model's args reconstructed as a command string.
+        experimental_repairToolCall: async ({ toolCall }) => {
+          const fabricated = toolCall.toolName
+          if (fabricated === 'bash' || fabricated === 'sleep_until' || fabricated === 'escalate') {
+            return null
+          }
+          const input = parseRepairInput(toolCall.input)
+          let command = fabricated
+          if (input.command) command = `${fabricated} ${input.command}`.trim()
+          else if (input.subcommand) command = `${fabricated} ${input.subcommand}`.trim()
+          else if (input.args && Array.isArray(input.args)) command = `${fabricated} ${input.args.join(' ')}`.trim()
+          const rationale = input.rationale ?? `repaired tool-call (model invented "${fabricated}")`
+          return {
+            ...toolCall,
+            toolName: 'bash',
+            input: JSON.stringify({ command, rationale }),
+          }
+        },
       })
       messages = result.messages
 
@@ -112,10 +136,18 @@ export async function leadAgentWorkflow(args: LeadAgentArgs): Promise<LeadAgentR
       }
     }
   } catch (e) {
-    await emitRunFailedStep({ runId: args.runId, error: errorMessage(e) })
+    const error = errorMessage(e)
+    await markRunStatusStep({ runId: args.runId, status: 'failed', error })
+    await emitRunFailedStep({ runId: args.runId, error })
     return { finalText, turnCount: messages.length, status: 'failed' }
   }
 
+  await markRunStatusStep({
+    runId: args.runId,
+    status: 'completed',
+    finalText,
+    turnCount: messages.length,
+  })
   await emitRunCompletedStep({
     runId: args.runId,
     finalText,
@@ -125,75 +157,140 @@ export async function leadAgentWorkflow(args: LeadAgentArgs): Promise<LeadAgentR
   return { finalText, turnCount: messages.length, status: 'completed' }
 }
 
+/**
+ * Persist run status + final text/turn count to RunStore. Run as a step
+ * so the workflow body stays deterministic.
+ */
+async function markRunStatusStep(p: {
+  runId: string
+  status: 'completed' | 'failed' | 'cancelled'
+  finalText?: string
+  turnCount?: number
+  error?: string
+}): Promise<void> {
+  'use step'
+  const { makeStores } = await import('../src/storage/factory.js')
+  const dataDir = process.env.ORCHESTRATOR_DATA_DIR ?? '.orchestrator-data'
+  const { runStore } = await makeStores({ dataDir })
+  await runStore.updateStatus(p.runId, p.status, {
+    finalText: p.finalText ?? null,
+    turnCount: p.turnCount ?? 0,
+    error: p.error ?? null,
+  })
+}
+
 // ────────────────────────── tools ───────────────────────────
 
 interface ToolFactoryCtx {
   runId: string
+  accountId: string
 }
 
-function buildTools(runId: string) {
-  const ctx: ToolFactoryCtx = { runId }
+function buildTools(ctx: ToolFactoryCtx) {
   return {
     bash: bashTool(ctx),
+    sleep_until: sleepUntilTool(),
     escalate: escalateTool(ctx),
   }
 }
 
 /**
- * Placeholder bash tool. Asks for approval, then returns a stub. The real
- * sandbox + exec wiring lands in a follow-up commit; for now this validates
- * the approval path through `agent.stream` end-to-end.
+ * Suspend the agent for a duration or until a date. Workflow SDK's
+ * `sleep()` takes a duration string (e.g. "10s", "5m") OR a Date OR a
+ * raw ms number — we accept either string or ISO timestamp from the
+ * model and dispatch.
+ */
+function sleepUntilTool() {
+  return tool({
+    description:
+      'Suspend the agent for a duration. Examples: "10s", "5m", "3h", "2026-04-28T09:00:00Z". The workflow truly suspends — no compute consumed during long sleeps.',
+    inputSchema: z.object({
+      until: z.string().describe('Duration string (e.g. "10s", "3h") or ISO 8601 datetime'),
+      reason: z.string().describe('Why you are sleeping'),
+    }),
+    execute: async ({ until, reason }) => {
+      const { sleep } = await import('workflow')
+      const asDate = Date.parse(until)
+      if (!Number.isNaN(asDate)) {
+        await sleep(new Date(asDate))
+      } else {
+        await sleep(until as never)
+      }
+      return `Resumed: ${reason}`
+    },
+  })
+}
+
+/**
+ * Bash tool. Asks for human approval (when the command mutates phone
+ * state), then runs the command via the sandbox and returns its output.
  *
  * Notably: NO `'use step'` here. The execute function runs in workflow
  * context so it can acquire a hook via `approvalHook.create()`. Inside it
- * we still call `'use step'` helpers (`persistSignal`) for non-deterministic
- * IO — those live in approval-bridge.ts.
+ * we still call `'use step'` helpers (`persistSignal*Step`,
+ * `emitSignalResolvedStep`, `execBashStep`) for non-deterministic IO.
  */
 function bashTool(ctx: ToolFactoryCtx) {
   return tool({
     description:
-      'Run a bash command in the sandbox. (Placeholder for the orchestrator-v2 P1 commit-5 milestone — gates on human approval, then returns a stubbed message. Real exec wiring lands in a follow-up commit.)',
+      'Run a bash command in the sandbox. Available commands include `otacon` for phone control and `otacon-alloc` for phone lease management, plus standard utilities (cat, echo, ls, grep). Run `otacon-alloc provision` before any otacon command. See system prompt for the full command reference.',
     inputSchema: z.object({
       command: z.string().describe('The bash command to run.'),
       rationale: z.string().describe('Why you are running this command.'),
     }),
     execute: async ({ command, rationale }, opts: { toolCallId: string }) => {
       const toolCallId = opts.toolCallId
-      const token = approvalToken(ctx.runId, toolCallId)
 
-      // IMPORTANT: hook creation must precede the data-signal-created
-      // chunk emission. Otherwise a CLI/UI that races on the chunk could
-      // POST resolve before world-local has the hook token indexed,
-      // hitting HookNotFoundError.
-      const hook = approvalHook.create({ token })
+      // Gate mutating phone commands on human approval. Read-only verbs
+      // (info, snapshot, screenshot, etc.) skip the gate and run directly.
+      if (await isMutatingStep(command)) {
+        const token = approvalToken(ctx.runId, toolCallId)
 
-      // Persist signal metadata + emit data-signal-created (step). Now
-      // that the hook is registered, external resolvers can find it via
-      // SignalStore.getByHookToken.
-      await persistSignalForBashStep({
+        // IMPORTANT: hook creation must precede the data-signal-created
+        // chunk emission. Otherwise a CLI/UI that races on the chunk
+        // could POST resolve before world-local has the hook token
+        // indexed, hitting HookNotFoundError.
+        const hook = approvalHook.create({ token })
+
+        // Persist signal metadata + emit data-signal-created (step). Now
+        // that the hook is registered, external resolvers can find it
+        // via SignalStore.getByHookToken.
+        await persistSignalForBashStep({
+          runId: ctx.runId,
+          toolCallId,
+          command,
+          rationale,
+        })
+
+        // SUSPEND. Workflow durably waits here.
+        const { decision, message } = await hook
+
+        await emitSignalResolvedStep({
+          runId: ctx.runId,
+          toolCallId,
+          kind: 'approval',
+          decision,
+          message: message ?? null,
+        })
+
+        if (decision === 'reject') return `Action rejected: ${message ?? 'no reason given'}`
+        if (decision === 'skip') return `Session skipped by approver: ${message ?? 'no reason given'}`
+      }
+
+      // Exec — delegated to a step so non-deterministic IO stays out of
+      // the workflow body. The step caches the Bash instance per runId.
+      const result = await execBashStep({
         runId: ctx.runId,
+        accountId: ctx.accountId,
         toolCallId,
         command,
         rationale,
       })
-
-      // SUSPEND. Workflow durably waits here.
-      const { decision, message } = await hook
-
-      // Emit data-signal-resolved (step) so observers can fold the
-      // approval card closed. Mark the SignalStore row resolved here too
-      // so the in-process resolve route doesn't have to.
-      await emitSignalResolvedStep({
-        runId: ctx.runId,
-        toolCallId,
-        kind: 'approval',
-        decision,
-        message: message ?? null,
-      })
-
-      if (decision === 'reject') return `Action rejected: ${message ?? 'no reason given'}`
-      if (decision === 'skip') return `Session skipped by approver: ${message ?? 'no reason given'}`
-      return `[stub] would run: ${command}\n(approval recorded; real exec wiring lands in a follow-up commit)`
+      let output = ''
+      if (result.stdout) output += result.stdout
+      if (result.stderr) output += (output ? '\n' : '') + `[stderr] ${result.stderr}`
+      if (result.exitCode !== 0) output += (output ? '\n' : '') + `[exit code: ${result.exitCode}]`
+      return output || '(no output)'
     },
   })
 }
@@ -410,6 +507,62 @@ async function persistSignalForEscalateStep(p: {
   }
 }
 
+// ─────────── exec step (per-runId sandbox cache) ───────────
+
+/**
+ * Check whether a `bash` command requires approval. The check itself is
+ * deterministic, but it has to run in a step because `otaconRegistry`
+ * lives in `otacon-cli` which isn't workflow-VM-loadable.
+ */
+async function isMutatingStep(command: string): Promise<boolean> {
+  'use step'
+  const { isMutating } = await import('../src/sandbox/build.js')
+  return isMutating(command)
+}
+
+interface ExecResult {
+  stdout: string
+  stderr: string
+  exitCode: number
+}
+
+/**
+ * Run a single bash command in the sandbox. Builds (or reuses) a per-run
+ * sandbox cached by `runId` — see notes inside.
+ *
+ * Returns stdout/stderr/exitCode plain strings + numbers (serializable
+ * across the step boundary). The trace dir is set to
+ * `runs/{runId}/traces/{toolCallId}` (absolute path under the blob root)
+ * so the otacon CLI's `_trace.ts` writes its annotated screenshot under
+ * the run's artifacts directory.
+ *
+ * The legacy `phone_allocations` table FK-references `conversations.id`,
+ * so this step also upserts a stub conversations row keyed by `runId`
+ * before invoking the sandbox. That row goes away when allocations
+ * migrate to FS (planned commit 9).
+ */
+async function execBashStep(p: {
+  runId: string
+  accountId: string
+  toolCallId: string
+  command: string
+  rationale: string
+}): Promise<ExecResult> {
+  'use step'
+  const { getSandbox, blobRoot } = await import('../src/run-executor/sandbox-cache.js')
+  const path = await import('node:path')
+  const bash = await getSandbox({ runId: p.runId, accountId: p.accountId })
+  const traceDir = path.resolve(blobRoot, 'runs', p.runId, 'traces', p.toolCallId)
+  const result = await bash.exec(p.command, {
+    env: { OTACON_TRACE_DIR: traceDir },
+  })
+  return {
+    stdout: result.stdout,
+    stderr: result.stderr,
+    exitCode: result.exitCode,
+  }
+}
+
 // ─────────────────────── helpers ────────────────────────────
 
 function extractText(msg: ModelMessage): string {
@@ -427,4 +580,20 @@ function extractText(msg: ModelMessage): string {
 function errorMessage(e: unknown): string {
   if (e instanceof Error) return e.message
   return String(e)
+}
+
+interface RepairInput {
+  command?: string
+  subcommand?: string
+  args?: unknown[]
+  rationale?: string
+}
+
+function parseRepairInput(input: unknown): RepairInput {
+  if (!input) return {}
+  if (typeof input === 'string') {
+    try { return JSON.parse(input) as RepairInput } catch { return { command: input } }
+  }
+  if (typeof input === 'object') return input as RepairInput
+  return {}
 }

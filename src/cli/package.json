@@ -4,9 +4,18 @@
   "description": "CLI for otacon phone automation",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./client": "./src/client.ts",
-    "./commands/otacon": "./src/commands/otacon/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "default": "./dist/client.js"
+    },
+    "./commands/otacon": {
+      "types": "./dist/commands/otacon/index.d.ts",
+      "default": "./dist/commands/otacon/index.js"
+    }
   },
   "bin": {
     "otacon": "./dist/index.js"

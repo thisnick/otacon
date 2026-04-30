@@ -27,7 +27,13 @@ async function throwOnError(res: Response): Promise<void> {
 }
 
 export class OtaconClient {
-  constructor(public readonly baseUrl: string) {}
+  // Plain field + assignment (rather than `constructor(public readonly baseUrl)`
+  // parameter property) so Node's strip-only TypeScript loader can parse this
+  // file when it's pulled into the orchestrator's Nitro step bundle.
+  readonly baseUrl: string
+  constructor(baseUrl: string) {
+    this.baseUrl = baseUrl
+  }
 
   async action(params: Action): Promise<void> {
     const res = await fetch(`${this.baseUrl}/api/action`, {
