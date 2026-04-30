@@ -26,6 +26,7 @@ import type {
   RunIndexEntry,
   RunInput,
   RunStatus,
+  StoredMessages,
 } from './types.js'
 
 /**
@@ -53,9 +54,19 @@ export interface RunStore {
   patch(runId: string, fields: Partial<Run>): Promise<Run>
   putPromptSnapshot(runId: string, prompt: string): Promise<string>
   getPromptSnapshot(runId: string): Promise<string | null>
-  /** Append a user-injected message to the run's inbox. Returns the queued message. */
+  /**
+   * Replace the run's persisted conversation history. Called at the end
+   * of every messages-POST workflow run with the AI SDK message history
+   * (user input + agent's response) so a fresh page load can resume.
+   */
+  setMessages(runId: string, messages: StoredMessages): Promise<Run>
+  /**
+   * @deprecated Phase 6 replaces the inbox/drain pattern with full
+   * conversation history POSTed by the client per `useChat.sendMessage`.
+   * Retained until the messages-POST + UI migration lands.
+   */
   enqueueInboxMessage(runId: string, content: string): Promise<InboxMessage>
-  /** Read all queued messages and truncate the inbox to empty. Returns the drained messages in FIFO order. */
+  /** @deprecated See `enqueueInboxMessage`. */
   drainInboxMessages(runId: string): Promise<InboxMessage[]>
 }
 
@@ -82,6 +93,7 @@ export class RunStoreFs implements RunStore {
       finalText: null,
       error: null,
       turnCount: 0,
+      messages: input.messages ?? [],
     }
     await fs.mkdir(runDir(this.layout, run.id), { recursive: true })
     await writeRunFile(this.layout, run)
@@ -92,7 +104,10 @@ export class RunStoreFs implements RunStore {
   async get(runId: string): Promise<Run | null> {
     try {
       const raw = await fs.readFile(runFile(this.layout, runId), 'utf-8')
-      return JSON.parse(raw) as Run
+      const parsed = JSON.parse(raw) as Partial<Run>
+      // Default `messages` to [] when reading a record from before P6.
+      // Saves callers from null-checks during the migration window.
+      return { ...parsed, messages: parsed.messages ?? [] } as Run
     } catch (e: any) {
       if (e.code === 'ENOENT') return null
       throw e
@@ -164,6 +179,10 @@ export class RunStoreFs implements RunStore {
       if (e.code === 'ENOENT') return null
       throw e
     }
+  }
+
+  async setMessages(runId: string, messages: StoredMessages): Promise<Run> {
+    return this.patch(runId, { messages })
   }
 
   async enqueueInboxMessage(runId: string, content: string): Promise<InboxMessage> {

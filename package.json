@@ -13,6 +13,7 @@
     "test:e2e:phase2": "pnpm --filter otacon-orchestrator test:e2e:phase2",
     "test:e2e:phase3": "pnpm --filter otacon-orchestrator test:e2e:phase3",
     "test:e2e:phase5": "pnpm --filter otacon-orchestrator test:e2e:phase5",
+    "test:e2e:phase6": "pnpm --filter otacon-orchestrator test:e2e:phase6",
     "changeset": "changeset",
     "version": "changeset version"
   },

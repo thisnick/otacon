@@ -67,8 +67,28 @@ export interface TeamMeta {
 
 export type RunStatus = 'created' | 'running' | 'completed' | 'failed' | 'cancelled'
 
+/**
+ * Conversation history is stored as AI SDK `UIMessage[]`. Each POST to the
+ * messages endpoint sends the FULL history — server persists it back at
+ * workflow-run finish so a fresh page load can resume from RunStore.
+ *
+ * Typed as `unknown[]` here to keep the storage layer free of `ai` package
+ * imports (callers cast at the boundary). Shape: `import type { UIMessage }
+ * from 'ai'`.
+ */
+export type StoredMessages = unknown[]
+
 export interface Run {
   id: string
+  /**
+   * Workflow run id of the MOST RECENT POST to the messages endpoint.
+   * Each POST starts a fresh workflow run — this field is overwritten on
+   * each one. Used by the stream-resume route to resolve the right run
+   * for `?startIndex=N` reconnection.
+   *
+   * Null while the run row exists but no POST has happened yet (initial
+   * `runs.post` returns this state).
+   */
   workflowRunId: string | null
   account: string
   team: string
@@ -83,6 +103,11 @@ export interface Run {
   finalText: string | null
   error: string | null
   turnCount: number
+  /**
+   * Conversation history. Empty until the first messages-POST writes its
+   * input + the agent's response back at workflow-run finish.
+   */
+  messages: StoredMessages
 }
 
 export interface RunInput {
@@ -95,6 +120,7 @@ export interface RunInput {
   promptTemplatePaths?: string[]
   promptSnapshotPath?: string | null
   initialPrompt?: string | null
+  messages?: StoredMessages
 }
 
 export interface ListRunsOpts {

@@ -2,11 +2,11 @@
  * Posterity event chunk builders + emitters.
  *
  * "Posterity" events are `data-*` UIMessageChunks that the orchestrator emits
- * into the workflow's writable stream alongside the AI SDK's model-level
- * `tool-call` / `tool-result` chunks. They are additive — the model-level
- * chunks are always forwarded as-is. Posterity events carry orchestrator-side
- * context: lifecycle markers (`data-run-started/completed/failed`), approval
- * signal status (`data-signal-created/resolved`), and Phase 2's headline
+ * into the workflow's writable stream alongside AI SDK's model-level chunks
+ * (text-delta, tool-input-*, tool-approval-request, etc.). They are additive
+ * — the model-level chunks are always forwarded as-is. Posterity events
+ * carry orchestrator-side context: lifecycle markers
+ * (`data-run-started/completed/failed/cancelled`) and Phase 2's headline
  * `data-phone-action`.
  *
  * The `data-phone-action` chunk packs the bash command, its exit/stdio, and
@@ -14,12 +14,21 @@
  * sufficient for the UI to render a phone-action card. Schema lives at
  * `docs/orchestrator-v2-plan.md` line 546.
  *
+ * Phase 6 architecture: posterity chunks are written to the workflow run's
+ * "data" namespace (`getWritable({ namespace: DATA_NAMESPACE })`). The
+ * default namespace is owned by `WorkflowAgent.stream`'s ModelCallStreamPart
+ * output — its route-side transform (`createModelCallToUIChunkTransform`)
+ * silently drops anything outside the model-call type set, so `data-*`
+ * chunks would not survive if written there. The route handler reads BOTH
+ * namespaces and merges them via `createUIMessageStream + writer.merge`.
+ *
  * MUST be called from inside a `'use step'` function — `getWritable()` from
  * the workflow body throws ENOTSUP.
  */
 import { ulid } from 'ulid'
 import { getWritable } from 'workflow'
 import type { UIMessageChunk } from 'ai'
+import { DATA_NAMESPACE } from '../agents/stream-merge.js'
 
 export interface PhoneActionPayload {
   /** AI SDK tool-call id this action corresponds to (the `bash` invocation). */
@@ -58,7 +67,7 @@ export interface PhoneActionPayload {
  * payload also carries `started_at`/`completed_at` for explicit start/end.
  */
 export async function emitPhoneAction(payload: PhoneActionPayload): Promise<void> {
-  const writer = getWritable<UIMessageChunk>().getWriter()
+  const writer = getWritable<UIMessageChunk>({ namespace: DATA_NAMESPACE }).getWriter()
   try {
     await writer.write({
       type: 'data-phone-action',
