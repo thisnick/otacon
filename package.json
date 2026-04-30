@@ -9,6 +9,7 @@
     "generate": "pnpm -r run generate",
     "typecheck": "pnpm -r run typecheck",
     "cli": "pnpm --filter otacon-cli exec node --no-warnings --import tsx/esm src/index.ts",
+    "test:e2e:phase1": "pnpm --filter otacon-orchestrator test:e2e:phase1",
     "changeset": "changeset",
     "version": "changeset version"
   },

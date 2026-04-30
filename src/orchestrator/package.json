@@ -14,6 +14,7 @@
     "test:e2e:smoke": "tsx ../../tests/orchestrator/e2e/test-workflow-smoke.ts",
     "test:e2e:approval-flow": "tsx ../../tests/orchestrator/e2e/test-approval-flow.ts",
     "test:e2e:failure-flow": "tsx ../../tests/orchestrator/e2e/test-failure-flow.ts",
+    "test:e2e:phase1": "tsx ../../tests/orchestrator/e2e/phase1-chrome-search.ts",
     "db:generate": "npx drizzle-kit generate",
     "db:migrate": "npx tsx src/db/migrate.ts"
   },
