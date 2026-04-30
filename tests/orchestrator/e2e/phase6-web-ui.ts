@@ -92,12 +92,26 @@
  *   - assistant-message, tool-call-card, run-status, run-final-text
  *   - approval-card, approval-approve, approval-deny, approval-skip
  *   - phone-action-card, phone-action-thumb-{before,annotated,after}
+ *   - phone-action-modal, phone-action-modal-prev, phone-action-modal-next
+ *     (lead Q3 answer — added to contract for scenario 4 modal navigation)
  *
- * Routes (locked in task #1):
- *   - POST /api/v1/runs                                              (create run)
- *   - POST /api/v1/runs/:id/messages                                 (send message)
+ * SPA routes (lead Q1 answer):
+ *   - `/`         RunsList
+ *   - `/runs/:id` RunDetail
+ *
+ * HTTP routes (locked in task #1):
+ *   - POST /api/v1/runs                                              (create DRAFT run)
+ *   - POST /api/v1/runs/:id/messages                                 (send message — kicks off first wf run)
  *   - GET  /api/v1/runs/:id/messages/:workflowRunId/stream?startIndex=N (resume)
  *   - POST /api/v1/runs/:id/cancel                                   (cancel)
+ *
+ * Run lifecycle (lead Q2 + Q4 answers):
+ *   - `runs create` produces a DRAFT run (no prompt, no workflow). Prints URL, exits 0.
+ *   - User opens URL → React app → New Run modal collects prompt + account + team.
+ *   - Modal submits → POST /api/v1/runs/:id/messages with first user message → first wf run starts.
+ *   - Headless: follow up `runs message` (or curl /messages) after `runs create`.
+ *   - Scenario 2 drives via UI (new-run-button → fill modal → submit), NOT API,
+ *     to exercise the full client→server happy path. Scenario 6 uses CLI directly.
  *
  * If implementer ships without these testids OR without the routes locked,
  * file feedback via TaskUpdate observed-vs-expected; do NOT debug.
@@ -418,29 +432,23 @@ async function scenario2LiveStreaming(): Promise<void> {
 
   if (!ctx.server) throw new Error('server not initialized')
 
-  // P6-E #2: Start a run via UI (new-run modal) OR via API. Handoff will
-  // confirm which path is canonical. For now use the API path so the test
-  // is decoupled from modal behavior (modal is exercised in scenario 6's
-  // CLI parity, which uses the same POST under the hood).
-  const startResp = await startRun({
-    baseUrl: ctx.server.baseUrl,
-    account: ACCOUNT_ID,
-    team: TEAM_NAME,
-    prompt: PROMPT_STREAMING,
-  })
-  info(`started run ${startResp.runId}`)
-
-  const runUrl = `${ctx.server.baseUrl}/runs/${startResp.runId}`
-  const page = await newPage()
-
-  try {
-    await page.goto(runUrl, { waitUntil: 'domcontentloaded', timeout: STATIC_TIMEOUT_MS })
-  } catch (e) {
-    info(`page.goto ${runUrl} threw: ${(e as Error).message}`)
-  }
-
-  // P6-E #2: assert text accumulates + tool-call-card appears.
-  // Pseudocode using locked testids:
+  // P6-E #2: drive via UI (lead Q4 answer — don't bypass the UI, that's the
+  // whole point of testing the client→server happy path). Pattern:
+  //
+  //   1. Navigate to `/` (RunsList)
+  //   2. Click [data-testid="new-run-button"]
+  //   3. Wait for [data-testid="new-run-modal"]
+  //   4. Fill [data-testid="new-run-prompt-input"] with PROMPT_STREAMING
+  //   5. Select ACCOUNT_ID in [data-testid="new-run-account-select"]
+  //   6. Select TEAM_NAME in [data-testid="new-run-team-select"]
+  //   7. Click [data-testid="new-run-submit"]
+  //      → modal POSTs /api/v1/runs (creates draft) then /api/v1/runs/:id/messages
+  //        with first user message → first workflow run starts.
+  //   8. Assert a new [data-testid="runs-list-row"] appears in
+  //      [data-testid="runs-list-root"] with data-run-id={id}.
+  //   9. Navigate to /runs/:id (or click the row).
+  //  10. Assert text accumulates + tool-call-card appears:
+  //
   //   const messages = page.locator('[data-testid="assistant-message"]')
   //   const toolCards = page.locator('[data-testid="tool-call-card"]')
   //   let lastLen = 0
@@ -455,20 +463,17 @@ async function scenario2LiveStreaming(): Promise<void> {
   //   assert(lengthGrew, 'assistant-message length grew across samples (streaming, not batched)')
   //   assert(await toolCards.count() > 0, 'at least one tool-call-card rendered')
   //
-  // Then wait for run to reach completion via run-status testid:
-  //   await page.locator('[data-testid="run-status"]').filter({ hasText: 'completed' }).waitFor(...)
-  //
-  // Phase 5 false-pass lesson: ALSO verify actual work happened by reading
-  // run.json from disk + asserting turnCount > 0 + finalText non-empty +
-  // expected v7 chunk types (tool-input-{start,delta,available} +
-  // tool-output-available) appear in the chunk log.
+  //  11. Wait for [data-testid="run-status"] to reach "completed":
+  //      await page.locator('[data-testid="run-status"]').filter({ hasText: 'completed' }).waitFor(...)
+  //  12. Assert [data-testid="run-final-text"] is non-empty.
+  //  13. Phase 5 false-pass lesson: ALSO read run.json from disk and verify
+  //      turnCount > 0 + finalText non-empty + expected v7 chunk types
+  //      (tool-input-{start,delta,available} + tool-output-available) appear
+  //      in the chunk log. Reaching status=completed alone is insufficient.
 
   info(`(stub) live streaming assertions pending implementer handoff`)
-  // Cancel the run to keep the test-suite teardown fast.
-  await fetch(`${ctx.server.baseUrl}/api/v1/runs/${startResp.runId}/cancel`, {
-    method: 'POST',
-  }).catch(() => {})
-  await page.close()
+  // No cancel needed during stub phase; will be replaced by real flow above.
+  await Promise.resolve()
 }
 
 // ---------------------------------------------------------------------------
@@ -537,10 +542,14 @@ async function scenario4PhoneActionCards(): Promise<void> {
   //       [data-testid="phone-action-thumb-annotated"]
   //       [data-testid="phone-action-thumb-after"]
   //     are all <img> tags with non-empty src
-  //   - Click thumb-before → modal appears (modal testid TBD by implementer
-  //     — not in locked contract, ask at handoff)
-  //   - Modal navigation: prev/next buttons cycle through the three images
-  //   - Click outside modal / press Escape → modal closes
+  //   - Click thumb-before → [data-testid="phone-action-modal"] appears
+  //     with the same image enlarged (lead Q3 answer — modal testids added
+  //     to locked contract).
+  //   - Modal navigation: click [data-testid="phone-action-modal-next"]
+  //     and [data-testid="phone-action-modal-prev"] cycle through the three
+  //     images (before → annotated → after → wrap).
+  //   - Click outside modal / press Escape → modal closes (modal disappears
+  //     from DOM or visibility toggles off — assert count drops to 0).
 
   info(`(stub) phone-action card assertions pending implementer handoff`)
 }
@@ -600,11 +609,17 @@ async function scenario6CliParity(): Promise<void> {
   if (!ctx.server) throw new Error('server not initialized')
 
   // P6-E #6: command is `runs create`. NOTE: NO --prompt flag — browser-only
-  // entry per locked CLI surface in task #1 (C4). Asserts:
+  // entry per locked CLI surface in task #1 (C4). Lead Q2 answer: `runs create`
+  // produces a DRAFT run (POST /api/v1/runs only, no workflow start). User
+  // opens URL → React app → New Run modal → POST /messages → workflow starts.
+  // For headless cases, follow up with `runs message` or curl /messages.
+  //
+  // Asserts:
   //   - exit 0
   //   - stdout matches https?://.* /runs/[A-Z0-9]+
   //   - GET on the URL returns 200 HTML containing React root
-  //   - GET /api/v1/runs/<id> returns 200 with status created|running
+  //   - GET /api/v1/runs/<id> returns 200 with status created|draft (NOT running —
+  //     no workflow has been kicked off yet without a /messages POST)
   //
   // Pseudocode:
   //   const result = await runOrchestratorCli([
@@ -624,12 +639,11 @@ async function scenario6CliParity(): Promise<void> {
   //   const apiRes = await fetch(`${ctx.server.baseUrl}/api/v1/runs/${runId}`)
   //   assert(apiRes.status === 200, `GET /api/v1/runs/${runId} returns 200`)
   //   const apiBody = await apiRes.json()
-  //   assert(['created', 'running'].includes(apiBody.status), `run status is created|running (got ${apiBody.status})`)
+  //   assert(['created', 'draft'].includes(apiBody.status), `run status is created|draft (got ${apiBody.status})`)
   //
-  // Note: with no --prompt, the run is created in a "draft" state — user
-  // sends the first prompt via the UI's chat input. Confirm with implementer
-  // whether `runs create` produces a run that's immediately runnable or one
-  // that requires a follow-up POST /messages from the UI.
+  // Lead Q2 answer (locked): `runs create` is browser-only entry — no --prompt,
+  // produces a draft, user kicks off via UI's New Run modal. Implementer to
+  // confirm the exact draft-status string at handoff.
 
   info(`(stub) CLI parity assertions pending implementer handoff`)
 }
