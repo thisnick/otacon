@@ -7,6 +7,8 @@
  * stream. Read-only verbs (info, snapshot, screenshot, …) bypass the wrapper
  * — no extra screenshots, no posterity event.
  */
+import * as fsSync from 'node:fs'
+import * as path from 'node:path'
 import { Bash, defineCommand, MountableFs, InMemoryFs } from 'just-bash'
 import { BlobBackedFs } from '../storage/blob-fs.js'
 import type { BlobStore } from '../storage/blob-store.js'
@@ -23,6 +25,24 @@ import {
   emitPhoneAction,
   type PhoneActionPayload,
 } from '../run-executor/posterity-events.js'
+
+/**
+ * Side-channel log to a file rooted at the data dir. Used to diagnose
+ * why screenshots aren't landing on disk despite the wrapper running —
+ * `console.error` from within a Workflow SDK `'use step'` boundary may
+ * not reach the parent process's stderr collector. Best-effort, sync
+ * writes (we don't care about losing a log line on crash).
+ */
+function debugLog(runId: string, msg: string): void {
+  try {
+    const dataDir = process.env.ORCHESTRATOR_DATA_DIR ?? '.orchestrator-data'
+    const logPath = path.resolve(dataDir, 'sandbox-debug.log')
+    fsSync.mkdirSync(path.dirname(logPath), { recursive: true })
+    fsSync.appendFileSync(logPath, `${new Date().toISOString()} runId=${runId} ${msg}\n`)
+  } catch {
+    /* ignore — diagnostic only */
+  }
+}
 
 interface SandboxFsOptions {
   blobStore: BlobStore
@@ -97,27 +117,45 @@ export async function buildSandboxFs(opts: SandboxFsOptions): Promise<Bash> {
     // SUBCOMMAND_MATRIX in mutating.ts.
     const isMutating = isMutatingOtacon(verb, rest)
     const client = new OtaconClient(active.clientBaseUrl)
+    if (!isMutating) {
+      debugLog(runId, `SKIP non-mutating verb=${verb} args=${JSON.stringify(rest)}`)
+    } else if (!toolCallId) {
+      debugLog(runId, `SKIP mutating but no OTACON_TOOL_CALL_ID env set verb=${verb}`)
+    }
 
     // Capture before-screenshot + annotated overlay for mutating verbs.
     // Best-effort: capture failures don't block the command itself —
     // the agent's task is to control the phone, not produce telemetry.
+    //
+    // Diagnostic logging via fs.appendFileSync to a side log file because
+    // `console.error` from within a Workflow SDK `'use step'` boundary can
+    // be suppressed before reaching the parent process's stderr collector.
+    // The side log is a fallback we can grep for when a phase2 e2e run
+    // produces 0 PNGs but no error message.
     const startedAt = Date.now()
     let beforeOk = false
     let annotatedOk = false
     let afterOk = false
     if (isMutating && toolCallId) {
       try {
+        debugLog(runId, `WRAPPER ENTER verb=${verb} tcid=${toolCallId} blobRoot=${blobStore.root}`)
+
         // Snapshot first so refs (e5, etc.) resolve while bounds are
         // still fresh — the action is about to mutate the screen.
         let snapshot: unknown = null
         try {
           snapshot = await client.snapshot('json')
-        } catch {
-          /* swallow — annotation infer will fall back to text labels */
+          debugLog(runId, `  snapshot OK tcid=${toolCallId}`)
+        } catch (e) {
+          debugLog(runId, `  snapshot THREW tcid=${toolCallId}: ${(e as Error).message}`)
         }
 
+        debugLog(runId, `  calling client.screenshot() at ${active.clientBaseUrl}`)
         const beforeBytes = await client.screenshot()
-        await blobStore.putScreenshot(runId, toolCallId, 'before', beforeBytes)
+        debugLog(runId, `  before bytes=${beforeBytes.length}`)
+
+        const beforePath = await blobStore.putScreenshot(runId, toolCallId, 'before', beforeBytes)
+        debugLog(runId, `  before written → ${beforePath}`)
         beforeOk = true
 
         const annotation = await inferAnnotation({
@@ -129,10 +167,15 @@ export async function buildSandboxFs(opts: SandboxFsOptions): Promise<Bash> {
         })
         if (annotation) {
           const annotatedBytes = await annotateScreenshot(beforeBytes, annotation)
-          await blobStore.putScreenshot(runId, toolCallId, 'annotated', annotatedBytes)
+          const annotatedPath = await blobStore.putScreenshot(runId, toolCallId, 'annotated', annotatedBytes)
+          debugLog(runId, `  annotated written → ${annotatedPath} (kind=${annotation.kind})`)
           annotatedOk = true
+        } else {
+          debugLog(runId, `  annotation null — no annotated.png written for verb=${verb}`)
         }
       } catch (e) {
+        const msg = e instanceof Error ? `${e.message}\n${e.stack}` : String(e)
+        debugLog(runId, `  CAPTURE FAILED verb=${verb} tcid=${toolCallId}: ${msg}`)
         console.error(`[sandbox] before/annotated capture failed for ${verb} ${toolCallId}:`, e)
       }
     }
@@ -156,9 +199,12 @@ export async function buildSandboxFs(opts: SandboxFsOptions): Promise<Bash> {
     if (isMutating && toolCallId) {
       try {
         const afterBytes = await client.screenshot()
-        await blobStore.putScreenshot(runId, toolCallId, 'after', afterBytes)
+        const afterPath = await blobStore.putScreenshot(runId, toolCallId, 'after', afterBytes)
+        debugLog(runId, `  after written → ${afterPath} bytes=${afterBytes.length}`)
         afterOk = true
       } catch (e) {
+        const msg = e instanceof Error ? `${e.message}\n${e.stack}` : String(e)
+        debugLog(runId, `  AFTER CAPTURE FAILED tcid=${toolCallId}: ${msg}`)
         console.error(`[sandbox] after capture failed for ${verb} ${toolCallId}:`, e)
       }
     }
