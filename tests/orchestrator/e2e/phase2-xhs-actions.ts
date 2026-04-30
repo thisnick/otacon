@@ -446,11 +446,13 @@ async function step5VerifyTraceFiles(run: AgentRunResult, ctxMaps: {
 
   assert(goodTriplets > 0, `at least one tool_call_id produced valid before+after PNGs (got ${goodTriplets})`)
   assert(goodAnnotated > 0, `at least one tool_call_id produced an annotated PNG with bytes != before (got ${goodAnnotated})`)
-  // tap is reliably triggered by "open the app" → tap on the launcher; the
-  // canonical prompt's first step always produces a tap. Swipe/key/set-text
-  // are agent-discretion — we assert min-distinct-verbs instead of a specific
-  // set.
-  assert(tapDiffs.length > 0, `at least one tap action's annotated.png bytes differ from before.png (got ${tapDiffs.length})`)
+  // Per-verb diagnostics: log tap/swipe annotation byte-diff counts but
+  // don't assert. The agent's choice of mutating verb is non-deterministic
+  // — `apps launch` can open an app without an explicit launcher tap, and
+  // the agent might or might not swipe. The "≥1 annotated PNG with
+  // bytes != before" assertion above already covers the wrapper's
+  // correctness across whatever verb mix happens.
+  info(`per-verb annotation byte-diff counts: tap=${tapDiffs.length}, swipe=${swipeDiffs.length}`)
 }
 
 async function step6VerifyExpectedVerbs(ctxMaps: {
@@ -461,14 +463,13 @@ async function step6VerifyExpectedVerbs(ctxMaps: {
   for (const d of ctxMaps.phoneActionsByTcid.values()) observed.add(d.subcommand)
   // The canonical prompt requests tap + type/set-text + key + swipe, but the
   // agent's verb choice is non-deterministic. Assert the orchestrator + wrapper
-  // can handle any of the mutating verbs cleanly — measured by distinct verb
-  // count, not specific verb identity.
+  // can handle multiple mutating verbs cleanly — measured by distinct verb
+  // count, not specific verb identity. (Apps launch alone can open the app
+  // without any tap, e.g. via package URI.)
   assert(
     observed.size >= MIN_DISTINCT_VERBS,
     `scenario produced ≥${MIN_DISTINCT_VERBS} distinct mutating verbs (observed: ${[...observed].sort().join(', ')})`,
   )
-  // Tap must always be in the set since "open the app" always taps.
-  assert(observed.has('tap'), `scenario produced at least one tap action (observed verbs: ${[...observed].sort().join(', ')})`)
 }
 
 async function step7VerifyNonMutatingClean(): Promise<void> {
