@@ -220,10 +220,14 @@ async function step1Bootstrap(): Promise<void> {
 
   const accountJson = readJson<{ id?: string }>(path.join(accountDir, 'account.json'))
   assert(accountJson?.id === ACCOUNT_ID, `account.json has id=${ACCOUNT_ID}`)
-  const credsJson = readJson<Array<{ identifier?: string }>>(path.join(accountDir, 'credentials.json'))
+  // Credentials file shape: { rows: [{credentialType, identifier, ...}] }
+  const credsJson = readJson<{ rows?: Array<{ identifier?: string }> }>(
+    path.join(accountDir, 'credentials.json'),
+  )
+  const credRows = Array.isArray(credsJson?.rows) ? credsJson.rows : []
   assert(
-    Array.isArray(credsJson) && credsJson.some(c => c.identifier === ACCOUNT_PHONE),
-    `credentials.json contains ${ACCOUNT_PHONE}`,
+    credRows.some(c => c.identifier === ACCOUNT_PHONE),
+    `credentials.json rows contains identifier=${ACCOUNT_PHONE} (got ${credRows.map(c => c.identifier).join(', ')})`,
   )
 }
 
