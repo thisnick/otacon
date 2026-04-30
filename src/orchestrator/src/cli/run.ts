@@ -1,5 +1,5 @@
 /**
- * `agent run-v2` — orchestrator-v2 CLI client.
+ * `agent run` — orchestrator CLI client.
  *
  * 1. POST /api/v1/runs to start a workflow run; receive `{runId,
  *    workflowRunId}` back.
@@ -12,16 +12,12 @@
  *    /api/v1/signals/:id/resolve.
  * 5. Block until a terminal chunk (`data-run-completed` exit 0,
  *    `data-run-failed` exit 1, `data-run-cancelled` exit 2).
- *
- * Coexists with the legacy `agent run` (Drizzle path); does NOT touch
- * `db/` or `services/allocations.ts`. Delete the legacy code after
- * commit 10 when the migration is complete.
  */
 import * as readline from 'node:readline'
 
 const DEFAULT_URL = 'http://localhost:9090'
 
-export interface RunV2Options {
+export interface RunOptions {
   account: string
   team?: string
   prompt?: string
@@ -48,7 +44,7 @@ interface SignalCreatedData {
 
 const TERMINAL_TYPES = new Set(['data-run-completed', 'data-run-failed', 'data-run-cancelled'])
 
-export async function runV2Command(opts: RunV2Options): Promise<void> {
+export async function runCommand(opts: RunOptions): Promise<void> {
   const baseUrl = (opts.url ?? process.env.ORCHESTRATOR_URL ?? DEFAULT_URL).replace(/\/$/, '')
 
   // 1. Start the run

@@ -8,7 +8,7 @@ import {
   inspectRunPromptCommand,
 } from './cli/inspect-runs.js'
 import { inspectCommandsCommand } from './cli/inspect-commands.js'
-import { runV2Command } from './cli/run-v2.js'
+import { runCommand } from './cli/run.js'
 import { seedTeamCommand } from './cli/seed-team.js'
 import { serveCommand } from './cli/serve.js'
 
@@ -61,15 +61,15 @@ program
 const agent = program.command('agent').description('Run / control agents.')
 
 agent
-  .command('run-v2')
-  .description('Start a run via the orchestrator-v2 HTTP server (requires `pnpm orchestrator serve` running)')
+  .command('run')
+  .description('Start a run via the orchestrator HTTP server (requires `pnpm orchestrator serve` running)')
   .requiredOption('--account <id>', 'Account ID (e.g. xhs:test)')
   .option('--team <name>', 'Team name', 'social-media-engagement')
   .option('--prompt <text>', 'Initial prompt for the lead agent')
   .option('--url <url>', 'Orchestrator HTTP URL (defaults to ORCHESTRATOR_URL env or http://localhost:9090)')
   .option('--auto-approve', 'Auto-approve every approval signal (no stdin prompt)')
   .action(async (opts) => {
-    await runV2Command({
+    await runCommand({
       account: opts.account,
       team: opts.team,
       prompt: opts.prompt,
