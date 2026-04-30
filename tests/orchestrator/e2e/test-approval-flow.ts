@@ -214,6 +214,81 @@ async function main() {
       // approval-flow workflow doesn't run a model, so we don't assert
       // the messages array shape — just that the endpoint resolves.
     }
+
+    // GET /api/v1/signals — list all (P3-I commit 3).
+    {
+      const r = await fetch(`${BASE}/api/v1/signals`)
+      assert(r.status === 200, `GET /api/v1/signals returns 200 (got ${r.status})`)
+      const body = await r.json() as { signals: Array<{ id: string; runId: string; status: string }> }
+      assert(Array.isArray(body.signals), 'GET /api/v1/signals returns {signals: array}')
+      assert(
+        body.signals.some(s => s.runId === runId),
+        `GET /api/v1/signals includes the approval-flow signal (got ${body.signals.length})`,
+      )
+    }
+
+    // GET /api/v1/signals?status=approved — filter (P3-I commit 3).
+    {
+      const r = await fetch(`${BASE}/api/v1/signals?status=approved`)
+      assert(r.status === 200, `GET /api/v1/signals?status=approved returns 200 (got ${r.status})`)
+      const body = await r.json() as { signals: Array<{ status: string; runId: string }> }
+      assert(
+        body.signals.every(s => s.status === 'approved'),
+        'GET /api/v1/signals?status=approved returns only approved',
+      )
+      assert(
+        body.signals.some(s => s.runId === runId),
+        'GET /api/v1/signals?status=approved includes our run',
+      )
+    }
+
+    // GET /api/v1/signals?run_id=X — filter to one run (P3-I commit 3).
+    {
+      const r = await fetch(`${BASE}/api/v1/signals?run_id=${runId}`)
+      assert(r.status === 200, `GET /api/v1/signals?run_id=:id returns 200 (got ${r.status})`)
+      const body = await r.json() as { signals: Array<{ runId: string }> }
+      assert(
+        body.signals.every(s => s.runId === runId),
+        `GET /api/v1/signals?run_id=:id returns only that run's signals`,
+      )
+    }
+
+    // GET /api/v1/signals?status=invalid — 400 (P3-I commit 3).
+    {
+      const r = await fetch(`${BASE}/api/v1/signals?status=garbage`)
+      assert(r.status === 400, `GET /api/v1/signals?status=garbage returns 400 (got ${r.status})`)
+      await r.arrayBuffer()
+    }
+
+    // POST /api/v1/runs/:id/cancel — at this point in the test the
+    // workflow has emitted data-run-completed but `approvalFlowWorkflow`
+    // doesn't itself update RunStore (lead-agent does that, this
+    // simpler workflow does not), so RunStore.status is still 'running'.
+    // Cancel transitions that to 'cancelled'.
+    {
+      const r = await fetch(`${BASE}/api/v1/runs/${runId}/cancel`, { method: 'POST' })
+      assert(r.status === 200, `POST /api/v1/runs/:id/cancel returns 200 (got ${r.status})`)
+      const body = await r.json() as { run: { status: string } }
+      assert(
+        body.run.status === 'cancelled',
+        `cancel transitions status to cancelled (got ${body.run.status})`,
+      )
+    }
+    // Idempotent: cancelling an already-cancelled run is a no-op.
+    {
+      const r = await fetch(`${BASE}/api/v1/runs/${runId}/cancel`, { method: 'POST' })
+      assert(r.status === 200, `POST cancel on already-cancelled run returns 200 (got ${r.status})`)
+      const body = await r.json() as { run: { status: string } }
+      assert(
+        body.run.status === 'cancelled',
+        `cancel is idempotent (status still cancelled; got ${body.run.status})`,
+      )
+    }
+    {
+      const r = await fetch(`${BASE}/api/v1/runs/01KQE0000000000000NOTHERE/cancel`, { method: 'POST' })
+      assert(r.status === 404, `POST cancel on unknown run returns 404 (got ${r.status})`)
+      await r.arrayBuffer()
+    }
   } catch (e: any) {
     console.error('UNCAUGHT:', e?.stack ?? e)
     failed++
