@@ -110,8 +110,18 @@ async function getRunDetail(runId: string): Promise<{ status: number; body: unkn
   return { status: res.status, body }
 }
 
+/**
+ * Run a remote command over SSH. SSH concatenates argv with spaces and runs
+ * the result through the remote shell — args containing whitespace or shell
+ * metacharacters (e.g. docker --format '{{.Names}}') need single-quoting so
+ * they survive remote-shell parsing as one token.
+ */
 function ssh(args: string[]): { code: number; stdout: string; stderr: string } {
-  const res = spawnSync('ssh', ['-o', 'BatchMode=yes', SSH_HOST, ...args], {
+  const quoted = args.map(a => {
+    if (/^[A-Za-z0-9_./@:=+-]+$/.test(a)) return a
+    return `'${a.replace(/'/g, `'\\''`)}'`
+  }).join(' ')
+  const res = spawnSync('ssh', ['-o', 'BatchMode=yes', SSH_HOST, quoted], {
     encoding: 'utf-8',
     stdio: ['ignore', 'pipe', 'pipe'],
   })
