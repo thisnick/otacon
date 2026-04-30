@@ -1445,12 +1445,213 @@ src/orchestrator/
 - **Ansible `bootstrap` + `tailscale` roles** — reused for VPS provisioning.
 - **Static UI pattern** (`src/registry/static/`) — copied verbatim for orchestrator UI.
 
-## Out of scope
+## Out of scope (for Phases 1–5)
 
 - Multi-team / sub-agents (lead → operator → producer fan-out via `start()` from inside the workflow): the design doc covers it; not in this redesign.
 - `world-vercel` / cross-serverless durability: we run in a single VPS process — `world-local` is sufficient.
-- React UI / `WorkflowChatTransport` / `useChat`: vanilla HTML/JS UI consumes the SSE directly; we can adopt these later if we move to React.
+- ~~React UI / `WorkflowChatTransport` / `useChat`~~: **moved to Phase 6** below.
 - Authentication on the HTTP API: token field in config is reserved but not enforced. The orchestrator is reachable only over Tailscale.
 - Migration of existing Neon data: drop, don't migrate (exploratory runs).
 - Conversation compaction: future; the per-agent `summary.md` slot is reserved.
 - S3-compatible blob storage: filesystem only.
+
+---
+
+# Phase 6 — Web UI v2: Vite + React + WorkflowAgent
+
+## Why Phase 6 exists
+
+Phase 4 shipped a working vanilla HTML/JS web UI. It's hitting friction:
+- Hand-rolled SSE parser with bugs (the `[DONE]` sentinel crash that surfaced post-deploy)
+- Reinventing what AI SDK's stream consumer already does
+- No reactive state for filters/modals; localStorage + DOM toggling
+- Server-side approval flow uses our custom `hook<Decision>` + `data-signal-*` chunks instead of AI SDK's standard `needsApproval` / `addToolApprovalResponse` protocol
+- CLI duplicates the rendering work (`src/cli/run.ts` SSE consumer)
+
+The fix is twofold:
+1. **Server: migrate from `DurableAgent` (`@workflow/ai/agent`) to `WorkflowAgent` (`@ai-sdk/workflow`).** Per AI SDK v7 docs, `WorkflowAgent` provides durable suspension across server restart (same primitives we already use — Vercel Workflow DevKit `"use workflow"` / `"use step"` / `getWritable`) AND has built-in `needsApproval` that uses the same durability model, not the client-state-history version. Custom `hook<Decision>` + `approval-bridge.ts` + `data-signal-*` emit code goes away.
+2. **Client: vanilla HTML/JS → Vite + React + `useChat` + AI SDK UI Elements.** Use canonical `addToolApprovalResponse` (no custom POST glue). Custom React components for `data-phone-action` cards. The CLI's `agent run` streamer code goes away — CLI just POSTs and prints the URL.
+
+Reference docs the plan was built against:
+- `https://ai-sdk.dev/v7/docs/agents/workflow-agent#workflowagent`
+- `https://ai-sdk.dev/v7/docs/reference/ai-sdk-workflow/workflow-agent`
+- `https://ai-sdk.dev/v7/docs/reference/ai-sdk-workflow/workflow-chat-transport`
+- `https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling#dynamic-approval`
+- AI SDK UI Elements (e.g. `https://elements.ai-sdk.dev/components/conversation`)
+
+## Decisions (P6)
+
+| Question | Decision |
+|---|---|
+| Bundler | **Vite** (Vite is esbuild + dev server + sensible defaults; standard React tooling) |
+| UI framework | **React** (matches AI SDK UI hook ecosystem) |
+| Streaming consumer | **`useChat`** (chat-shaped state mgmt, message array, sendMessage). Drop down to `readUIMessageStream` only if `useChat`'s shape genuinely fights us. |
+| Transport | **`WorkflowChatTransport`** from `@ai-sdk/workflow` — connects `useChat` to a `WorkflowAgent` over our existing `/api/v1/runs/:id/stream` route |
+| Approvals (client) | **`addToolApprovalResponse`** from `useChat` — the canonical AI SDK UI approval flow |
+| Approvals (server) | **`needsApproval: ({ args }) => isMutating(args)`** on the bash tool inside `WorkflowAgent`. Drop our custom `hook<Decision>` / `approval-bridge.ts` / `data-signal-*` chunk machinery. |
+| Existing custom data parts | **`data-phone-action`** stays — render with custom React component. Other `data-*` we own stay too. AI SDK UI Elements don't cover these; that's expected. |
+| Server URL | Same — Tailscale Serve at `https://otacon-orchestrator.tail0437b8.ts.net/`. Vite output served as static assets via Nitro `publicAssets`. |
+| Bundling | **Vite separate from Nitro** (one `vite build` to `static/dist/`, then `nitro build`). Two `pnpm dev` processes during development (`pnpm dev:ui` for Vite HMR, `pnpm dev` for Nitro server). Production: `vite build && nitro build`. NOT TanStack Start / Nuxt — too much magic, our scope doesn't need it. |
+| CLI `agent run` | **Removed.** Replace with `agent new` (or `runs create`) that POSTs `/api/v1/runs`, prints the run URL, exits 0. No SSE rendering in terminal. CLI's streaming-renderer code (`src/cli/run.ts` + render/* if any) deleted. |
+| CLI surface that stays | `service add-account`, `service seed-team`, `runs list/show/cancel/prompt`, `signals list/resolve`, `inspect *`, `accounts list/add`, `teams list`. JSON/table output only — no rich rendering. |
+| AI SDK UI Elements | **Use where they fit** (text bubbles, tool call cards, reasoning blocks, conversation scrolling). **Custom React components for everything else** (phone-action card, runs-list table, new-run modal, run header). Don't try to shoehorn `data-phone-action` into `<Tool>`. |
+| Migrate runs-list page | **Yes.** Once Vite is in the build, two code paths (vanilla `index.html` + React `run.html`) is the worst of both worlds. Migrate everything to React. |
+| Pages staying vanilla | Static error pages (browser default 404). API responses (JSON, not UI). The registry's static page (separate concern, untouched). |
+
+## Server-side migration
+
+**Replace** in `src/orchestrator/workflows/lead-agent.ts`:
+- `import { DurableAgent } from '@workflow/ai/agent'` → `import { WorkflowAgent } from '@ai-sdk/workflow'`
+- Construct `WorkflowAgent({ model, tools, ... })` instead of `DurableAgent`
+- Bash tool definition picks up `needsApproval: ({ args }) => isMutating(args)`. Mutating-check helper from `src/sandbox/mutating.ts` is already extracted and available.
+
+**Delete:**
+- `src/run-executor/approval-bridge.ts`
+- `cancelHook` setup (cancellation can use `WorkflowAgent.cancel()` if available, or stay as a custom hook — verify against docs during implementation)
+- `data-signal-created` / `data-signal-resolved` emit code in `posterity-events.ts`
+- `SignalStore` shrinks: AI SDK's approval-request chunk + tool-call args carry most of what we tracked. Keep what's still uniquely ours (e.g. trace screenshot URLs).
+
+**Keep:**
+- `data-phone-action` chunk emission (custom data part, not an AI SDK approval primitive)
+- The auto-screenshot wrapper in `src/sandbox/build-fs.ts` — captures before/annotated/after, emits `data-phone-action`
+- `RunStore`, `BlobStore`, `AccountStore`, `TeamStore`, `IndexStore`, `AllocationStoreFs`
+- The Nitro routes (with one new endpoint added: see below)
+- `cancel.post.ts` — but its mechanism may need updating (see Caveats)
+
+**Add:**
+- Server endpoint that `addToolApprovalResponse` POSTs to. AI SDK UI's transport layer needs this — verify exact path the `WorkflowChatTransport` expects. Likely `POST /api/v1/runs/:id/approval` or a continuation of the chat protocol on `POST /api/v1/runs/:id/messages`.
+
+## Client-side architecture
+
+**Vite project structure** under `src/orchestrator/web/` (or wherever feels natural — TBD by implementer):
+
+```
+src/orchestrator/web/
+  index.html              # Vite's entry — single-page React app
+  src/
+    main.tsx              # ReactDOM.createRoot
+    App.tsx               # Router (runs list / run detail)
+    pages/
+      RunsList.tsx        # GET /api/v1/runs, table, filters, "+ New run" modal
+      RunDetail.tsx       # useChat({ transport: WorkflowChatTransport(...) })
+    components/
+      Timeline.tsx        # iterates messages, dispatches by chunk type
+      PhoneActionCard.tsx # custom — 3 thumbnails + click-to-enlarge modal
+      ApprovalCard.tsx    # custom — AI SDK UI Elements wrapper around tool-approval-request
+      NewRunModal.tsx     # account/team dropdowns + prompt textarea + submit
+  vite.config.ts          # build to ../static/dist/
+  tsconfig.json
+  package.json            # local React + Vite deps; integrates with workspace
+```
+
+**Build wiring:**
+- `pnpm orchestrator dev:ui` → Vite HMR dev server (port 5173 by default)
+- `pnpm orchestrator dev` → Nitro server (still on 9090) — picks up `static/dist/` as static assets
+- `pnpm orchestrator build` → `vite build && nitro build` — Vite's output lands in `static/dist/`, Nitro packages it
+- During development: visit Vite's dev server (5173) for HMR. Nitro's static fallback serves last-built bundle.
+
+## Phase 6 implementation phases
+
+P6 follows the same Implementer + Evaluator pipeline as P1–P5.
+
+### P6-I (implementer task)
+
+1. **Server migration:** `DurableAgent` → `WorkflowAgent` in `lead-agent.ts`. Bash tool gains `needsApproval`. Drop approval-bridge + data-signal-* emit. Verify hooks (cancel, mid-run user message) still work via WorkflowAgent's primitives or stay as custom hooks if WorkflowAgent doesn't cover them. **Caveat:** verify custom `data-phone-action` chunks still flow through WorkflowAgent's writable — docs don't explicitly cover this. If they don't, evaluate workarounds before committing to full migration.
+2. **Client scaffolding:** add Vite project under `src/orchestrator/web/`. Wire React + AI SDK UI deps. Build to `static/dist/`. Update Nitro `publicAssets` if needed.
+3. **Runs list page in React** with `+ New run` modal. Fetches from `/api/v1/runs`, `/api/v1/accounts`, `/api/v1/teams`.
+4. **Run detail page** using `useChat({ transport: WorkflowChatTransport(...) })` connecting to `/api/v1/runs/:id/stream`. Renders messages with AI SDK UI Elements where they fit (`Conversation`, `Message`, `Tool`, etc.). Custom `PhoneActionCard.tsx` for `data-phone-action`. Approval via `addToolApprovalResponse`.
+5. **CLI cleanup:** delete `src/cli/run.ts` (or replace with `agent new` thin POST + URL print). Remove streaming-renderer modules.
+6. **Verify regression:** all P1–P5 e2e suites still green (with chunk-type assertion updates if AI SDK approval shapes differ from our prior `data-signal-*` shapes).
+
+### P6-E (evaluator task)
+
+Author `tests/orchestrator/e2e/phase6-web-ui.ts`:
+1. **Static load + React app boot** — runs list renders, no console errors (specifically: no `[DONE]` parse error, no SSE error, no React hydration error).
+2. **Live streaming via `useChat`** — kick off Chrome/XHS scenario, browser updates live as chunks arrive, text accumulates, tool cards appear.
+3. **Approval-from-UI via `addToolApprovalResponse`** — `--require-approval` scenario, browser shows approval card (now from AI SDK UI Elements), click Approve → `addToolApprovalResponse` resolves → run resumes → run completes.
+4. **`data-phone-action` cards render correctly** with 3 thumbnails + modal navigation.
+5. **Durability across server restart** — same Phase 3 scenario but now via WorkflowAgent's approval mechanism. Run paused at approval, kill orchestrator container, restart, click Approve in browser → run resumes. **This proves the migration didn't lose the durable-suspension property.**
+6. **CLI parity sanity** — `pnpm orchestrator agent new` (replacement for old `agent run`) prints a working URL, exits 0.
+7. **Regressions:** P1–P5 e2e all still green. Phase 5's hardware run completes as before.
+
+Hardware: phone-4 + XHS canonical (unchanged from P1–P5).
+
+## What stays the same
+
+- Orchestrator's HTTP API surface (routes from P1 + P3) — unchanged. Client-side migration just changes what consumes the routes.
+- VPS deploy flow (from P5) — unchanged. Vite output goes into the same image.
+- Tailscale topology — unchanged. Host Tailscale + `tailscale serve --https=443` proxying to localhost:9090.
+- Filesystem layout (`runs/{id}/run.json`, `prompt.md`, `traces/{tcid}/...`) — unchanged.
+- The agent loop semantics (turn-based, hook for cancel) — unchanged. Only the implementation classes change.
+
+## Out of scope for P6
+
+- Authentication on the HTTP API (still reserved-but-not-enforced; was deferred to P5 originally and remains deferred)
+- Multi-team / sub-agents
+- Mobile-responsive UI (desktop-only for now)
+- Offline approval (e.g. email link approval flow that survives both server restart AND closed browser tab)
+- Full migration of UI states to TanStack Query / Zustand — `useChat` + plain React state is enough at our scope
+- Server-side rendering — pure SPA is fine
+
+---
+
+# Load-bearing decisions / corrections (do not re-litigate)
+
+This section captures decisions corrected in-flight that were either made by the user or surfaced from production debugging. **Future iterations of this plan should preserve these unless explicitly revisited.**
+
+## Topology
+
+- **Tailscale on the host, not in a sidecar container** for the orchestrator VPS. Container uses `network_mode: host` to inherit Tailscale DNS + routing. Reason: SSH-only-via-container is awkward for ops; the VPS is single-tenant, so sidecar isolation doesn't pay off; one Tailscale node is simpler than two.
+- **Container shares host network** (`network_mode: host`). Drop `ports:` mapping (host network ignores it). Cloud-init's `tailscale serve --https=443` exposes the orchestrator at `https://otacon-orchestrator.<tailnet>/` (port 443, no port number).
+- **One Tailscale node per VPS**, named `otacon-orchestrator`. Don't try to register two with the same name (causes auto-suffix `-1`, very confusing).
+- **Tailscale auth key:** reusable, ephemeral=false. We share `TS_AUTH_KEY_REGISTRY` between registry + orchestrator (both join under tag `tag:otacon-registry`). To SSH from `wiseyu@gmail.com` to either, the tailnet ACL must permit `wiseyu@gmail.com → tag:otacon-registry`.
+- **OCI security list** allows only Tailscale UDP/41641 ingress. SSH-to-host comes through Tailscale, not the public IP. Don't open port 22 publicly.
+
+## Build pipeline
+
+- **Workflow SDK requires Nitro** (build pipeline for `"use workflow"` / `"use step"` directives via `@workflow/swc-plugin`). Plain tsx won't work. Decision made in P1.
+- **Production bundle MUST set `moduleSideEffects: true` for `.nitro/workflow/` paths** in Rollup config. Otherwise step registrations get tree-shaken and `start()` throws `StepNotRegisteredError` at runtime. Patch lives in `nitro.config.ts` `rollup:before` hook (commit `bfc4385`). DO NOT remove this hook.
+- **Local apply for `tofu`** — no GH Actions CI, no remote state. Encrypted state lives locally in `tofu/terraform.tfstate` (gitignored). Anyone with the OCI creds + encryption passphrase can re-apply.
+- **OCI tenant: `wiseyu`**, region SJC (`us-sanjose-1`). Free Tier ARM Ampere ceiling: 4 OCPU + 24GB RAM total. Currently allocated: openclaw (2/12) + otacon-orchestrator (2/12) = at ceiling.
+
+## Token / auth
+
+- **Registry URL is `http://`, not `https://`** — registry listens on plain HTTP at port 9080. Tailscale Serve at port 443 is for the ORCHESTRATOR, not the registry. The registry doesn't run TLS itself. (Lots of code paths conflated this; corrected in commit `a35b46a`.)
+- **`OTACON_TOKEN` source: `~/.otacon/config.toml`'s `token` field**, not `.env`'s `REGISTRY_BOOTSTRAP_ADMIN_TOKEN`. Reason: `config.toml` is the proven-working CLI token; `.env`'s bootstrap token is only used at registry first-boot and may drift. The deploy script (`scripts/deploy-orchestrator.sh`) reads from config.toml first.
+- **`REGISTRY_BOOTSTRAP_ADMIN_TOKEN` in `.env`** is for `make registry-deploy`'s heredoc — registry's first-boot seed. Different lifecycle from runtime auth. Don't conflate.
+- **GHCR package visibility: public.** Was private originally, caused VPS pull 403 during cloud-init. Made public via web UI; now `docker pull ghcr.io/thisnick/otacon-dev/orchestrator:latest` works without auth. If made private again, cloud-init's `docker login` needs a valid token with `read:packages` scope.
+- **The OCI API key (`.secrets/oci-api-key.pem`) is for OCI API signing, NOT SSH.** SSH key is generated by tofu (`tls_private_key.deploy`) and lives in tofu state, extracted via `tofu output -raw ssh_private_key > /tmp/orch-deploy-key`.
+- **`.secrets/`** (with leading dot) is gitignored. Don't commit secrets.
+
+## Workflow SDK patterns
+
+- **Hook-ordering rule:** `createHook({token})` → emit `data-signal-created` chunk → `await hook` (suspend). Reverse the order and you race the hook resolver against the chunk-arrival on the client. Documented inline in `approval-bridge.ts`.
+- **Stream writes only inside `"use step"` functions.** The workflow body (`"use workflow"`) runs in a deterministic VM where `WritableStream.getWriter()` is stubbed to ENOTSUP. Any chunk emission must go through a step.
+- **Cooperative cancellation via hook + race**, not interrupting `wfRun.cancel()`. `wfRun.cancel()` interrupts the body before the terminal-marker step can fire; user-facing clients see no terminal chunk. Pattern: register a `cancelHook` at workflow body start, race it against each turn's `agent.stream()`. On cancel: emit `data-run-cancelled` from a step, mark RunStore, exit. Latency bounded by one agent turn (5–30s typical). Documented in `lead-agent.ts` (commit `ed6b17e`).
+- **AI SDK v7-beta chunk type names**: `tool-input-start`, `tool-input-delta`, `tool-input-available`, `tool-output-available`. NOT `tool-call`/`tool-result` (those are v6 names). Test code and renderers must use v7 names. Filed as task #13 (audit).
+
+## P6 doesn't change
+
+- These corrections still apply during the P6 migration. WorkflowAgent uses the same `"use workflow"` / `"use step"` primitives, same Vercel Workflow DevKit. The Rollup `moduleSideEffects` patch, the Nitro build, the token sources, the topology — all unchanged.
+
+## Process / team rules
+
+- **Implementer + Evaluator team** via `TeamCreate`. Lead routes; doesn't run implementer commands (e.g. `tofu apply`, `make orchestrator-deploy`) even when convenient. Convenience is a weak excuse.
+- **Verify origin/main before issuing protocol violations.** When evaluator reports build issues, `git ls-tree -r origin/main` first. Second-hand evidence is unreliable.
+- **Treat teammate idle seriously.** Implementer doesn't auto-pull tasks. When they go idle, decide actively: do they need direction, do they have results to surface, are they stuck?
+- **Lead-routed user feedback is equal priority** to evaluator-surfaced feedback for the pause rule.
+- **Evaluator cannot sign off without a passing e2e run.** Reaching `data-run-completed` isn't enough — must verify actual work happened (turnCount > 0, finalText non-empty, expected chunk types present). The Phase 5 false-pass (run terminated with `status=completed` but `turnCount=0` because of registry 401) is the cautionary example.
+- **Push to main, no PRs.** Pull before push every commit.
+- **Per-phase sign-off.** Implementer pre-claims next phase task while evaluator validates current.
+
+## Hardware / fixtures
+
+- **Canonical phone**: phone-4 (`adb_serial=11031JEC202780`, `phone_number=+13412137456`).
+- **Canonical app**: Xiaohongshu (`com.xingin.xhs`). Originally Chrome — substituted because no registry phone has Chrome and XHS IS the production target app for the social-media-engagement team.
+- **`KEEP_TMP_DIR=1`** env override on phaseN e2e tests preserves the tmp data dir for inspection. Useful when debugging — implementer added in commit during P2.
+
+## Known gaps tracked as follow-up tasks
+
+- **Task #12** — Nitro `experimental.openAPI: true` deferred. Hits two bugs in nitro@3.0.1-alpha.1: (a) virtual-handler null-byte path (`workflow/nitro` integration), (b) defineRouteMeta TDZ. Revisit when Nitro stable 3.x ships.
+- **Task #13** — AI SDK v7 chunk-type rename audit across codebase. Implementer fixed `cli/run.ts` in P3-I commit 6 (`b726e8c`). Other consumers may exist; web UI rewrite (P6) naturally consolidates this.
+- **Task #14** — `POST /api/v1/accounts` doesn't write `credentials.json` (CLI's `service add-account` does). Plus seed-team has no HTTP endpoint, so VPS-side seeding requires manual scp into the data volume. Add either a seed API or auto-seed-on-first-boot.
