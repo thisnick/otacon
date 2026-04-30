@@ -21,7 +21,7 @@ import type { UIMessage, UIMessageChunk } from 'ai'
 import { makeStores } from '../../../../../../src/storage/factory.js'
 
 export default defineEventHandler(async (event) => {
-  const id = getRouterParam(event, 'id')
+  const id = getRouterParam(event, 'id', { decode: true })
   if (!id) {
     throw createError({ statusCode: 400, statusMessage: 'missing run id' })
   }

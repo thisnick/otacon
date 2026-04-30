@@ -29,9 +29,9 @@ const ALLOWED_FILES: ReadonlyMap<string, string> = new Map([
 ])
 
 export default defineEventHandler(async (event) => {
-  const id = getRouterParam(event, 'id')
-  const tcid = getRouterParam(event, 'tcid')
-  const file = getRouterParam(event, 'file')
+  const id = getRouterParam(event, 'id', { decode: true })
+  const tcid = getRouterParam(event, 'tcid', { decode: true })
+  const file = getRouterParam(event, 'file', { decode: true })
   if (!id || !tcid || !file) {
     throw createError({ statusCode: 400, statusMessage: 'missing run id, tool-call id, or file segment' })
   }
