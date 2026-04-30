@@ -17,9 +17,10 @@ pnpm test:e2e:phase1        # Phase 1 sign-off (requires phone-4 + XHS + LLM)
 pnpm test:e2e:phase2        # Phase 2 sign-off (auto-screenshot wrapper; requires phone-4 + XHS + LLM)
 pnpm test:e2e:phase3        # Phase 3 sign-off (HTTP API + SSE streaming; requires phone-4 + XHS + LLM)
 pnpm test:e2e:phase5        # Phase 5 sign-off (deployed VPS; requires VPS reachable + phone-4)
+pnpm test:e2e:phase6        # Phase 6 sign-off (Vite+React+WorkflowAgent UI; requires phone-4 + XHS + LLM + Playwright)
 ```
 
-Or from the repo root: `pnpm test:e2e:phase1` / `pnpm test:e2e:phase2` / `pnpm test:e2e:phase3` / `pnpm test:e2e:phase5`.
+Or from the repo root: `pnpm test:e2e:phase1` / `pnpm test:e2e:phase2` / `pnpm test:e2e:phase3` / `pnpm test:e2e:phase5` / `pnpm test:e2e:phase6`.
 
 Each test spawns its own server on a unique port and a fresh tmp data dir.
 
@@ -34,6 +35,7 @@ Each test spawns its own server on a unique port and a fresh tmp data dir.
 | `phase2-xhs-actions.ts` | **Phase 2 sign-off canonical e2e.** Drives an XHS scenario exercising tap + set-text + key + swipe, then validates: every mutating-verb tool call produced `before/after.png` (valid PNGs via `sharp` metadata) and an `annotated.png` whose perceptual hash differs ≥5 bits from `before.png`; live SSE includes a `data-phone-action` chunk per action with full payload (tool_call_id, command, subcommand, target, rationale, screenshots URL block, exit_code, stdout, stderr, started_at, completed_at); the bash `tool-call`/`tool-result` chunks coexist (additive emission); non-mutating verbs leave no PNG residue. | Same as Phase 1: phone-4 + XHS + registry + `$AI_GATEWAY_API_KEY`. |
 | `phase3-streaming.ts` | **Phase 3 sign-off canonical e2e.** Three scenarios over distinct tmp data dirs: (A) **Streaming + Resumable Replay** — disconnect mid-stream, resume via `?startIndex=N`; concat of live segment + resumed segment must equal a fresh full replay-from-0 (chunk count + type sequence). (B) **Cancellation** — POST `/api/v1/runs/:id/cancel` mid-flight; terminal chunk == `data-run-cancelled`; `run.json` and GET `/api/v1/runs/:id` report `status: cancelled`. (C) **Durable approval across server restart** — kill server while workflow blocks at `data-signal-created`, respawn fresh nitro on the same data dir, POST resolve, verify run resumes from saved state and reaches `data-run-completed`. | Same as Phase 1: phone-4 + XHS + registry + `$AI_GATEWAY_API_KEY`. |
 | `phase5-vps.ts` | **Phase 5 sign-off — production-parity smoke.** Probes the deployed VPS at `$ORCHESTRATOR_URL` (default `https://otacon-orchestrator.tail0437b8.ts.net`). Verifies: (1) `/health` returns 200, (1b) container-state via SSH (`docker ps` shows orchestrator + watchtower Up, FS layout intact), (2) state persists across `docker compose restart`, (3) cross-network agent run completes via Tailscale HTTPS, (4) GET /api/v1/runs from off-VPS shows the new run + run.json + prompt.md exist on VPS data dir. Optional: (5) Watchtower auto-deploy [`PHASE5_RUN_WATCHTOWER=1`], (6) `tofu plan` idempotent [`PHASE5_RUN_TOFU=1`]. | VPS deployed; Tailscale-SSH-able; phone-4 reachable from VPS via registry; xhs:test seeded on VPS data dir with phone-4 credential; `$AI_GATEWAY_API_KEY` in VPS .env. |
+| `phase6-web-ui.ts` | **Phase 6 sign-off canonical e2e (Playwright).** Drives the Vite+React UI v2 against a built bundle served by Nitro. Seven scenarios: (1) static load + React boot — no `[DONE]` parse error, no SSE error, no React hydration error, no chunk-type-mismatch warnings; (2) live streaming via `useChat` — text accumulates + tool cards appear; (3) approval-from-UI via `addToolApprovalResponse` — `data-testid="approval-card"` appears, click `approval-approve` → run resumes; (4) `data-phone-action` cards render with 3 thumbnails (`phone-action-thumb-{before,annotated,after}`) + modal navigation; (5) **CRITICAL durability across server restart** — kill orchestrator at approval pause, restart on same data dir, refresh browser, click Approve, run completes (proves WorkflowAgent migration didn't lose durable suspension); (6) CLI parity — `pnpm orchestrator runs create` exits 0 + prints valid `/runs/<ulid>` URL + URL returns 200 HTML; (7) regression note — phase1/2/3/5 must pass separately (phase 4 deleted, superseded by P6). Requires: Playwright Chromium installed (`pnpm exec playwright install chromium`). | Same as Phase 1: phone-4 + XHS + registry + `$AI_GATEWAY_API_KEY`; **plus** Playwright browsers. |
 
 ## Phase 1 e2e — `phase1-xhs-scroll.ts`
 
@@ -163,6 +165,68 @@ Each scenario's tmp data dir + server child process torn down in shared
 `teardown()` at the end of the runner — even on partial failure across
 scenarios. Server v1 in scenario C is killed mid-test (deliberate); the
 runner removes it from the cleanup list to avoid double-kill.
+
+## Phase 6 e2e — `phase6-web-ui.ts`
+
+Playwright-driven sign-off for the Vite + React + WorkflowAgent migration
+(P6). Tests against the built static bundle served by Nitro at :9090
+(production-parity per the lead's P6-E answer; not the Vite HMR dev
+server).
+
+### Prereqs
+
+- Same as Phase 1/2/3 (phone-4 + XHS + registry + `$AI_GATEWAY_API_KEY`)
+- **Playwright Chromium installed**: `pnpm --filter otacon-orchestrator exec playwright install chromium`
+- **Built bundle**: `pnpm --filter otacon-orchestrator build` must have been
+  run so Nitro can serve `static/dist/`. The test spawns Nitro but does
+  NOT trigger the Vite build itself (implementer's wiring decides whether
+  build is part of `pnpm dev` or a separate step).
+
+### Run
+
+```sh
+pnpm test:e2e:phase6                         # from repo root, or
+pnpm --filter otacon-orchestrator test:e2e:phase6
+```
+
+Server on `PORT=9106` (override via `PHASE6_PORT`). Default total budget
+~2-3 hours across all 6 scenarios + the durability restart.
+
+### Selectors / data-testid contract
+
+To keep selectors independent of AI SDK UI Elements internals, the
+implementer bakes in stable `data-testid` attributes:
+
+| Testid | Component |
+|---|---|
+| `approval-card` | Approval container (renders when `tool-approval-request` arrives) |
+| `approval-approve` / `approval-deny` / `approval-skip` | Buttons inside the approval card |
+| `phone-action-card` | A `data-phone-action` chunk's rendered card |
+| `phone-action-thumb-before` / `-annotated` / `-after` | The three thumbnails inside it |
+
+Other testids (runs-list rows, new-run modal, run-detail root) are at the
+implementer's discretion and resolved during sign-off authoring.
+
+### Override knobs
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `PHASE6_PORT` | `9106` | Server port. |
+| `PHASE6_ACCOUNT_PHONE` | `+13412137456` | Phone number registered for `xhs:test` (= phone-4). |
+| `PHASE6_HEADLESS` | `1` | Set `0` to launch Chromium headed for live debugging. |
+| `PHASE6_PROMPT_STREAMING` | XHS scroll x3 | Scenario 2 prompt. |
+| `PHASE6_PROMPT_APPROVAL` | XHS tap | Scenario 3 prompt — needs a mutating action. |
+| `PHASE6_PROMPT_DURABLE` | XHS tap | Scenario 5 prompt — needs a mutating action. |
+| `PHASE6_*_TIMEOUT_MS` | varies (1-25min each) | Per-scenario timeouts. |
+| `PHASE6_ALLOW_SKELETON_EXIT` | unset | When the test is still a skeleton (assertions stubbed), exit 2 to flag. Set to `1` to suppress. |
+
+### Cleanup contract
+
+Same as Phase 3: tmp data dir + server child process torn down in shared
+`teardown()`. The durability scenario kills server v1 mid-test
+(deliberate) and spawns a v2 against the same data dir; both get torn
+down on exit. Browser context + Chromium browser closed first so
+console-error capture finalizes before server kill noise.
 
 ## Authoring guidelines
 
