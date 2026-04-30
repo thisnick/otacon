@@ -4,6 +4,7 @@
  */
 import * as fs from 'node:fs/promises'
 import { AccountStoreFs, type AccountStore } from './account-store.js'
+import { AllocationStoreFs, type AllocationStore } from './allocation-store.js'
 import { BlobStoreFs, type BlobStore } from './blob-store.js'
 import { IndexStoreFs, type IndexStore } from './index-store.js'
 import { makePaths, type PathLayout } from './paths.js'
@@ -14,6 +15,7 @@ import { TeamStoreFs, type TeamStore } from './team-store.js'
 export interface Stores {
   layout: PathLayout
   accountStore: AccountStore
+  allocationStore: AllocationStore
   teamStore: TeamStore
   runStore: RunStore
   blobStore: BlobStore
@@ -47,5 +49,27 @@ export async function makeStores(opts: MakeStoresOpts): Promise<Stores> {
   const signalStore = new SignalStoreFs(layout)
   const blobStore = new BlobStoreFs(layout.root, layout)
 
-  return { layout, accountStore, teamStore, runStore, blobStore, signalStore, indexStore }
+  // Phone resolution is lazy-imported so unit tests against the storage
+  // layer don't drag in the registry HTTP client (which needs OTACON_*
+  // env vars). Tests construct AllocationStoreFs directly with a stub
+  // resolver when they need to exercise allocation logic.
+  const allocationStore = new AllocationStoreFs({
+    layout,
+    accountStore,
+    resolvePhone: async (phoneNumber: string) => {
+      const { resolvePhone } = await import('../resolve/phone.js')
+      return await resolvePhone(phoneNumber)
+    },
+  })
+
+  return {
+    layout,
+    accountStore,
+    allocationStore,
+    teamStore,
+    runStore,
+    blobStore,
+    signalStore,
+    indexStore,
+  }
 }

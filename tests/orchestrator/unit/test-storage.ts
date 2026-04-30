@@ -255,6 +255,108 @@ async function testBlobStore() {
   await expectThrow(() => stores.blobStore.read('../../etc/passwd'), 'generic read rejects traversal')
 }
 
+async function testAllocationStore() {
+  console.log('allocation-store.ts')
+  const { AllocationStoreFs, PhoneBusyError, InvalidDurationError } = await import(
+    '../../../src/orchestrator/src/storage/allocation-store.js'
+  )
+
+  const dir = path.join(tmpDir, 'alloc')
+  const layout = makePaths(dir)
+  await (await import('node:fs/promises')).mkdir(layout.root, { recursive: true })
+
+  // Stub AccountStore + resolver so the test stays hermetic — no
+  // registry HTTP, no DB.
+  const { AccountStoreFs } = await import('../../../src/orchestrator/src/storage/account-store.js')
+  const accountStore = new AccountStoreFs(layout)
+  await accountStore.create({ id: 'xhs:test' })
+  await accountStore.addCredential('xhs:test', { credentialType: 'phone', identifier: '+15551234567', isPrimary: true })
+
+  const stubResolver = async (phoneNumber: string) => ({
+    phoneId: phoneNumber === '+15551234567' ? 'phone-1' : 'phone-2',
+    localPhoneId: 'phone-aaa',
+    hostUrl: 'http://stub:9080',
+    baseUrl: 'http://stub:9080/phones/phone-aaa',
+  })
+
+  const store = new AllocationStoreFs({ layout, accountStore, resolvePhone: stubResolver })
+
+  // Acquire returns a fresh row
+  const a1 = await store.acquire({ accountId: 'xhs:test', runId: 'run-1', durationMin: 10 })
+  assert(typeof a1.allocationId === 'string' && a1.allocationId.length > 0, 'acquire returns allocationId')
+  assert(a1.phoneId === 'phone-1', 'acquire resolves to registry phone id')
+  assert(a1.localPhoneId === 'phone-aaa', 'acquire passes through localPhoneId')
+  assert(a1.expiresAt.getTime() > Date.now(), 'acquire expiresAt is in the future')
+
+  // Idempotent re-acquire from same run returns same row
+  const a2 = await store.acquire({ accountId: 'xhs:test', runId: 'run-1', durationMin: 10 })
+  assert(a2.allocationId === a1.allocationId, 'acquire is idempotent for same runId')
+
+  // getActive returns the row
+  const active = await store.getActive('run-1')
+  assert(active?.allocationId === a1.allocationId, 'getActive returns the active row')
+
+  // Different run → PhoneBusyError
+  await expectThrow(
+    () => store.acquire({ accountId: 'xhs:test', runId: 'run-2', durationMin: 10 }),
+    'acquire throws PhoneBusyError when another run holds the phone',
+  )
+
+  // InvalidDurationError on bad input
+  await expectThrow(
+    () => store.acquire({ accountId: 'xhs:test', runId: 'run-3', durationMin: 0 }),
+    'acquire throws InvalidDurationError on durationMin=0',
+  )
+  await expectThrow(
+    () => store.acquire({ accountId: 'xhs:test', runId: 'run-3', durationMin: -5 }),
+    'acquire throws InvalidDurationError on negative duration',
+  )
+  await expectThrow(
+    () => store.acquire({ accountId: 'xhs:test', runId: 'run-3', durationMin: 1.5 }),
+    'acquire throws InvalidDurationError on non-integer duration',
+  )
+
+  // Release frees the phone
+  const r = await store.release('run-1')
+  assert(r.released === true, 'release returns released=true on active row')
+  const afterRelease = await store.getActive('run-1')
+  assert(afterRelease === null, 'getActive returns null after release')
+
+  // Now run-2 can acquire
+  const a3 = await store.acquire({ accountId: 'xhs:test', runId: 'run-2', durationMin: 5 })
+  assert(a3.allocationId !== a1.allocationId, 'second run acquires after first releases')
+
+  // Idempotent release: re-release returns released=false
+  const r2 = await store.release('run-1')
+  assert(r2.released === false, 'release is idempotent (no active row → released=false)')
+
+  // Type-narrowing checks: errors are the right classes
+  try {
+    await store.acquire({ accountId: 'xhs:test', runId: 'run-other', durationMin: 1 })
+    assert(false, 'should have thrown PhoneBusyError')
+  } catch (e: any) {
+    assert(e instanceof PhoneBusyError, 'PhoneBusyError instance check')
+    assert(e.code === 'PHONE_BUSY', 'PhoneBusyError carries code=PHONE_BUSY')
+  }
+  try {
+    await store.acquire({ accountId: 'xhs:test', runId: 'run-other', durationMin: 0 })
+    assert(false, 'should have thrown InvalidDurationError')
+  } catch (e: any) {
+    assert(e instanceof InvalidDurationError, 'InvalidDurationError instance check')
+  }
+
+  // Resolve phone for account
+  const resolved = await store.resolvePhoneForAccount('xhs:test')
+  assert(resolved.phoneId === 'phone-1', 'resolvePhoneForAccount returns the registry phone')
+  assert(resolved.clientBaseUrl.includes('phone-aaa'), 'resolvePhoneForAccount carries clientBaseUrl')
+
+  // File on disk has the right shape
+  const fileContent = await (await import('node:fs/promises')).readFile(layout.allocationsFile, 'utf-8')
+  const parsed = JSON.parse(fileContent)
+  assert(parsed.version === 1, 'allocations file has version=1')
+  assert(Array.isArray(parsed.rows), 'allocations file has rows array')
+}
+
 async function testInspectRuns() {
   console.log('inspect-runs.ts')
   const { inspectRunsCommand, inspectRunPromptCommand } = await import(
@@ -451,6 +553,7 @@ async function main() {
     await testApprovalBridge()
     await testAddAccountFs()
     await testSeedTeam()
+    await testAllocationStore()
     await testInspectRuns()
   } catch (e: any) {
     console.error('UNCAUGHT:', e?.stack ?? e)

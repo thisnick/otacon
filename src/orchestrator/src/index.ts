@@ -16,6 +16,7 @@ import {
 } from './cli/inspect.js'
 import { seedTeamCommand } from './cli/seed-team.js'
 import { runV2Command } from './cli/run-v2.js'
+import { serveCommand } from './cli/serve.js'
 import {
   inspectRunsCommand,
   inspectRunCommand,
@@ -93,6 +94,16 @@ service
   .option('--data-dir <dir>', 'Override ORCHESTRATOR_DATA_DIR for this invocation')
   .action(async (opts) => {
     await seedTeamCommand({ name: opts.name, dataDir: opts.dataDir })
+  })
+
+// ── serve ─────────────────────────────────────────────────────────────────
+
+program
+  .command('serve')
+  .description('Boot the Nitro server (dev mode by default; --prod runs the built bundle)')
+  .option('--prod', 'Run node .output/server/index.mjs (requires `pnpm build:server` first)')
+  .action(async (opts) => {
+    await serveCommand({ prod: opts.prod })
   })
 
 // ── agent group ────────────────────────────────────────────────────────────

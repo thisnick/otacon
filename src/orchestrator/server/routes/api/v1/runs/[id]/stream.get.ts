@@ -17,7 +17,7 @@
  *     chunk at the time the stream opens — clients use this to resume
  *     after a disconnect
  */
-import { defineEventHandler, getRouterParam, getQuery, createError, setHeader, sendStream } from 'h3'
+import { defineEventHandler, getRouterParam, getQuery, createError, setHeader } from 'h3'
 import { getRun } from 'workflow/api'
 import { createUIMessageStream, createUIMessageStreamResponse } from 'ai'
 import type { UIMessageChunk } from 'ai'
@@ -82,8 +82,11 @@ export default defineEventHandler(async (event) => {
     },
   })
 
-  // h3's `sendStream` is preferred over returning Response directly so the
-  // event lifecycle (headers, hooks) stays consistent.
-  const response = createUIMessageStreamResponse({ stream: uiStream })
-  return sendStream(event, response.body!)
+  // Return the AI-SDK-framed Response directly. (Earlier attempts to wrap
+  // it in `sendStream(event, response.body!)` triggered "Response body
+  // object should not be disturbed or locked" in h3's youch error
+  // pipeline when something else read the body.) h3 picks up the
+  // headers we already set via setHeader() and merges them with the
+  // Response's content-type / cache-control.
+  return createUIMessageStreamResponse({ stream: uiStream })
 })
