@@ -14,7 +14,8 @@
     "test:e2e:smoke": "tsx ../../tests/orchestrator/e2e/test-workflow-smoke.ts",
     "test:e2e:approval-flow": "tsx ../../tests/orchestrator/e2e/test-approval-flow.ts",
     "test:e2e:failure-flow": "tsx ../../tests/orchestrator/e2e/test-failure-flow.ts",
-    "test:e2e:phase1": "tsx ../../tests/orchestrator/e2e/phase1-xhs-scroll.ts"
+    "test:e2e:phase1": "tsx ../../tests/orchestrator/e2e/phase1-xhs-scroll.ts",
+    "test:e2e:phase2": "tsx ../../tests/orchestrator/e2e/phase2-xhs-actions.ts"
   },
   "dependencies": {
     "@ai-sdk/gateway": "^3.0.0",
