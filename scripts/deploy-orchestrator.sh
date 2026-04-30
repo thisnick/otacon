@@ -46,9 +46,31 @@ load_from_env REGISTRY_BOOTSTRAP_ADMIN_TOKEN
 load_from_env AI_GATEWAY_API_KEY
 load_from_env OTACON_REPO
 
-# OTACON_TOKEN for the orchestrator IS the registry's admin bootstrap
-# token (same value the local CLI uses to call the registry). Per
-# lead's brief.
+# OTACON_TOKEN for the orchestrator must be a token the registry
+# accepts as admin scope. Sources, in priority order:
+#   1. Existing OTACON_TOKEN env var (caller exported it).
+#   2. ~/.otacon/config.toml `token = "..."` — the working CLI token.
+#      This is what `otacon auth register` writes after the registry
+#      issues an admin token; on a host where the CLI works, this is
+#      proven to be valid.
+#   3. REGISTRY_BOOTSTRAP_ADMIN_TOKEN from .env — the value the registry
+#      WAS supposed to use at first boot. May not match reality if the
+#      registry generated its own random token (e.g. when env wasn't
+#      set yet) or has since rotated.
+# Mismatched tokens manifest as `HTTP 401 Registry phones list failed`
+# inside agent runs, so this fallback chain is load-bearing.
+load_from_otacon_config() {
+    local cfg="${HOME}/.otacon/config.toml"
+    [ -f "${cfg}" ] || return 1
+    local token
+    token=$(grep '^token *= *"' "${cfg}" 2>/dev/null \
+        | head -1 | sed -E 's/^token *= *"([^"]+)"/\1/')
+    [ -n "${token}" ] && echo "${token}"
+}
+
+if [ -z "${OTACON_TOKEN:-}" ]; then
+    OTACON_TOKEN="$(load_from_otacon_config 2>/dev/null || true)"
+fi
 OTACON_TOKEN="${OTACON_TOKEN:-${REGISTRY_BOOTSTRAP_ADMIN_TOKEN:-}}"
 
 # Tailscale: the host's `tailscale up` (set up by cloud-init on first
@@ -81,7 +103,7 @@ rsync -az docker-compose.orchestrator.yml "${REMOTE}:${REMOTE_DIR}/docker-compos
 # the cloud-init write_files step.
 ssh "${REMOTE}" "sudo tee ${REMOTE_DIR}/.env > /dev/null && sudo chmod 600 ${REMOTE_DIR}/.env" <<EOF
 OTACON_REPO=${OTACON_REPO:-otacon-dev}
-OTACON_REGISTRY_URL=${OTACON_REGISTRY_URL:-https://otacon-registry.tail0437b8.ts.net:9080}
+OTACON_REGISTRY_URL=${OTACON_REGISTRY_URL:-http://otacon-registry.tail0437b8.ts.net:9080}
 OTACON_TOKEN=${OTACON_TOKEN}
 AI_GATEWAY_API_KEY=${AI_GATEWAY_API_KEY}
 ORCHESTRATOR_AUTH_REQUIRED=0
