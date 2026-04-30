@@ -3,16 +3,19 @@
 # `make orchestrator-build` + `make orchestrator-push` produce the same
 # artifact Watchtower picks up.
 #
-# Topology: the orchestrator binds to host loopback (127.0.0.1:9090).
-# The VM's host-level Tailscale handles both admin SSH and
-# `tailscale serve --https=443 http://127.0.0.1:9090` for HTTPS
-# exposure on the tailnet. NO tailscale sidecar — one Tailscale node
-# per VM, one hostname (otacon-orchestrator), no `-1` auto-suffix
-# from a duplicate registration.
+# Topology: the orchestrator runs in `network_mode: host` so it inherits
+# the VM's Tailscale interface — required to reach
+# `otacon-registry.tail0437b8.ts.net` (and `otacon-pi.tail0437b8.ts.net`)
+# over the tailnet. Bridge networking would lose Tailscale DNS + routing.
+# The container binds 0.0.0.0:9090 directly on the host; Tailscale Serve
+# on the host proxies 443 → 127.0.0.1:9090. OCI security list still
+# blocks 9090 publicly so external exposure is unchanged. NO tailscale
+# sidecar — one Tailscale node per VM, one hostname (otacon-
+# orchestrator), no `-1` auto-suffix from a duplicate registration.
 #
 # Boot locally: `docker compose -f docker-compose.orchestrator.yml up -d`
-# binds the orchestrator to 127.0.0.1:9090 on your laptop. For pure
-# local dev (no Docker), use `pnpm orchestrator dev` instead.
+# runs the container with the laptop's network stack. For pure local
+# dev (no Docker), use `pnpm orchestrator dev` instead.
 services:
   otacon-orchestrator:
     build:
@@ -20,11 +23,13 @@ services:
       dockerfile: Dockerfile.orchestrator
     image: ghcr.io/thisnick/${OTACON_REPO:-otacon-dev}/orchestrator:latest
     restart: unless-stopped
-    # Bind to host loopback only — public ingress is blocked by the OCI
-    # security list anyway (UDP 41641 for Tailscale is the only rule).
-    # Tailscale Serve on the host proxies 443 → 127.0.0.1:9090.
-    ports:
-      - "127.0.0.1:9090:9090"
+    # Host networking: container shares host netns. Tailscale DNS +
+    # routing become available; the container can resolve
+    # `otacon-registry.tail0437b8.ts.net` and reach 100.x CGNAT phone
+    # hosts. Public ingress is still blocked by the OCI security list.
+    # `ports:` is intentionally omitted — host networking ignores port
+    # mappings. The orchestrator binds PORT=9090 directly on host.
+    network_mode: host
     environment:
       - ORCHESTRATOR_DATA_DIR=${ORCHESTRATOR_DATA_DIR:-/data/orchestrator}
       # Nitro reads PORT for its listener; ORCHESTRATOR_PORT kept for

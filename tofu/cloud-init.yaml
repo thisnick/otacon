@@ -10,10 +10,15 @@
 # handles both:
 #   - admin SSH (`ssh ubuntu@otacon-orchestrator.<tailnet_domain>`)
 #   - HTTPS Serve (`tailscale serve --https=443 http://127.0.0.1:9090`)
-# No tailscale sidecar — the orchestrator container binds directly to
-# 127.0.0.1:9090 on the host. This avoids the duplicate-hostname
-# problem (host + sidecar both claiming `otacon-orchestrator` →
-# second auto-suffixed `-1`).
+# No tailscale sidecar — the orchestrator container runs in
+# `network_mode: host` so it shares the VM's netns directly. That gives
+# it Tailscale DNS + routing (needed to reach the registry and phone
+# hosts) and binds 9090 on the host where Tailscale Serve already
+# proxies it to :443 on the tailnet. This avoids the duplicate-
+# hostname problem (host + sidecar both claiming
+# `otacon-orchestrator` → second auto-suffixed `-1`) AND the
+# bridge-network DNS gap that breaks tailnet egress from the
+# container.
 #
 # Variables come from `templatefile()` in main.tf:
 #   ${hostname}            — VM + Tailscale node name (otacon-orchestrator)
@@ -60,12 +65,16 @@ write_files:
         otacon-orchestrator:
           image: ghcr.io/thisnick/$${OTACON_REPO:-otacon-dev}/orchestrator:latest
           restart: unless-stopped
-          # Bind to host loopback only; the host's `tailscale serve`
-          # proxies 443 → 127.0.0.1:9090 for tailnet HTTPS access. The
-          # OCI security list blocks 9090 publicly anyway (only UDP
-          # 41641 for Tailscale is allowed in).
-          ports:
-            - "127.0.0.1:9090:9090"
+          # Host networking: container shares the host netns so it
+          # inherits Tailscale DNS + routing (required to reach
+          # otacon-registry.${tailnet_domain} and 100.x phone hosts
+          # over the tailnet). Bridge networking has no Tailscale
+          # visibility. Public ingress remains blocked by the OCI
+          # security list (only UDP 41641 for Tailscale is open). The
+          # host's `tailscale serve` still proxies 443 →
+          # 127.0.0.1:9090. `ports:` is omitted — host networking
+          # ignores port mappings.
+          network_mode: host
           environment:
             - ORCHESTRATOR_DATA_DIR=$${ORCHESTRATOR_DATA_DIR:-/data/orchestrator}
             - PORT=$${PORT:-9090}
