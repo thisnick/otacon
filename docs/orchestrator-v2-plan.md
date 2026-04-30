@@ -1118,15 +1118,17 @@ Changes:
 - **Add**: `scripts/rebuild-index.ts` — walks `runs/*/run.json` and rewrites `index/`.
 - **Modify**: `.env.example` — drop `DATABASE_URL`, add `ORCHESTRATOR_DATA_DIR`.
 
-**Verification (end-to-end against a real phone — phone-3)**:
+**Verification (end-to-end against a real phone connected to the registry)**:
 
-1. **Bootstrap**: delete any old `.orchestrator-data/`. Run `pnpm orchestrator service add-account --id xhs:test --phone-number +12136961477`. Confirm `accounts/xhs:test/{account.json,credentials.json,env/{persona.md,soul.md,agents.md},workspace/}` exist.
-2. **Real agent scenario** — *"open Chrome, search for cats, scroll once"*:
+Use whichever phone has both `phone_number` set in the registry AND the target app installed. As of 2026-04-30, phone-4 (`+13412137456`) has Xiaohongshu (`com.xingin.xhs`) — the actual social-media-engagement target app — and is the canonical phone. Set `PHASE1_ACCOUNT_PHONE` env var so the test isn't hardcoded to a specific phone number.
+
+1. **Bootstrap**: delete any old `${ORCHESTRATOR_DATA_DIR}/`. Run `pnpm orchestrator service add-account --id xhs:test --phone-number ${PHASE1_ACCOUNT_PHONE}`. Confirm `accounts/xhs:test/{account.json,credentials.json,env/{persona.md,soul.md,agents.md},workspace/}` exist.
+2. **Real agent scenario** — *"open Xiaohongshu, scroll the home feed three times"* (substituted from the original Chrome+search scenario on 2026-04-30 because no phone in the current registry has Chrome installed and XHS is the actual production target app):
    ```
    pnpm orchestrator agent run --account xhs:test --team social-media-engagement \
-     --prompt "Open Chrome, search for 'cats', and scroll down once. Then exit."
+     --prompt "Open the Xiaohongshu app (com.xingin.xhs). Scroll the home feed three times to see different content. Then exit."
    ```
-   Phase 1 wraps the agent in a workflow but still resolves approvals via CLI prompt (the HTTP path arrives in Phase 3).
+   Same surface area as the original (multi-turn agent loop, tap + swipe verbs, approval gates fire) but uses an installed app. Phase 1 wraps the agent in a workflow but still resolves approvals via CLI prompt (the HTTP path arrives in Phase 3).
 3. **Verify run dir**: `runs/{id}/run.json` has `status: "completed"`, `model`, `team`, `agentRole`, a non-empty `promptSnapshotPath`, and a non-null `workflowRunId`.
 4. **Verify prompt snapshot**: `runs/{id}/prompt.md` contains the actual system prompt text (account name + tools reference).
 5. **Verify chunk stream persisted by Workflow SDK**: `${ORCHESTRATOR_DATA_DIR}/workflow/` contains a directory matching the run's `workflowRunId`, non-empty.
