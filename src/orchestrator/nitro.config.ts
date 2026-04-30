@@ -19,8 +19,18 @@ export default defineConfig({
   // Make `workflows/` discoverable to workflow/nitro's scan (in addition to
   // the default which is `workflows/` from each layer's source dir).
   scanDirs: ['workflows'],
+  // Serve the vanilla HTML/JS/CSS web UI (P4-I) at `/`. `index.html` is the
+  // runs list, `run.html` is the per-run timeline. No bundler; pure static
+  // serve. Nitro picks up `index.html` automatically when `/` is requested.
+  publicAssets: [
+    {
+      baseURL: '/',
+      dir: 'static',
+      maxAge: 0,
+    },
+  ],
   devServer: {
-    watch: ['workflows', 'server'],
+    watch: ['workflows', 'server', 'static'],
   },
   experimental: {
     asyncContext: true,

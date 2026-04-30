@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Otacon Orchestrator — Run</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; padding: 16px; font-size: 13px; }
+a { color: #58a6ff; text-decoration: none; }
+a:hover { text-decoration: underline; }
+.back { font-size: 12px; margin-bottom: 12px; display: inline-block; }
+h1 { font-size: 16px; margin-bottom: 4px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+.run-header { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 12px 14px; margin-bottom: 12px; }
+.run-header .meta { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; font-size: 12px; }
+.run-header .meta .label { color: #8b949e; }
+.run-header .status-badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+.status-badge.running { background: #5d2a82; color: #e2c5ff; }
+.status-badge.completed { background: #1a4d2e; color: #a2e1b6; }
+.status-badge.failed { background: #5d1f25; color: #f7b8b8; }
+.status-badge.cancelled { background: #5d4d1c; color: #f0d68c; }
+.status-badge.created { background: #30363d; color: #8b949e; }
+.run-header .actions { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
+.btn { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; padding: 4px 12px; border-radius: 6px; cursor: pointer; font-family: inherit; font-size: 12px; }
+.btn:hover { background: #30363d; }
+.btn-primary { background: #1a4d2e; border-color: #2a6d4a; }
+.btn-primary:hover { background: #235e3a; }
+.btn-danger { background: #5d1f25; border-color: #7a2a32; }
+.btn-danger:hover { background: #7a2a32; }
+.btn-warn { background: #5d4d1c; border-color: #7a6624; }
+.btn-warn:hover { background: #7a6624; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.filters { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 8px 14px; margin-bottom: 12px; display: flex; gap: 14px; flex-wrap: wrap; }
+.filters label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #c9d1d9; cursor: pointer; }
+.filters input[type=checkbox] { accent-color: #58a6ff; }
+.timeline { display: flex; flex-direction: column; gap: 8px; }
+.entry { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 8px 12px; }
+.entry .ts { color: #8b949e; font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.entry .head { display: flex; gap: 8px; align-items: center; }
+.entry .icon { font-size: 14px; }
+.entry .label { font-weight: 600; }
+.entry .meta-line { color: #8b949e; font-size: 11px; margin-top: 4px; }
+.entry pre { background: #0d1117; border: 1px solid #21262d; border-radius: 4px; padding: 8px; margin-top: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all; max-height: 240px; overflow-y: auto; }
+.entry.cat-text { background: #161b22; }
+.entry.cat-text .body { font-size: 13px; line-height: 1.4; margin-top: 6px; white-space: pre-wrap; }
+.entry.cat-reasoning { background: #14111c; border-color: #2a234a; }
+.entry.cat-reasoning .body { font-size: 12px; color: #b0a8d4; font-style: italic; margin-top: 6px; white-space: pre-wrap; }
+.entry.cat-tool .body { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.entry.cat-phone-action .thumbs { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.entry.cat-phone-action .thumbs img { max-width: 110px; max-height: 220px; border: 1px solid #30363d; border-radius: 4px; cursor: zoom-in; background: #0d1117; }
+.entry.cat-phone-action .thumbs img:hover { border-color: #58a6ff; }
+.entry.cat-phone-action .thumb-label { font-size: 10px; color: #8b949e; text-align: center; margin-top: 2px; }
+.entry.cat-approval { border-color: #d29922; background: #1c1810; }
+.entry.cat-approval .head { color: #f7d168; }
+.entry.cat-approval .approval-card { display: flex; gap: 12px; margin-top: 10px; align-items: flex-start; flex-wrap: wrap; }
+.entry.cat-approval .approval-card img { max-width: 280px; max-height: 480px; border: 1px solid #30363d; border-radius: 4px; cursor: zoom-in; }
+.entry.cat-approval .approval-card .body { flex: 1; min-width: 240px; }
+.entry.cat-approval .approval-card .actions { margin-top: 12px; display: flex; gap: 8px; }
+.entry.cat-approval .resolved { color: #3fb950; font-weight: 600; margin-top: 8px; }
+.entry.cat-approval .rejected { color: #f85149; font-weight: 600; margin-top: 8px; }
+.entry.cat-lifecycle { background: #1a1f24; border-color: #58a6ff; }
+.entry.cat-lifecycle .head { color: #58a6ff; }
+.entry.cat-debug { opacity: 0.6; font-size: 11px; }
+.hidden { display: none !important; }
+.connection { font-size: 11px; color: #8b949e; margin-bottom: 8px; padding: 4px 10px; background: #161b22; border: 1px solid #30363d; border-radius: 6px; display: inline-block; }
+.connection.live { color: #d2a8ff; border-color: #5d2a82; }
+.connection.error { color: #f85149; border-color: #5d1f25; }
+.connection.done { color: #3fb950; border-color: #2a6d4a; }
+.modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.85); z-index: 100; align-items: center; justify-content: center; padding: 24px; cursor: zoom-out; }
+.modal.open { display: flex; }
+.modal img { max-width: 100%; max-height: 100%; object-fit: contain; cursor: default; }
+.modal .text-modal { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 18px; max-width: 800px; max-height: 80vh; overflow-y: auto; cursor: default; }
+.modal .text-modal h2 { font-size: 14px; color: #58a6ff; margin-bottom: 8px; }
+.modal .text-modal pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; white-space: pre-wrap; word-break: break-all; color: #c9d1d9; line-height: 1.5; }
+.empty { color: #484f58; padding: 24px; text-align: center; }
+.error { color: #f85149; padding: 12px; background: #25171c; border: 1px solid #5d2a3a; border-radius: 4px; margin-top: 12px; }
+</style>
+</head>
+<body data-testid="otacon-orchestrator-run">
+
+<a class="back" href="/">← Back to runs</a>
+
+<div class="run-header" id="run-header">
+  <h1 id="run-id">loading…</h1>
+  <div class="meta">
+    <span class="label">Status:</span><span><span class="status-badge created" id="run-status">…</span></span>
+    <span class="label">Account:</span><span id="run-account"></span>
+    <span class="label">Team:</span><span id="run-team"></span>
+    <span class="label">Agent:</span><span id="run-agent-role"></span>
+    <span class="label">Model:</span><span id="run-model"></span>
+    <span class="label">Started:</span><span id="run-started"></span>
+    <span class="label">Duration:</span><span id="run-duration"></span>
+    <span class="label">Workflow:</span><span id="run-wfid" style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #8b949e; font-size: 11px;"></span>
+  </div>
+  <div class="actions">
+    <button class="btn" id="btn-prompt">📄 View prompt snapshot</button>
+    <button class="btn btn-warn hidden" id="btn-cancel">⏹ Cancel run</button>
+  </div>
+</div>
+
+<div class="filters">
+  <label><input type="checkbox" data-cat="text" checked> 💬 Text</label>
+  <label><input type="checkbox" data-cat="tool" checked> 🔧 Tool calls</label>
+  <label><input type="checkbox" data-cat="phone-action" checked> 📱 Phone actions</label>
+  <label><input type="checkbox" data-cat="reasoning"> 🧠 Reasoning</label>
+  <label><input type="checkbox" data-cat="approval" checked> ⚠️ Approvals</label>
+  <label><input type="checkbox" data-cat="lifecycle" checked> ● Lifecycle</label>
+  <label><input type="checkbox" data-cat="debug"> 🪲 Debug/meta</label>
+</div>
+
+<div class="connection" id="connection-status">connecting…</div>
+
+<div class="timeline" id="timeline"></div>
+
+<div class="modal" id="modal" onclick="closeModal()">
+  <img id="modal-img" src="" alt="" onclick="event.stopPropagation()" />
+</div>
+
+<div class="modal" id="text-modal" onclick="closeModal()">
+  <div class="text-modal" onclick="event.stopPropagation()">
+    <h2 id="text-modal-title">Prompt</h2>
+    <pre id="text-modal-body">loading…</pre>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+// ───────── parse ?id= ─────────
+const params = new URLSearchParams(window.location.search);
+const RUN_ID = params.get('id');
+if (!RUN_ID) {
+  document.body.innerHTML = '<div class="error">Missing ?id= in URL</div>';
+  throw new Error('missing run id');
+}
+
+// ───────── element shorthands ─────────
+const $ = (id) => document.getElementById(id);
+const tl = $('timeline');
+
+// ───────── helpers ─────────
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+}
+
+function fmtTimestamp(ms) {
+  if (!ms) return '';
+  const d = new Date(ms);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function fmtTimestampFull(ms) {
+  if (!ms) return '';
+  const d = new Date(ms);
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function fmtDuration(startMs, endMs) {
+  if (!startMs) return '';
+  const end = endMs ?? Date.now();
+  const ms = end - startMs;
+  if (ms < 1000) return `${ms}ms`;
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rs = s - m * 60;
+  if (m < 60) return `${m}m ${rs}s`;
+  const h = Math.floor(m / 60);
+  const rm = m - h * 60;
+  return `${h}h ${rm}m`;
+}
+
+// Decode timestamp from a ULID's first 48 bits (Crockford base32, 10-char prefix).
+const ULID_BASE32 = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+function tsFromUlid(ulid) {
+  if (!ulid || ulid.length < 10) return null;
+  let n = 0;
+  for (let i = 0; i < 10; i++) {
+    const c = ulid[i].toUpperCase();
+    const v = ULID_BASE32.indexOf(c);
+    if (v < 0) return null;
+    n = n * 32 + v;
+  }
+  return n;
+}
+
+// ───────── filter state ─────────
+const FILTER_KEY = 'otacon.timeline.filters.v1';
+const filterState = (() => {
+  const stored = localStorage.getItem(FILTER_KEY);
+  if (stored) {
+    try { return JSON.parse(stored); } catch { /* fall through */ }
+  }
+  return {
+    text: true,
+    tool: true,
+    'phone-action': true,
+    reasoning: false,
+    approval: true,
+    lifecycle: true,
+    debug: false,
+  };
+})();
+
+function persistFilters() {
+  localStorage.setItem(FILTER_KEY, JSON.stringify(filterState));
+}
+
+function applyFilterVisibility() {
+  for (const el of tl.querySelectorAll('.entry')) {
+    const cat = el.dataset.cat;
+    if (filterState[cat] === false) el.classList.add('hidden');
+    else el.classList.remove('hidden');
+  }
+}
+
+document.querySelectorAll('.filters input[data-cat]').forEach((cb) => {
+  cb.checked = filterState[cb.dataset.cat] !== false;
+  cb.addEventListener('change', () => {
+    filterState[cb.dataset.cat] = cb.checked;
+    persistFilters();
+    applyFilterVisibility();
+  });
+});
+
+// ───────── modal helpers ─────────
+function openImage(url) {
+  $('modal-img').src = url;
+  $('modal').classList.add('open');
+}
+function openText(title, body) {
+  $('text-modal-title').textContent = title;
+  $('text-modal-body').textContent = body;
+  $('text-modal').classList.add('open');
+}
+function closeModal() {
+  $('modal').classList.remove('open');
+  $('text-modal').classList.remove('open');
+}
+window.closeModal = closeModal;
+window.openImage = openImage;
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+
+$('btn-prompt').onclick = async () => {
+  openText('System prompt', 'loading…');
+  try {
+    const res = await fetch(`/api/v1/runs/${encodeURIComponent(RUN_ID)}/prompt`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text = await res.text();
+    openText('System prompt', text);
+  } catch (err) {
+    openText('System prompt', `Error: ${err.message}`);
+  }
+};
+
+$('btn-cancel').onclick = async () => {
+  if (!confirm('Cancel this run? The agent will stop after its current turn.')) return;
+  try {
+    const res = await fetch(`/api/v1/runs/${encodeURIComponent(RUN_ID)}/cancel`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ reason: 'cancelled via web UI' }),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    $('btn-cancel').disabled = true;
+    $('btn-cancel').textContent = '⏹ Cancelling…';
+  } catch (err) {
+    alert(`Cancel failed: ${err.message}`);
+  }
+};
+
+// ───────── run header ─────────
+async function loadRunHeader() {
+  try {
+    const res = await fetch(`/api/v1/runs/${encodeURIComponent(RUN_ID)}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const run = await res.json();
+    $('run-id').textContent = `Run ${run.id}`;
+    document.title = `Run ${run.id} — Otacon`;
+    $('run-status').textContent = run.status || '?';
+    $('run-status').className = `status-badge ${run.status || 'created'}`;
+    $('run-account').textContent = run.account || '';
+    $('run-team').textContent = run.team || '';
+    $('run-agent-role').textContent = run.agentRole || '';
+    $('run-model').textContent = run.model || '';
+    $('run-started').textContent = fmtTimestampFull(run.startedAt);
+    $('run-duration').textContent = fmtDuration(run.startedAt, run.completedAt);
+    $('run-wfid').textContent = run.workflowRunId || '(not yet)';
+    if (run.status === 'running') $('btn-cancel').classList.remove('hidden');
+    return run;
+  } catch (err) {
+    $('run-header').innerHTML = `<div class="error">Error loading run: ${escapeHtml(err.message)}</div>`;
+    return null;
+  }
+}
+
+// ───────── timeline rendering ─────────
+//
+// Timeline state. Phone-action chunks are folded with their corresponding
+// bash tool-call by tool_call_id — when a phone-action arrives, we hide the
+// matching tool entry. (We still receive the tool chunks for non-phone bash
+// calls.)
+const phoneActionTcids = new Set();
+
+function makeEntry(opts) {
+  // opts: {cat, ts, html}
+  const div = document.createElement('div');
+  div.className = `entry cat-${opts.cat}`;
+  div.dataset.cat = opts.cat;
+  if (opts.id) div.dataset.id = opts.id;
+  if (opts.tcid) div.dataset.tcid = opts.tcid;
+  div.innerHTML = `<div class="ts">${escapeHtml(fmtTimestamp(opts.ts))}</div>${opts.html}`;
+  if (filterState[opts.cat] === false) div.classList.add('hidden');
+  tl.appendChild(div);
+  // Auto-scroll if user is near the bottom.
+  if (window.innerHeight + window.scrollY >= document.body.scrollHeight - 100) {
+    window.scrollTo(0, document.body.scrollHeight);
+  }
+  return div;
+}
+
+// Aggregate text-delta chunks into a single 💬 entry per text-start id.
+const textBlocks = new Map(); // chunk.id → div
+
+function appendTextDelta(id, delta, ts) {
+  let div = textBlocks.get(id);
+  if (!div) {
+    div = makeEntry({
+      cat: 'text',
+      ts,
+      id,
+      html: `<div class="head"><span class="icon">💬</span><span class="label">Agent</span></div><div class="body"></div>`,
+    });
+    textBlocks.set(id, div);
+  }
+  div.querySelector('.body').textContent += delta;
+}
+
+const reasoningBlocks = new Map();
+function appendReasoningDelta(id, delta, ts) {
+  let div = reasoningBlocks.get(id);
+  if (!div) {
+    div = makeEntry({
+      cat: 'reasoning',
+      ts,
+      id,
+      html: `<div class="head"><span class="icon">🧠</span><span class="label">Reasoning</span></div><div class="body"></div>`,
+    });
+    reasoningBlocks.set(id, div);
+  }
+  div.querySelector('.body').textContent += delta;
+}
+
+// Tool-call entries indexed by toolCallId so phone-action can fold them.
+const toolEntries = new Map(); // toolCallId → div
+
+function renderToolCall(chunk) {
+  const tcid = chunk.toolCallId;
+  if (!tcid) return;
+  if (phoneActionTcids.has(tcid)) return; // already folded
+  const ts = tsFromUlid(chunk.id) ?? Date.now();
+  let inputStr = '';
+  try {
+    inputStr = typeof chunk.input === 'string' ? chunk.input : JSON.stringify(chunk.input);
+  } catch { inputStr = String(chunk.input ?? ''); }
+  const div = makeEntry({
+    cat: 'tool',
+    ts,
+    tcid,
+    html: `
+      <div class="head"><span class="icon">🔧</span><span class="label">${escapeHtml(chunk.toolName || 'tool')}</span><span class="meta-line">tcid=${escapeHtml(tcid)}</span></div>
+      <div class="body"><pre>${escapeHtml(inputStr)}</pre></div>
+    `,
+  });
+  toolEntries.set(tcid, div);
+}
+
+function renderToolResult(chunk) {
+  const tcid = chunk.toolCallId;
+  if (!tcid) return;
+  if (phoneActionTcids.has(tcid)) return; // folded
+  const div = toolEntries.get(tcid);
+  if (!div) return; // no matching call, skip
+  const out = chunk.output;
+  let outStr;
+  if (typeof out === 'string') outStr = out;
+  else { try { outStr = JSON.stringify(out, null, 2); } catch { outStr = String(out); } }
+  const body = div.querySelector('.body');
+  body.innerHTML += `<pre style="margin-top:6px">${escapeHtml(outStr)}</pre>`;
+}
+
+function renderPhoneAction(chunk) {
+  const d = chunk.data || {};
+  const tcid = d.tool_call_id;
+  if (tcid) {
+    phoneActionTcids.add(tcid);
+    // Hide the matching tool entry if it was already rendered.
+    const existing = toolEntries.get(tcid);
+    if (existing) existing.remove();
+  }
+  const ts = d.started_at ?? tsFromUlid(chunk.id) ?? Date.now();
+  const sc = d.screenshots || {};
+  const thumbs = ['before', 'annotated', 'after'].filter(k => sc[k]).map(k => `
+    <div>
+      <img src="${escapeHtml(sc[k])}" alt="${k}" loading="lazy" onclick="openImage('${escapeHtml(sc[k])}')" />
+      <div class="thumb-label">${k}</div>
+    </div>
+  `).join('');
+  const exitOk = d.exit_code === 0;
+  const exitColor = exitOk ? '#3fb950' : '#f85149';
+  makeEntry({
+    cat: 'phone-action',
+    ts,
+    tcid,
+    html: `
+      <div class="head"><span class="icon">📱</span><span class="label">${escapeHtml(d.subcommand || '?')}</span> <span class="meta-line">→ ${escapeHtml(d.target || '')}</span></div>
+      <div class="thumbs">${thumbs}</div>
+      <div class="meta-line" style="margin-top:8px;">$ ${escapeHtml(d.command || '')}</div>
+      <div class="meta-line">rationale: ${escapeHtml(d.rationale || '')}</div>
+      <div class="meta-line">exit <span style="color:${exitColor}">${escapeHtml(String(d.exit_code ?? ''))}</span> · started ${escapeHtml(fmtTimestampFull(d.started_at))} · took ${escapeHtml(fmtDuration(d.started_at, d.completed_at))}</div>
+      ${d.stdout ? `<details style="margin-top:6px"><summary style="cursor:pointer; color:#8b949e; font-size:11px;">stdout</summary><pre>${escapeHtml(d.stdout)}</pre></details>` : ''}
+      ${d.stderr ? `<details style="margin-top:6px"><summary style="cursor:pointer; color:#f7b8b8; font-size:11px;">stderr</summary><pre>${escapeHtml(d.stderr)}</pre></details>` : ''}
+    `,
+  });
+}
+
+const approvalEntries = new Map(); // signalId → div
+
+function renderSignalCreated(chunk) {
+  const d = chunk.data || {};
+  const signalId = d.signalId;
+  if (!signalId) return;
+  const ts = tsFromUlid(chunk.id) ?? Date.now();
+  // Try to source the annotated screenshot from any prior phone-action with
+  // the same toolCallId — when no match, we just show the command + rationale.
+  const annotatedUrl = d.toolCallId
+    ? `/api/v1/runs/${encodeURIComponent(RUN_ID)}/traces/${encodeURIComponent(d.toolCallId)}/annotated.png`
+    : null;
+  const imgHtml = annotatedUrl
+    ? `<img src="${escapeHtml(annotatedUrl)}" alt="annotated" onerror="this.style.display='none'" onclick="openImage('${escapeHtml(annotatedUrl)}')" />`
+    : '';
+  const kind = d.kind || 'approval';
+  const div = makeEntry({
+    cat: 'approval',
+    ts,
+    id: signalId,
+    html: `
+      <div class="head"><span class="icon">⚠️</span><span class="label">${kind === 'escalation' ? 'Escalation' : 'Approval'} requested</span><span class="meta-line">${escapeHtml(signalId)}</span></div>
+      <div class="approval-card">
+        ${imgHtml}
+        <div class="body">
+          <div><strong>Command:</strong> <code>${escapeHtml(d.command || '(none)')}</code></div>
+          <div><strong>Rationale:</strong> ${escapeHtml(d.rationale || '')}</div>
+          <div class="actions">
+            <button class="btn btn-primary" data-decision="approve">Approve</button>
+            <button class="btn btn-danger" data-decision="reject">Reject</button>
+            <button class="btn btn-warn" data-decision="skip">Skip</button>
+          </div>
+          <div class="resolution"></div>
+        </div>
+      </div>
+    `,
+  });
+  approvalEntries.set(signalId, div);
+  div.querySelectorAll('button[data-decision]').forEach((btn) => {
+    btn.onclick = async () => {
+      const decision = btn.dataset.decision;
+      div.querySelectorAll('button[data-decision]').forEach(b => b.disabled = true);
+      div.querySelector('.resolution').innerHTML = `<div class="meta-line">Sending…</div>`;
+      try {
+        const res = await fetch(`/api/v1/signals/${encodeURIComponent(signalId)}/resolve`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ decision }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        // Resolution chunk will arrive via SSE and render via
+        // renderSignalResolved.
+      } catch (err) {
+        div.querySelectorAll('button[data-decision]').forEach(b => b.disabled = false);
+        div.querySelector('.resolution').innerHTML = `<div class="error">Failed: ${escapeHtml(err.message)}</div>`;
+      }
+    };
+  })
+}
+
+function renderSignalResolved(chunk) {
+  const d = chunk.data || {};
+  const signalId = d.signalId;
+  const div = approvalEntries.get(signalId);
+  if (div) {
+    div.querySelectorAll('button[data-decision]').forEach(b => b.disabled = true);
+    const decision = d.decision || '?';
+    const cls = decision === 'approve' ? 'resolved' : 'rejected';
+    const sym = decision === 'approve' ? '✓' : (decision === 'skip' ? '⊘' : '✗');
+    div.querySelector('.resolution').innerHTML = `<div class="${cls}">${sym} ${escapeHtml(decision)}${d.message ? ' — ' + escapeHtml(d.message) : ''}</div>`;
+  }
+  // Also drop a one-liner so the timeline shows the resolution moment.
+  const ts = tsFromUlid(chunk.id) ?? Date.now();
+  makeEntry({
+    cat: 'approval',
+    ts,
+    html: `<div class="head"><span class="icon">✓</span><span class="label">Approval resolved</span><span class="meta-line">${escapeHtml(d.decision || '')} · ${escapeHtml(signalId)}</span></div>`,
+  });
+}
+
+function renderLifecycle(chunk) {
+  const d = chunk.data || {};
+  const t = chunk.type;
+  const ts = tsFromUlid(chunk.id) ?? Date.now();
+  let label = t;
+  let extra = '';
+  if (t === 'data-run-started') {
+    label = 'Run started';
+    if (d.initial_prompt) extra = `<div class="meta-line">"${escapeHtml(d.initial_prompt.slice(0, 200))}"</div>`;
+  } else if (t === 'data-run-completed') {
+    label = 'Run completed';
+    if (d.final_text) extra = `<div class="meta-line">"${escapeHtml(d.final_text.slice(0, 200))}"</div>`;
+    if (d.turn_count) extra += `<div class="meta-line">${d.turn_count} turns</div>`;
+    setConnection('done', '✓ run completed');
+  } else if (t === 'data-run-failed') {
+    label = 'Run failed';
+    if (d.error) extra = `<div class="error" style="margin-top:6px">${escapeHtml(d.error)}</div>`;
+    setConnection('error', '✗ run failed');
+  } else if (t === 'data-run-cancelled') {
+    label = 'Run cancelled';
+    if (d.reason) extra = `<div class="meta-line">${escapeHtml(d.reason)}</div>`;
+    setConnection('done', '⏹ run cancelled');
+  }
+  makeEntry({
+    cat: 'lifecycle',
+    ts,
+    html: `<div class="head"><span class="icon">●</span><span class="label">${escapeHtml(label)}</span></div>${extra}`,
+  });
+}
+
+function renderDebug(chunk) {
+  const ts = tsFromUlid(chunk.id) ?? Date.now();
+  makeEntry({
+    cat: 'debug',
+    ts,
+    html: `<div class="head"><span class="icon">🪲</span><span class="label">${escapeHtml(chunk.type)}</span></div><div class="meta-line">${escapeHtml(JSON.stringify(chunk).slice(0, 400))}</div>`,
+  });
+}
+
+// ───────── chunk dispatcher ─────────
+function handleChunk(chunk) {
+  const t = chunk.type;
+  switch (t) {
+    case 'text-delta': {
+      const ts = tsFromUlid(chunk.id) ?? Date.now();
+      appendTextDelta(chunk.id || 'text', chunk.delta || chunk.textDelta || '', ts);
+      return;
+    }
+    case 'text-start':
+    case 'text-end':
+      return; // structural, no UI
+    case 'reasoning-delta': {
+      const ts = tsFromUlid(chunk.id) ?? Date.now();
+      appendReasoningDelta(chunk.id || 'reasoning', chunk.delta || '', ts);
+      return;
+    }
+    case 'reasoning-start':
+    case 'reasoning-end':
+      return;
+    case 'tool-input-available':
+    case 'tool-call':
+      renderToolCall(chunk);
+      return;
+    case 'tool-output-available':
+    case 'tool-result':
+      renderToolResult(chunk);
+      return;
+    case 'tool-input-start':
+    case 'tool-input-delta':
+      return; // suppressed; we wait for tool-input-available
+    case 'data-phone-action':
+      renderPhoneAction(chunk);
+      return;
+    case 'data-signal-created':
+      renderSignalCreated(chunk);
+      return;
+    case 'data-signal-resolved':
+      renderSignalResolved(chunk);
+      return;
+    case 'data-run-started':
+    case 'data-run-completed':
+    case 'data-run-failed':
+    case 'data-run-cancelled':
+      renderLifecycle(chunk);
+      return;
+    case 'finish-step':
+    case 'start':
+      return;
+    default:
+      renderDebug(chunk);
+  }
+}
+
+// ───────── connection management ─────────
+function setConnection(state, text) {
+  const el = $('connection-status');
+  el.className = `connection ${state}`;
+  el.textContent = text;
+}
+
+let eventSource = null;
+
+function openStream(startIndex) {
+  if (eventSource) eventSource.close();
+  const usp = new URLSearchParams();
+  if (startIndex !== undefined) usp.set('startIndex', String(startIndex));
+  const url = `/api/v1/runs/${encodeURIComponent(RUN_ID)}/stream${usp.toString() ? '?' + usp.toString() : ''}`;
+  setConnection('live', startIndex !== undefined ? `replaying from chunk ${startIndex}…` : 'live tail connected');
+  eventSource = new EventSource(url);
+  eventSource.onmessage = (e) => {
+    if (!e.data) return;
+    try {
+      const chunk = JSON.parse(e.data);
+      handleChunk(chunk);
+    } catch (err) {
+      console.error('chunk parse error', err, e.data);
+    }
+  };
+  eventSource.onerror = (e) => {
+    console.error('SSE error', e);
+    // EventSource auto-reconnects; we just surface the temporary disconnect.
+    setConnection('error', 'connection lost · retrying…');
+  };
+}
+
+// ───────── boot ─────────
+async function boot() {
+  const run = await loadRunHeader();
+  if (!run) {
+    setConnection('error', 'run not found');
+    return;
+  }
+  // For terminal runs, replay-from-zero (full timeline). For running, live
+  // tail starting from index 0 too — the SSE wrapper supports both modes.
+  // We always replay from 0 so refresh shows the full history.
+  openStream(0);
+}
+
+window.addEventListener('beforeunload', () => { if (eventSource) eventSource.close(); });
+
+boot();
+</script>
+</body>
+</html>

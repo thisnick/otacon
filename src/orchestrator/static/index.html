@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Otacon Orchestrator — Runs</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; padding: 16px; font-size: 13px; }
+h1 { font-size: 18px; margin-bottom: 4px; }
+.header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+.header .stats { color: #8b949e; font-size: 13px; }
+.header a { color: #58a6ff; text-decoration: none; margin-left: auto; font-size: 12px; }
+.filters { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; align-items: center; }
+.filters label { color: #8b949e; font-size: 11px; text-transform: uppercase; }
+.filters input, .filters select { background: #161b22; color: #c9d1d9; border: 1px solid #30363d; padding: 4px 8px; border-radius: 4px; font-family: inherit; font-size: 12px; }
+.filters input:focus, .filters select:focus { outline: none; border-color: #58a6ff; }
+.filters button { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-family: inherit; font-size: 12px; }
+.filters button:hover { background: #30363d; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid #21262d; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+th { color: #8b949e; font-weight: 600; font-size: 11px; text-transform: uppercase; }
+tr:hover { background: #161b22; cursor: pointer; }
+.s-running { color: #d2a8ff; }
+.s-completed { color: #3fb950; }
+.s-failed { color: #f85149; }
+.s-cancelled { color: #d29922; }
+.s-created { color: #8b949e; }
+.id-cell { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #58a6ff; font-size: 12px; }
+.empty { color: #484f58; padding: 24px; text-align: center; }
+.prompt-cell { color: #8b949e; max-width: 400px; }
+.error { color: #f85149; padding: 12px; background: #25171c; border: 1px solid #5d2a3a; border-radius: 4px; margin-top: 12px; }
+</style>
+</head>
+<body data-testid="otacon-orchestrator-runs">
+
+<div class="header">
+  <h1>Otacon Orchestrator</h1>
+  <span class="stats" id="stats">loading…</span>
+  <a href="/health" target="_blank">/health</a>
+</div>
+
+<div class="filters">
+  <label>Account</label>
+  <input id="f-account" type="text" placeholder="xhs:test" />
+  <label>Team</label>
+  <input id="f-team" type="text" placeholder="social-media-engagement" />
+  <label>Status</label>
+  <select id="f-status">
+    <option value="">(any)</option>
+    <option value="created">created</option>
+    <option value="running">running</option>
+    <option value="completed">completed</option>
+    <option value="failed">failed</option>
+    <option value="cancelled">cancelled</option>
+  </select>
+  <label>Limit</label>
+  <input id="f-limit" type="number" value="50" min="1" max="500" style="width:64px" />
+  <button id="f-apply">Apply</button>
+  <button id="f-clear">Clear</button>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th>Run ID</th>
+      <th>Account</th>
+      <th>Team</th>
+      <th>Status</th>
+      <th>Started</th>
+      <th>Duration</th>
+      <th>Initial Prompt</th>
+    </tr>
+  </thead>
+  <tbody id="runs-body"></tbody>
+</table>
+
+<div id="error-box"></div>
+
+<script>
+'use strict';
+
+const $ = (id) => document.getElementById(id);
+
+function fmtTimestamp(ms) {
+  if (!ms) return '';
+  const d = new Date(ms);
+  // Local-time YYYY-MM-DD HH:mm:ss
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function fmtDuration(startMs, endMs) {
+  if (!startMs) return '';
+  const end = endMs ?? Date.now();
+  const ms = end - startMs;
+  if (ms < 1000) return `${ms}ms`;
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rs = s - m * 60;
+  if (m < 60) return `${m}m ${rs}s`;
+  const h = Math.floor(m / 60);
+  const rm = m - h * 60;
+  return `${h}h ${rm}m`;
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+}
+
+function buildQuery(params) {
+  const usp = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== '' && v !== null) usp.set(k, String(v));
+  }
+  const qs = usp.toString();
+  return qs ? `?${qs}` : '';
+}
+
+async function loadRuns() {
+  const account = $('f-account').value.trim();
+  const team = $('f-team').value.trim();
+  const status = $('f-status').value;
+  const limit = $('f-limit').value || '50';
+
+  // Persist filter state in URL for bookmarking + reloads.
+  const url = new URL(window.location.href);
+  url.search = buildQuery({ account, team, status, limit });
+  history.replaceState({}, '', url.toString());
+
+  try {
+    const res = await fetch(`/api/v1/runs${buildQuery({ account, team, status, limit })}`);
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status} ${res.statusText}`);
+    }
+    const body = await res.json();
+    renderRuns(body.runs || []);
+    $('error-box').innerHTML = '';
+  } catch (err) {
+    $('error-box').innerHTML = `<div class="error">Error loading runs: ${escapeHtml(err.message)}</div>`;
+    $('runs-body').innerHTML = '';
+    $('stats').textContent = 'error';
+  }
+}
+
+function renderRuns(runs) {
+  const tbody = $('runs-body');
+  if (runs.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">no runs match the current filters</td></tr>';
+    $('stats').textContent = '0 runs';
+    return;
+  }
+  $('stats').textContent = `${runs.length} run${runs.length === 1 ? '' : 's'}`;
+  tbody.innerHTML = runs.map((r) => {
+    const promptShort = r.initialPrompt ? r.initialPrompt.slice(0, 80) : '';
+    return `
+      <tr data-run-id="${escapeHtml(r.id)}" onclick="window.location.href='/run.html?id=${encodeURIComponent(r.id)}'">
+        <td class="id-cell">${escapeHtml(r.id)}</td>
+        <td>${escapeHtml(r.account || '')}</td>
+        <td>${escapeHtml(r.team || '')}</td>
+        <td class="s-${escapeHtml(r.status || 'created')}">${escapeHtml(r.status || 'created')}</td>
+        <td>${escapeHtml(fmtTimestamp(r.startedAt))}</td>
+        <td>${escapeHtml(fmtDuration(r.startedAt, r.completedAt))}</td>
+        <td class="prompt-cell">${escapeHtml(promptShort)}</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function applyUrlFiltersToInputs() {
+  const usp = new URLSearchParams(window.location.search);
+  if (usp.has('account')) $('f-account').value = usp.get('account');
+  if (usp.has('team')) $('f-team').value = usp.get('team');
+  if (usp.has('status')) $('f-status').value = usp.get('status');
+  if (usp.has('limit')) $('f-limit').value = usp.get('limit');
+}
+
+$('f-apply').onclick = loadRuns;
+$('f-clear').onclick = () => {
+  $('f-account').value = '';
+  $('f-team').value = '';
+  $('f-status').value = '';
+  $('f-limit').value = '50';
+  loadRuns();
+};
+$('f-account').addEventListener('keyup', (e) => { if (e.key === 'Enter') loadRuns(); });
+$('f-team').addEventListener('keyup', (e) => { if (e.key === 'Enter') loadRuns(); });
+$('f-status').addEventListener('change', loadRuns);
+
+applyUrlFiltersToInputs();
+loadRuns();
+</script>
+</body>
+</html>
