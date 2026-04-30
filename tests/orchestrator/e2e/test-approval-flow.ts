@@ -189,6 +189,31 @@ async function main() {
     // doesn't mutate run.json — that's the lead-agent route's job. So
     // running is what we expect here.
     assert(runJson.status === 'running', `run.json status=running (route-assigned; got ${runJson.status})`)
+
+    // GET /api/v1/runs/:id — metadata endpoint (P3-I commit 2).
+    {
+      const r = await fetch(`${BASE}/api/v1/runs/${runId}`)
+      assert(r.status === 200, `GET /api/v1/runs/:id returns 200 (got ${r.status})`)
+      const body = await r.json() as { id: string; workflowRunId?: string; account?: string }
+      assert(body.id === runId, `GET /api/v1/runs/:id returns id=${runId}`)
+      assert(body.workflowRunId === workflowRunId, 'GET /api/v1/runs/:id returns workflowRunId')
+      assert(body.account === 'xhs:test', `GET /api/v1/runs/:id returns account (got ${body.account})`)
+    }
+    {
+      const r = await fetch(`${BASE}/api/v1/runs/01KQE0000000000000NOTREAL`)
+      assert(r.status === 404, `GET /api/v1/runs/:id 404s on unknown id (got ${r.status})`)
+      await r.arrayBuffer()
+    }
+
+    // GET /api/v1/runs/:id/messages — UIMessage[] snapshot (P3-I commit 2).
+    {
+      const r = await fetch(`${BASE}/api/v1/runs/${runId}/messages`)
+      assert(r.status === 200, `GET /api/v1/runs/:id/messages returns 200 (got ${r.status})`)
+      const body = await r.json() as { messages: Array<{ id: string }> }
+      assert(Array.isArray(body.messages), 'GET /api/v1/runs/:id/messages returns {messages: array}')
+      // approval-flow workflow doesn't run a model, so we don't assert
+      // the messages array shape — just that the endpoint resolves.
+    }
   } catch (e: any) {
     console.error('UNCAUGHT:', e?.stack ?? e)
     failed++
