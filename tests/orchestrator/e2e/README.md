@@ -16,9 +16,10 @@ pnpm test                   # unit + e2e:smoke + approval-flow + failure-flow
 pnpm test:e2e:phase1        # Phase 1 sign-off (requires phone-4 + XHS + LLM)
 pnpm test:e2e:phase2        # Phase 2 sign-off (auto-screenshot wrapper; requires phone-4 + XHS + LLM)
 pnpm test:e2e:phase3        # Phase 3 sign-off (HTTP API + SSE streaming; requires phone-4 + XHS + LLM)
+pnpm test:e2e:phase5        # Phase 5 sign-off (deployed VPS; requires VPS reachable + phone-4)
 ```
 
-Or from the repo root: `pnpm test:e2e:phase1` / `pnpm test:e2e:phase2` / `pnpm test:e2e:phase3`.
+Or from the repo root: `pnpm test:e2e:phase1` / `pnpm test:e2e:phase2` / `pnpm test:e2e:phase3` / `pnpm test:e2e:phase5`.
 
 Each test spawns its own server on a unique port and a fresh tmp data dir.
 
@@ -32,6 +33,7 @@ Each test spawns its own server on a unique port and a fresh tmp data dir.
 | `phase1-xhs-scroll.ts` | **Phase 1 sign-off canonical e2e.** Bootstraps a fresh `ORCHESTRATOR_DATA_DIR`, seeds the `social-media-engagement` team, adds the `xhs:test` account, spawns Nitro, posts a run via `POST /api/v1/runs` with the prompt "Open the Xiaohongshu app (com.xingin.xhs). Scroll the home feed three times to see different content. Then exit." against phone-4, asserts run.json + prompt snapshot + workflow chunk persistence + traces + index/runs.jsonl + replay-from-startIndex-0 matches live observation. | **phone-4** reachable via `$OTACON_REGISTRY_URL` with `$OTACON_TOKEN`; Xiaohongshu (`com.xingin.xhs`) installed on phone-4; `phone_number` set in registry to match the account credential (default `+13412137456`); `$AI_GATEWAY_API_KEY`. |
 | `phase2-xhs-actions.ts` | **Phase 2 sign-off canonical e2e.** Drives an XHS scenario exercising tap + set-text + key + swipe, then validates: every mutating-verb tool call produced `before/after.png` (valid PNGs via `sharp` metadata) and an `annotated.png` whose perceptual hash differs ≥5 bits from `before.png`; live SSE includes a `data-phone-action` chunk per action with full payload (tool_call_id, command, subcommand, target, rationale, screenshots URL block, exit_code, stdout, stderr, started_at, completed_at); the bash `tool-call`/`tool-result` chunks coexist (additive emission); non-mutating verbs leave no PNG residue. | Same as Phase 1: phone-4 + XHS + registry + `$AI_GATEWAY_API_KEY`. |
 | `phase3-streaming.ts` | **Phase 3 sign-off canonical e2e.** Three scenarios over distinct tmp data dirs: (A) **Streaming + Resumable Replay** — disconnect mid-stream, resume via `?startIndex=N`; concat of live segment + resumed segment must equal a fresh full replay-from-0 (chunk count + type sequence). (B) **Cancellation** — POST `/api/v1/runs/:id/cancel` mid-flight; terminal chunk == `data-run-cancelled`; `run.json` and GET `/api/v1/runs/:id` report `status: cancelled`. (C) **Durable approval across server restart** — kill server while workflow blocks at `data-signal-created`, respawn fresh nitro on the same data dir, POST resolve, verify run resumes from saved state and reaches `data-run-completed`. | Same as Phase 1: phone-4 + XHS + registry + `$AI_GATEWAY_API_KEY`. |
+| `phase5-vps.ts` | **Phase 5 sign-off — production-parity smoke.** Probes the deployed VPS at `$ORCHESTRATOR_URL` (default `https://otacon-orchestrator.tail0437b8.ts.net`). Verifies: (1) `/health` returns 200, (1b) container-state via SSH (`docker ps` shows orchestrator + watchtower Up, FS layout intact), (2) state persists across `docker compose restart`, (3) cross-network agent run completes via Tailscale HTTPS, (4) GET /api/v1/runs from off-VPS shows the new run + run.json + prompt.md exist on VPS data dir. Optional: (5) Watchtower auto-deploy [`PHASE5_RUN_WATCHTOWER=1`], (6) `tofu plan` idempotent [`PHASE5_RUN_TOFU=1`]. | VPS deployed; Tailscale-SSH-able; phone-4 reachable from VPS via registry; xhs:test seeded on VPS data dir with phone-4 credential; `$AI_GATEWAY_API_KEY` in VPS .env. |
 
 ## Phase 1 e2e — `phase1-xhs-scroll.ts`
 
