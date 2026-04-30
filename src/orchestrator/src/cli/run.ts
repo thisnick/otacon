@@ -14,13 +14,16 @@
  *    `data-run-failed` exit 1, `data-run-cancelled` exit 2).
  */
 import * as readline from 'node:readline'
-
-const DEFAULT_URL = 'http://localhost:9090'
+import { loadOrchestratorConfig } from '../config.js'
 
 export interface RunOptions {
   account: string
   team?: string
   prompt?: string
+  /**
+   * Override the resolved orchestrator URL (otherwise from
+   * `loadOrchestratorConfig()`: env → toml → default).
+   */
   url?: string
   /** Auto-approve every approval signal (no stdin prompt). For test runs. */
   autoApprove?: boolean
@@ -45,12 +48,15 @@ interface SignalCreatedData {
 const TERMINAL_TYPES = new Set(['data-run-completed', 'data-run-failed', 'data-run-cancelled'])
 
 export async function runCommand(opts: RunOptions): Promise<void> {
-  const baseUrl = (opts.url ?? process.env.ORCHESTRATOR_URL ?? DEFAULT_URL).replace(/\/$/, '')
+  const cfg = loadOrchestratorConfig()
+  const baseUrl = (opts.url ?? cfg.url).replace(/\/$/, '')
+  const headers: Record<string, string> = { 'content-type': 'application/json' }
+  if (cfg.token) headers.authorization = `Bearer ${cfg.token}`
 
   // 1. Start the run
   const startRes = await fetch(`${baseUrl}/api/v1/runs`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers,
     body: JSON.stringify({ account: opts.account, team: opts.team, prompt: opts.prompt }),
   })
   if (!startRes.ok) {
@@ -61,9 +67,11 @@ export async function runCommand(opts: RunOptions): Promise<void> {
   console.error(`[run] runId=${runId} workflowRunId=${workflowRunId}`)
 
   // 2. Tail the chunk stream
+  const streamHeaders: Record<string, string> = { accept: 'text/event-stream' }
+  if (cfg.token) streamHeaders.authorization = `Bearer ${cfg.token}`
   const streamRes = await fetch(`${baseUrl}/api/v1/runs/${runId}/stream?startIndex=0`, {
     method: 'GET',
-    headers: { accept: 'text/event-stream' },
+    headers: streamHeaders,
   })
   if (!streamRes.ok || !streamRes.body) {
     const body = await safeText(streamRes)
@@ -79,6 +87,7 @@ export async function runCommand(opts: RunOptions): Promise<void> {
       runId,
       baseUrl,
       autoApprove: !!opts.autoApprove,
+      token: cfg.token,
     })
     if (handled.terminal) {
       exitCode = handled.exitCode ?? 0
@@ -99,8 +108,10 @@ async function handleChunk(args: {
   runId: string
   baseUrl: string
   autoApprove: boolean
+  /** Bearer token from `loadOrchestratorConfig()`. May be undefined. */
+  token: string | undefined
 }): Promise<ChunkHandlerResult> {
-  const { chunk, runId, baseUrl, autoApprove } = args
+  const { chunk, runId, baseUrl, autoApprove, token } = args
   const t = chunk.type
 
   if (t === 'text-delta') {
@@ -118,14 +129,17 @@ async function handleChunk(args: {
     return { terminal: false }
   }
 
-  if (t === 'tool-call') {
-    const c = chunk as { toolName?: string; input?: unknown }
+  // AI SDK v7-beta-111 emits tool-input-* / tool-output-* (renamed from
+  // tool-call / tool-result in earlier versions). We forward both shapes
+  // for forward-compat — if the SDK rolls the names back, we still render.
+  if (t === 'tool-input-available' || t === 'tool-call') {
+    const c = chunk as { toolName?: string; input?: unknown; toolCallId?: string }
     const inputStr = JSON.stringify(c.input ?? {}).slice(0, 200)
     console.error(`\n[tool] ${c.toolName ?? '?'}(${inputStr})`)
     return { terminal: false }
   }
 
-  if (t === 'tool-result') {
+  if (t === 'tool-output-available' || t === 'tool-result') {
     const c = chunk as { toolName?: string; output?: unknown }
     const outStr =
       typeof c.output === 'string' ? c.output : JSON.stringify(c.output ?? '')
@@ -153,9 +167,11 @@ async function handleChunk(args: {
     console.error(`[approval needed] signalId: ${signalId}`)
     const decision = autoApprove ? 'approve' : await promptApproval()
     console.error(`[approval] ${decision}`)
+    const resolveHeaders: Record<string, string> = { 'content-type': 'application/json' }
+    if (token) resolveHeaders.authorization = `Bearer ${token}`
     const res = await fetch(`${baseUrl}/api/v1/signals/${signalId}/resolve`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: resolveHeaders,
       body: JSON.stringify({ decision }),
     })
     if (!res.ok) {
