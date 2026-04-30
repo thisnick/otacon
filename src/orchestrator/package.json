@@ -19,7 +19,8 @@
     "test:e2e:messages-route": "tsx ../../tests/orchestrator/e2e/test-messages-route.ts",
     "test:e2e:cli-subcommands": "tsx ../../tests/orchestrator/e2e/test-cli-subcommands.ts",
     "test:e2e:phase1": "tsx ../../tests/orchestrator/e2e/phase1-xhs-scroll.ts",
-    "test:e2e:phase2": "tsx ../../tests/orchestrator/e2e/phase2-xhs-actions.ts"
+    "test:e2e:phase2": "tsx ../../tests/orchestrator/e2e/phase2-xhs-actions.ts",
+    "test:e2e:phase3": "tsx ../../tests/orchestrator/e2e/phase3-streaming.ts"
   },
   "dependencies": {
     "@ai-sdk/gateway": "^3.0.0",

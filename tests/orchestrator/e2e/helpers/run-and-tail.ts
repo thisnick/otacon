@@ -151,6 +151,19 @@ export interface TailRunOpts {
   timeoutMs?: number
   /** Optional callback for every chunk before yield (e.g., to log progress). */
   onChunk?: (chunk: UIMessageChunk) => void
+  /**
+   * If provided and resolves to true for any chunk, stop reading and
+   * abort the SSE connection. Called after `onChunk` so the chunk is
+   * recorded before we bail. Lets phase3 disconnect mid-stream to test
+   * `?startIndex=` resumability.
+   */
+  stopWhen?: (chunk: UIMessageChunk, chunks: UIMessageChunk[]) => boolean
+  /**
+   * If true, drop terminal-chunk-stop semantics; reader runs until
+   * `stopWhen` returns true or the timeout fires. Useful for
+   * deliberate mid-flight disconnects.
+   */
+  noStopOnTerminal?: boolean
 }
 
 const TERMINAL_TYPES = new Set(['data-run-completed', 'data-run-failed', 'data-run-cancelled'])
@@ -165,14 +178,16 @@ export interface TailResult {
 /**
  * Tail an existing run. Posts approval-resolve when autoApprove=true and a
  * data-signal-created chunk arrives. Returns when a terminal chunk is seen
- * or the timeout fires.
+ * or the timeout fires (or stopWhen returns true).
  */
 export async function tailRun(opts: TailRunOpts): Promise<TailResult> {
   const startIndex = opts.startIndex ?? 0
   const url = `${opts.baseUrl}/api/v1/runs/${opts.runId}/stream?startIndex=${startIndex}`
+  const ac = new AbortController()
   const res = await fetch(url, {
     method: 'GET',
     headers: { accept: 'text/event-stream' },
+    signal: ac.signal,
   })
   if (!res.ok || !res.body) {
     const body = await res.text().catch(() => '')
@@ -186,7 +201,7 @@ export async function tailRun(opts: TailRunOpts): Promise<TailResult> {
 
   const chunks: UIMessageChunk[] = []
   let terminal: UIMessageChunk | null = null
-  const stopOnTerminal = opts.stopOnTerminal ?? true
+  const stopOnTerminal = opts.noStopOnTerminal ? false : (opts.stopOnTerminal ?? true)
   const timeoutMs = opts.timeoutMs ?? 15 * 60_000
 
   let timer: NodeJS.Timeout | null = null
@@ -194,29 +209,41 @@ export async function tailRun(opts: TailRunOpts): Promise<TailResult> {
     timer = setTimeout(() => reject(new Error(`tailRun timeout after ${timeoutMs}ms`)), timeoutMs)
   })
 
+  let aborted = false
   try {
     await Promise.race([
       timeoutPromise,
       (async () => {
-        for await (const chunk of parseSse(res.body as ReadableStream<Uint8Array>)) {
-          chunks.push(chunk)
-          if (opts.onChunk) opts.onChunk(chunk)
+        try {
+          for await (const chunk of parseSse(res.body as ReadableStream<Uint8Array>)) {
+            chunks.push(chunk)
+            if (opts.onChunk) opts.onChunk(chunk)
 
-          if (chunk.type === 'data-signal-created' && opts.autoApprove) {
-            const signalId = extractSignalId(chunk)
-            if (signalId) {
-              await resolveSignal({
-                baseUrl: opts.baseUrl,
-                signalId,
-                decision: 'approve',
-              })
+            if (chunk.type === 'data-signal-created' && opts.autoApprove) {
+              const signalId = extractSignalId(chunk)
+              if (signalId) {
+                await resolveSignal({
+                  baseUrl: opts.baseUrl,
+                  signalId,
+                  decision: 'approve',
+                })
+              }
+            }
+
+            if (TERMINAL_TYPES.has(chunk.type)) {
+              terminal = chunk
+              if (stopOnTerminal) break
+            }
+
+            if (opts.stopWhen && opts.stopWhen(chunk, chunks)) {
+              aborted = true
+              ac.abort()
+              break
             }
           }
-
-          if (TERMINAL_TYPES.has(chunk.type)) {
-            terminal = chunk
-            if (stopOnTerminal) break
-          }
+        } catch (e) {
+          // AbortError is expected when stopWhen / external abort fires.
+          if (!aborted) throw e
         }
       })(),
     ])
@@ -225,6 +252,23 @@ export async function tailRun(opts: TailRunOpts): Promise<TailResult> {
   }
 
   return { chunks, terminal, headers }
+}
+
+/** Cancel a running run via POST /api/v1/runs/{id}/cancel. */
+export async function cancelRun(args: { baseUrl: string; runId: string }): Promise<{ status: number; body: unknown }> {
+  const res = await fetch(`${args.baseUrl}/api/v1/runs/${args.runId}/cancel`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+  })
+  const body = await res.json().catch(() => null)
+  return { status: res.status, body }
+}
+
+/** GET /api/v1/runs/{id} — current run metadata. */
+export async function getRun(args: { baseUrl: string; runId: string }): Promise<{ status: number; run: unknown }> {
+  const res = await fetch(`${args.baseUrl}/api/v1/runs/${args.runId}`)
+  const body = await res.json().catch(() => null)
+  return { status: res.status, run: body }
 }
 
 function extractSignalId(chunk: UIMessageChunk): string | null {

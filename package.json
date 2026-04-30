@@ -11,6 +11,7 @@
     "cli": "pnpm --filter otacon-cli exec node --no-warnings --import tsx/esm src/index.ts",
     "test:e2e:phase1": "pnpm --filter otacon-orchestrator test:e2e:phase1",
     "test:e2e:phase2": "pnpm --filter otacon-orchestrator test:e2e:phase2",
+    "test:e2e:phase3": "pnpm --filter otacon-orchestrator test:e2e:phase3",
     "changeset": "changeset",
     "version": "changeset version"
   },
