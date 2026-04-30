@@ -32,7 +32,10 @@ import type { ModelMessage, UIMessageChunk } from 'ai'
 import {
   approvalHook,
   approvalToken,
+  cancelHook,
+  cancelToken,
   persistSignal,
+  type CancelPayload,
 } from '../src/run-executor/approval-bridge.js'
 
 export interface LeadAgentArgs {
@@ -91,9 +94,20 @@ export async function leadAgentWorkflow(args: LeadAgentArgs): Promise<LeadAgentR
     } as ModelMessage,
   ]
 
+  // Register the cancel hook upfront. POST /api/v1/runs/:id/cancel
+  // resolves this token instead of calling `wfRun.cancel()` so the
+  // body can race it against `agent.stream(...)` and emit a clean
+  // `data-run-cancelled` terminal chunk before exiting.
+  // The cancel sentinel is the *promise* form of the hook awaiter —
+  // we keep it alive across turns and Promise.race against each turn.
+  const cancelPromise: Promise<CancelPayload> = cancelHook.create({
+    token: cancelToken(args.runId),
+  })
+
   let messages = initialMessages
   let finalText = ''
   let terminated = false
+  let cancelReason: string | null = null
 
   try {
     for (let turn = 0; turn < MAX_TURNS && !terminated; turn++) {
@@ -110,32 +124,70 @@ export async function leadAgentWorkflow(args: LeadAgentArgs): Promise<LeadAgentR
           }
         }
       }
-      const result = await agent.stream({
-        messages,
-        writable: getWritable<UIMessageChunk>(),
-        preventClose: turn < MAX_TURNS - 1,
-        // Some models emit tool-call names like "otacon-alloc" or
-        // "otacon" directly even though the only tool we expose is
-        // `bash`. Repair the call by routing it through bash with the
-        // model's args reconstructed as a command string.
-        experimental_repairToolCall: async ({ toolCall }) => {
-          const fabricated = toolCall.toolName
-          if (fabricated === 'bash' || fabricated === 'sleep_until' || fabricated === 'escalate') {
-            return null
-          }
-          const input = parseRepairInput(toolCall.input)
-          let command = fabricated
-          if (input.command) command = `${fabricated} ${input.command}`.trim()
-          else if (input.subcommand) command = `${fabricated} ${input.subcommand}`.trim()
-          else if (input.args && Array.isArray(input.args)) command = `${fabricated} ${input.args.join(' ')}`.trim()
-          const rationale = input.rationale ?? `repaired tool-call (model invented "${fabricated}")`
-          return {
-            ...toolCall,
-            toolName: 'bash',
-            input: JSON.stringify({ command, rationale }),
-          }
-        },
-      })
+      // Race the agent turn against the cancel hook. If a cancel
+      // request lands during this turn, the next iteration breaks
+      // out cleanly.
+      //
+      // Cancellation latency is bounded by one agent turn (model
+      // round-trip + any tool calls inside the turn — typically
+      // 5-30s but up to a minute for slow model calls or
+      // long-running tool exec). We can't interrupt mid-stream
+      // because `agent.stream` doesn't expose a workflow-context
+      // abort signal in this SDK version (`@workflow/ai@4.1.2`'s
+      // lower-level `workflow-chat-transport` carries an
+      // `abortSignal` field, but `DurableAgent.stream` doesn't
+      // surface it). Acceptable tradeoff — the prior
+      // implementation called `wfRun.cancel()` directly from the
+      // route, which interrupted the body before it could emit
+      // any terminal chunk and left SSE clients hanging forever
+      // (P3-E feedback). One turn of latency is finite.
+      //
+      // Future improvement: when the SDK exposes the abort signal,
+      // plumb an AbortController whose signal fires when the
+      // cancel hook resolves — drops the bound to "current model
+      // call's first interruptible network read".
+      const cancelSentinel = Symbol('cancel-sentinel')
+      type StreamResult = Awaited<ReturnType<typeof agent.stream>>
+      const raced = await Promise.race<typeof cancelSentinel | StreamResult>([
+        (async () => {
+          const payload = await cancelPromise
+          cancelReason = payload.reason ?? 'cancel requested via API'
+          return cancelSentinel
+        })(),
+        agent.stream({
+          messages,
+          writable: getWritable<UIMessageChunk>(),
+          preventClose: turn < MAX_TURNS - 1,
+          // Some models emit tool-call names like "otacon-alloc" or
+          // "otacon" directly even though the only tool we expose is
+          // `bash`. Repair the call by routing it through bash with the
+          // model's args reconstructed as a command string.
+          experimental_repairToolCall: async ({ toolCall }) => {
+            const fabricated = toolCall.toolName
+            if (fabricated === 'bash' || fabricated === 'sleep_until' || fabricated === 'escalate') {
+              return null
+            }
+            const input = parseRepairInput(toolCall.input)
+            let command = fabricated
+            if (input.command) command = `${fabricated} ${input.command}`.trim()
+            else if (input.subcommand) command = `${fabricated} ${input.subcommand}`.trim()
+            else if (input.args && Array.isArray(input.args)) command = `${fabricated} ${input.args.join(' ')}`.trim()
+            const rationale = input.rationale ?? `repaired tool-call (model invented "${fabricated}")`
+            return {
+              ...toolCall,
+              toolName: 'bash',
+              input: JSON.stringify({ command, rationale }),
+            }
+          },
+        }),
+      ])
+      if (raced === cancelSentinel) {
+        // Cancel resolved during this turn — break out, the after-loop
+        // path emits data-run-cancelled.
+        terminated = true
+        break
+      }
+      const result = raced as StreamResult
       messages = result.messages
 
       const last = messages[messages.length - 1]
@@ -153,6 +205,18 @@ export async function leadAgentWorkflow(args: LeadAgentArgs): Promise<LeadAgentR
     await markRunStatusStep({ runId: args.runId, status: 'failed', error })
     await emitRunFailedStep({ runId: args.runId, error })
     return { finalText, turnCount: messages.length, status: 'failed' }
+  }
+
+  // Cancellation path — body broke out of the loop because the cancel
+  // hook resolved. Mark + emit the terminal chunk and exit.
+  if (cancelReason !== null) {
+    await markRunStatusStep({
+      runId: args.runId,
+      status: 'cancelled',
+      error: cancelReason,
+    })
+    await emitRunCancelledStep({ runId: args.runId, reason: cancelReason })
+    return { finalText, turnCount: messages.length, status: 'cancelled' }
   }
 
   await markRunStatusStep({
@@ -400,6 +464,22 @@ async function emitRunFailedStep(p: { runId: string; error: string }): Promise<v
       type: 'data-run-failed',
       id: `failed:${p.runId}`,
       data: { run_id: p.runId, error: p.error },
+    } as unknown as UIMessageChunk)
+  } finally {
+    writer.releaseLock()
+  }
+  await writable.close()
+}
+
+async function emitRunCancelledStep(p: { runId: string; reason: string }): Promise<void> {
+  'use step'
+  const writable = getWritable<UIMessageChunk>()
+  const writer = writable.getWriter()
+  try {
+    await writer.write({
+      type: 'data-run-cancelled',
+      id: `cancelled:${p.runId}`,
+      data: { run_id: p.runId, reason: p.reason },
     } as unknown as UIMessageChunk)
   } finally {
     writer.releaseLock()

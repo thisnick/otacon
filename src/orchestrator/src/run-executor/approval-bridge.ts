@@ -79,6 +79,29 @@ export type EscalationPayload = z.infer<typeof escalationSchema>
  */
 export const escalationHook = defineHook({ schema: escalationSchema })
 
+/**
+ * Cancel signal — workflow body races this hook against the agent loop
+ * so `POST /api/v1/runs/:id/cancel` can drive a clean shutdown that
+ * emits `data-run-cancelled` before the workflow exits. The route
+ * resolves the hook (via `resumeHook(cancelToken(runId), {reason})`)
+ * instead of calling `wfRun.cancel()` directly — that lets the body
+ * finish the current turn, write the terminal chunk to its own
+ * writable, then return cleanly.
+ *
+ * Token format: `cancel:${runId}` — one hook per run, created at
+ * workflow start. The body's main loop uses `Promise.race(...)` to
+ * detect cancellation between turns.
+ */
+export const cancelSchema = z.object({
+  reason: z.string().optional(),
+})
+export type CancelPayload = z.infer<typeof cancelSchema>
+export const cancelHook = defineHook({ schema: cancelSchema })
+
+export function cancelToken(runId: string): string {
+  return `cancel:${runId}`
+}
+
 export interface PersistSignalOpts {
   signalStore: SignalStore
   runId: string
