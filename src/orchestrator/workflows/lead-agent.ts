@@ -554,8 +554,15 @@ async function execBashStep(p: {
   const path = await import('node:path')
   const bash = await getSandbox({ runId: p.runId, accountId: p.accountId })
   const traceDir = path.resolve(blobRoot, 'runs', p.runId, 'traces', p.toolCallId)
+  // Forward toolCallId + rationale via env so the otacon-command wrapper
+  // (build-fs.ts) can emit data-phone-action chunks keyed to this
+  // tool call. OTACON_TRACE_DIR remains for any latent CLI captures.
   const result = await bash.exec(p.command, {
-    env: { OTACON_TRACE_DIR: traceDir },
+    env: {
+      OTACON_TRACE_DIR: traceDir,
+      OTACON_TOOL_CALL_ID: p.toolCallId,
+      OTACON_RATIONALE: p.rationale,
+    },
   })
 
   // Persist the raw bash result so external readers (CLI inspect, e2e

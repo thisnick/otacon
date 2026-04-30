@@ -1,23 +1,27 @@
 /**
  * `buildSandboxFs` — orchestrator-v2 sandbox builder.
  *
- * Same shape as `buildSandbox` (in `build.ts`) but operates against
- * `AllocationStore` (FS-backed) instead of the Drizzle service. The
- * legacy `buildSandbox` stays in place for the `agent run` (legacy
- * Drizzle path) until commit 10 deletes it.
- *
- * The two builders share `redactPhoneIdentifiers` + `isMutating` from
- * `build.ts` to avoid duplication.
+ * Wraps `defineCommand('otacon', ...)` so every mutating subcommand produces
+ * a `before/annotated/after` screenshot triplet (persisted via `BlobStore`)
+ * plus a `data-phone-action` posterity event on the workflow's writable
+ * stream. Read-only verbs (info, snapshot, screenshot, …) bypass the wrapper
+ * — no extra screenshots, no posterity event.
  */
 import { Bash, defineCommand, MountableFs, InMemoryFs } from 'just-bash'
 import { BlobBackedFs } from '../storage/blob-fs.js'
-import type { BlobStore } from '../storage/blob.js'
+import type { BlobStore } from '../storage/blob-store.js'
 import type { AllocationStore } from '../storage/allocation-store.js'
 import type { AllocationContext } from './allocation-context.js'
 import { OtaconClient } from 'otacon-cli/client'
 import { otaconRegistry } from 'otacon-cli/commands/otacon'
 import { buildAllocRegistryFs } from './alloc-commands-fs.js'
 import { redactPhoneIdentifiers } from './redact.js'
+import { annotateScreenshot, inferAnnotation } from './annotate.js'
+import {
+  buildScreenshotUrls,
+  emitPhoneAction,
+  type PhoneActionPayload,
+} from '../run-executor/posterity-events.js'
 
 interface SandboxFsOptions {
   blobStore: BlobStore
@@ -26,6 +30,10 @@ interface SandboxFsOptions {
   allocationStore: AllocationStore
   allocCtx: AllocationContext
 }
+
+const MUTATING_VERBS = new Set(
+  Object.entries(otaconRegistry).filter(([, spec]) => spec.isMutating).map(([k]) => k),
+)
 
 export async function buildSandboxFs(opts: SandboxFsOptions): Promise<Bash> {
   const { blobStore, accountId, runId, allocationStore, allocCtx } = opts
@@ -81,19 +89,108 @@ export async function buildSandboxFs(opts: SandboxFsOptions): Promise<Bash> {
         exitCode: 1,
       }
     }
-    const env: Record<string, string | undefined> = {}
+    const subprocessEnv: Record<string, string | undefined> = {}
     const traceDir = ctx.env.get('OTACON_TRACE_DIR')
-    if (traceDir) env.OTACON_TRACE_DIR = traceDir
+    if (traceDir) subprocessEnv.OTACON_TRACE_DIR = traceDir
 
+    const toolCallId = ctx.env.get('OTACON_TOOL_CALL_ID')
+    const rationale = ctx.env.get('OTACON_RATIONALE') ?? ''
+    const isMutating = MUTATING_VERBS.has(verb)
     const client = new OtaconClient(active.clientBaseUrl)
+
+    // Capture before-screenshot + annotated overlay for mutating verbs.
+    // Best-effort: capture failures don't block the command itself —
+    // the agent's task is to control the phone, not produce telemetry.
+    const startedAt = Date.now()
+    let beforeOk = false
+    let annotatedOk = false
+    let afterOk = false
+    if (isMutating && toolCallId) {
+      try {
+        // Snapshot first so refs (e5, etc.) resolve while bounds are
+        // still fresh — the action is about to mutate the screen.
+        let snapshot: unknown = null
+        try {
+          snapshot = await client.snapshot('json')
+        } catch {
+          /* swallow — annotation infer will fall back to text labels */
+        }
+
+        const beforeBytes = await client.screenshot()
+        await blobStore.putScreenshot(runId, toolCallId, 'before', beforeBytes)
+        beforeOk = true
+
+        const annotation = await inferAnnotation({
+          verb,
+          args: rest,
+          client,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          snapshot: snapshot as any,
+        })
+        if (annotation) {
+          const annotatedBytes = await annotateScreenshot(beforeBytes, annotation)
+          await blobStore.putScreenshot(runId, toolCallId, 'annotated', annotatedBytes)
+          annotatedOk = true
+        }
+      } catch (e) {
+        console.error(`[sandbox] before/annotated capture failed for ${verb} ${toolCallId}:`, e)
+      }
+    }
+
+    // Run the actual otacon subcommand.
+    let stdout = ''
+    let stderr = ''
+    let exitCode = 0
     try {
-      let out = await spec.run(rest, client, env)
+      let out = await spec.run(rest, client, subprocessEnv)
       out = redactPhoneIdentifiers(out)
-      return { stdout: out + (out.endsWith('\n') ? '' : '\n'), stderr: '', exitCode: 0 }
+      stdout = out + (out.endsWith('\n') ? '' : '\n')
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
-      return { stdout: '', stderr: `otacon ${verb}: ${msg}\n`, exitCode: 1 }
+      stderr = `otacon ${verb}: ${msg}\n`
+      exitCode = 1
     }
+
+    // After-screenshot for mutating verbs (regardless of exit code — the
+    // user wants to see the resulting state even on failures).
+    if (isMutating && toolCallId) {
+      try {
+        const afterBytes = await client.screenshot()
+        await blobStore.putScreenshot(runId, toolCallId, 'after', afterBytes)
+        afterOk = true
+      } catch (e) {
+        console.error(`[sandbox] after capture failed for ${verb} ${toolCallId}:`, e)
+      }
+    }
+
+    // Emit data-phone-action posterity chunk for mutating verbs. Best-
+    // effort: a chunk-emit failure shouldn't surface as a tool error.
+    if (isMutating && toolCallId) {
+      try {
+        const payload: PhoneActionPayload = {
+          tool_call_id: toolCallId,
+          command: ['otacon', verb, ...rest].join(' '),
+          subcommand: verb,
+          target: rest.join(' '),
+          rationale,
+          started_at: startedAt,
+          completed_at: Date.now(),
+          exit_code: exitCode,
+          stdout,
+          stderr,
+          screenshots: buildScreenshotUrls(runId, toolCallId, {
+            before: beforeOk,
+            annotated: annotatedOk,
+            after: afterOk,
+          }),
+        }
+        await emitPhoneAction(payload)
+      } catch (e) {
+        console.error(`[sandbox] emit data-phone-action failed for ${verb} ${toolCallId}:`, e)
+      }
+    }
+
+    return { stdout, stderr, exitCode }
   })
 
   const allocRegistry = buildAllocRegistryFs({ allocationStore, accountId, runId, allocCtx })

@@ -23,7 +23,6 @@
  * the same construction.
  */
 import type { Bash } from 'just-bash'
-import { LocalBlobStore } from '../storage/blob.js'
 import { buildSandboxFs } from '../sandbox/build-fs.js'
 import { AllocationContext } from '../sandbox/allocation-context.js'
 import { makeStores } from '../storage/factory.js'
@@ -50,14 +49,16 @@ export async function getSandbox(opts: {
 
 async function build(opts: { runId: string; accountId: string }): Promise<Bash> {
   const dataDir = process.env.ORCHESTRATOR_DATA_DIR ?? '.orchestrator-data'
-  const { allocationStore } = await makeStores({ dataDir })
-  const blobStore = new LocalBlobStore(blobRoot)
+  const stores = await makeStores({ dataDir })
   const allocCtx = new AllocationContext()
   return await buildSandboxFs({
-    blobStore,
+    // The sandbox FS adapter (BlobBackedFs) and the screenshot wrapper
+    // (putScreenshot) both want the BlobStoreFs that the factory builds —
+    // it carries the PathLayout that the trace-dir helpers need.
+    blobStore: stores.blobStore,
     accountId: opts.accountId,
     runId: opts.runId,
-    allocationStore,
+    allocationStore: stores.allocationStore,
     allocCtx,
   })
 }
