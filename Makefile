@@ -5,7 +5,7 @@
        clear-restrictions apply-restrictions \
        generate generate-api generate-types validate-api \
        registry-build registry-deploy registry-logs registry-restart \
-       admin-logs admin-restart admin-token
+       admin-logs admin-restart admin-token bootstrap-admin-token
 
 PI_HOST ?= otacon-pi
 PI_USER ?= nick
@@ -151,3 +151,6 @@ admin-restart:
 
 admin-token:
 	@ssh $(REGISTRY_SSH) 'cd ~/otacon-registry && docker compose logs otacon-admin 2>&1 | grep -A3 "BOOTSTRAP"'
+
+bootstrap-admin-token:
+	./scripts/bootstrap-admin-token.sh

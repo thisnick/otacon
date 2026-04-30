@@ -33,10 +33,17 @@ rsync -az docker-compose.registry.yml "${REMOTE}:${REMOTE_DIR}/docker-compose.ym
 # Write .env — pull TS auth key from local .env (only registry needs one)
 TS_AUTH_KEY_REGISTRY="${TS_AUTH_KEY_REGISTRY:-}"
 OTACON_ADMIN_USERS="${OTACON_ADMIN_USERS:-}"
+REGISTRY_BOOTSTRAP_ADMIN_TOKEN="${REGISTRY_BOOTSTRAP_ADMIN_TOKEN:-}"
 
 if [ -z "${TS_AUTH_KEY_REGISTRY}" ]; then
     if [ -f .env ]; then
         eval "$(grep -E '^TS_AUTH_KEY_REGISTRY=' .env 2>/dev/null || true)"
+    fi
+fi
+
+if [ -z "${REGISTRY_BOOTSTRAP_ADMIN_TOKEN}" ]; then
+    if [ -f .env ]; then
+        eval "$(grep -E '^REGISTRY_BOOTSTRAP_ADMIN_TOKEN=' .env 2>/dev/null || true)"
     fi
 fi
 
@@ -48,6 +55,7 @@ ssh "${REMOTE}" "cat > ${REMOTE_DIR}/.env" <<EOF
 TS_AUTH_KEY_REGISTRY=${TS_AUTH_KEY_REGISTRY}
 OTACON_REPO=${OTACON_REPO:-otacon-dev}
 OTACON_ADMIN_USERS=${OTACON_ADMIN_USERS}
+REGISTRY_BOOTSTRAP_ADMIN_TOKEN=${REGISTRY_BOOTSTRAP_ADMIN_TOKEN}
 EOF
 
 # Pull and start
