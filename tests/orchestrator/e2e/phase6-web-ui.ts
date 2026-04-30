@@ -2,7 +2,7 @@
  * Phase 6 sign-off e2e: Vite + React + WorkflowAgent web UI v2.
  *
  * Authoritative test for the orchestrator-v2 Phase 6 verification checklist
- * (per docs/orchestrator-v2-plan.md "Phase 6 — Web UI v2" + task #16).
+ * (per docs/orchestrator-v2-plan.md "Phase 6 — Web UI v2" + task #2).
  *
  * What this drives end-to-end (real Chromium via Playwright):
  *
@@ -12,43 +12,55 @@
  *          * NO "[DONE]" parse error
  *          * NO SSE error
  *          * NO React hydration error
- *          * NO chunk-type-mismatch warnings
+ *          * NO chunk-type-mismatch warnings (v6 vs v7: tool-call/tool-result
+ *            replaced by tool-input-{start,delta,available} + tool-output-available)
  *
  *   2. Live streaming via useChat
  *      - Kick off canonical XHS scroll scenario on phone-4
- *      - Browser updates live as chunks arrive (text accumulates,
- *        tool cards appear in real time)
+ *      - Browser updates live as chunks arrive (text accumulates in
+ *        assistant-message, tool-call-card cards appear in real time)
+ *      - Run reaches data-run-completed
  *
  *   3. Approval-from-UI via addToolApprovalResponse
  *      - --require-approval scenario (mutating action requires approval)
- *      - data-testid="approval-card" appears in the DOM
+ *      - data-testid="approval-card" appears in the DOM (AI SDK UI Elements
+ *        primitive, NOT old custom signal card)
  *      - Click data-testid="approval-approve"
  *      - Run resumes (next chunks arrive) and reaches data-run-completed
  *
  *   4. data-phone-action cards render
  *      - data-testid="phone-action-card" present after a phone action
  *      - 3 thumbnails: data-testid="phone-action-thumb-{before,annotated,after}"
- *      - Modal navigation works (click thumb → enlarged modal)
+ *      - Modal navigation works (click thumb → enlarged modal w/ prev/next)
  *
- *   5. Durability across server restart
+ *   5. Durability across server restart (CRITICAL)
  *      - Run paused at approval (mutating action with --require-approval)
  *      - Kill orchestrator process
  *      - Restart orchestrator on same data dir
- *      - Refresh browser tab → approval card still visible (RunStore persisted)
- *      - Click Approve → run resumes → reaches data-run-completed
- *      - CRITICAL: proves the migration didn't lose durable suspension
+ *      - Refresh browser tab → approval card still visible (RunStore.messages
+ *        persisted; conversation-as-durable-store)
+ *      - Click Approve → POST /messages with updated history → fresh workflow
+ *        run continues → reaches data-run-completed
+ *      - CRITICAL: proves the WorkflowAgent migration didn't lose durable
+ *        suspension. Mechanism per task #1 locked decisions: under
+ *        WorkflowAgent + needsApproval, when model emits tool-approval-request
+ *        the workflow run terminates and state lives in conversation history.
+ *        Observable behavior identical to P3 hook-suspension version.
  *
- *   6. CLI parity
- *      - `pnpm orchestrator runs create --account xhs:test --team ... --prompt ...`
- *        exits 0
+ *   6. CLI parity (NO --prompt flag — browser-only entry)
+ *      - `pnpm orchestrator runs create --account xhs:test --team ...` exits 0
  *      - stdout matches https?://.* /runs/[A-Z0-9]+
  *      - GET on the printed URL returns 200 HTML with React root
  *      - GET /api/v1/runs/<id> returns 200 JSON with status created|running
  *
  *   7. Regressions (run as part of pnpm test:e2e:phase{1,2,3,5})
  *      - phase1, phase2, phase3, phase5 still green against P6 commits
+ *      - Phase 4 was superseded by P6 (no regression run needed)
  *      - This script does NOT re-run them inline; the evaluator runs them
  *        separately and includes outputs in sign-off task update.
+ *      - If chunk-type assertions in earlier phases fail because P6 changed
+ *        shapes (v7 cascading renames), evaluator files observed-vs-expected;
+ *        implementer fixes (do NOT investigate root cause).
  *
  * Hardware required:
  *   - phone-4 reachable via $OTACON_REGISTRY_URL with $OTACON_TOKEN
@@ -68,18 +80,27 @@
  * (see feedback_team_roles.md).
  *
  * ============================================================================
- * STATUS: SKELETON — assertions stubbed pending implementer-2 handoff on #15.
+ * STATUS: SKELETON — assertions stubbed pending P6-I (task #1) handoff.
  * ============================================================================
  *
  * The scenarios below are stubbed with TODO markers. Each TODO references
- * which P6-E assertion it covers. Selectors use the data-testid contract
- * agreed with team-lead:
- *   - approval-card / approval-approve / approval-deny / approval-skip
- *   - phone-action-card / phone-action-thumb-{before,annotated,after}
- *   - runs-list-row / new-run-button (TBD by implementer)
+ * which P6-E assertion (#1-#7) it covers. Selectors use the data-testid
+ * contract locked in task #2 — implementer is committed to baking in:
+ *   - runs-list-root, runs-list-row (with data-run-id={id})
+ *   - new-run-button, new-run-modal, new-run-prompt-input,
+ *     new-run-account-select, new-run-team-select, new-run-submit
+ *   - assistant-message, tool-call-card, run-status, run-final-text
+ *   - approval-card, approval-approve, approval-deny, approval-skip
+ *   - phone-action-card, phone-action-thumb-{before,annotated,after}
  *
- * Implementer must confirm route shape (`/runs/:id` per lead) and that
- * data-testids are baked in before assertions can be written.
+ * Routes (locked in task #1):
+ *   - POST /api/v1/runs                                              (create run)
+ *   - POST /api/v1/runs/:id/messages                                 (send message)
+ *   - GET  /api/v1/runs/:id/messages/:workflowRunId/stream?startIndex=N (resume)
+ *   - POST /api/v1/runs/:id/cancel                                   (cancel)
+ *
+ * If implementer ships without these testids OR without the routes locked,
+ * file feedback via TaskUpdate observed-vs-expected; do NOT debug.
  */
 import { spawnSync } from 'node:child_process'
 import * as fs from 'node:fs'
@@ -351,9 +372,8 @@ async function scenario1StaticLoad(): Promise<void> {
 
   if (!ctx.server) throw new Error('server not initialized')
 
-  // TODO[#16-1]: Resolve runs-list URL from implementer handoff.
-  // Plan + lead say: production-parity, served by Nitro at :9090.
-  // Default route is /, but await implementer confirmation.
+  // P6-E #1: production-parity — Nitro at :9090 serving built static/dist/.
+  // Default route is `/` (runs list). Implementer must confirm at handoff.
   const runsListUrl = `${ctx.server.baseUrl}/`
 
   const page = await newPage()
@@ -369,14 +389,10 @@ async function scenario1StaticLoad(): Promise<void> {
 
   assert(response?.status() === 200, `GET ${runsListUrl} returns 200 (got ${response?.status()})`)
 
-  // TODO[#16-1]: confirm root selector with implementer. Likely #root
-  // (Vite default) or [data-app="orchestrator-web-v2"].
-  // assert(await page.locator('#root').count() > 0, '#root mounted')
-
-  // TODO[#16-1]: confirm runs-list testid. Likely data-testid="runs-list".
-  // const runsList = page.locator('[data-testid="runs-list"]')
-  // await runsList.waitFor({ state: 'visible', timeout: 10_000 }).catch(() => {})
-  // assert(await runsList.isVisible(), 'runs-list rendered')
+  // P6-E #1: confirm runs-list-root mounted (locked testid contract).
+  // const runsListRoot = page.locator('[data-testid="runs-list-root"]')
+  // await runsListRoot.waitFor({ state: 'visible', timeout: 10_000 }).catch(() => {})
+  // assert(await runsListRoot.isVisible(), 'runs-list-root rendered')
 
   // Forbidden console errors check
   const forbidden = findForbiddenErrors(ctx.consoleErrors)
@@ -402,9 +418,10 @@ async function scenario2LiveStreaming(): Promise<void> {
 
   if (!ctx.server) throw new Error('server not initialized')
 
-  // TODO[#16-2]: Start a run (POST /api/v1/runs OR via the new-run modal in
-  // the UI — implementer handoff will tell us which path is canonical).
-  // For now use the API directly and then navigate to /runs/:id.
+  // P6-E #2: Start a run via UI (new-run modal) OR via API. Handoff will
+  // confirm which path is canonical. For now use the API path so the test
+  // is decoupled from modal behavior (modal is exercised in scenario 6's
+  // CLI parity, which uses the same POST under the hood).
   const startResp = await startRun({
     baseUrl: ctx.server.baseUrl,
     account: ACCOUNT_ID,
@@ -422,27 +439,29 @@ async function scenario2LiveStreaming(): Promise<void> {
     info(`page.goto ${runUrl} threw: ${(e as Error).message}`)
   }
 
-  // TODO[#16-2]: assert text accumulates. Pattern:
-  //   - poll an assistant-message locator for innerText length growth
-  //   - require length increased over N samples (proves streaming, not
-  //     a single batched render)
-  //   - poll until first tool card appears (data-testid TBD by implementer
-  //     — likely "tool-call-card" or AI SDK UI Element <Tool>)
-  //
-  // Pseudocode:
+  // P6-E #2: assert text accumulates + tool-call-card appears.
+  // Pseudocode using locked testids:
   //   const messages = page.locator('[data-testid="assistant-message"]')
+  //   const toolCards = page.locator('[data-testid="tool-call-card"]')
   //   let lastLen = 0
-  //   for (let i = 0; i < 60; i++) {
-  //     const text = await messages.innerText().catch(() => '')
-  //     if (text.length > lastLen + 10) lastLen = text.length
+  //   let lengthGrew = false
+  //   for (let i = 0; i < STREAMING_TIMEOUT_MS / 1000; i++) {
+  //     const text = await messages.first().innerText().catch(() => '')
+  //     if (text.length > lastLen + 10) { lastLen = text.length; lengthGrew = true }
+  //     if (await toolCards.count() > 0 && lengthGrew) break
   //     await page.waitForTimeout(1000)
   //   }
-  //   assert(lastLen > 0, 'assistant message accumulated > 0 chars')
+  //   assert(lastLen > 0, 'assistant-message accumulated > 0 chars')
+  //   assert(lengthGrew, 'assistant-message length grew across samples (streaming, not batched)')
+  //   assert(await toolCards.count() > 0, 'at least one tool-call-card rendered')
   //
-  // Plus: poll API in background to confirm run reaches data-run-completed.
-  // The Phase 5 false-pass lesson — verify actual work happened, not just
-  // status=completed. So also assert turnCount > 0 + finalText non-empty
-  // from run.json after the run finishes.
+  // Then wait for run to reach completion via run-status testid:
+  //   await page.locator('[data-testid="run-status"]').filter({ hasText: 'completed' }).waitFor(...)
+  //
+  // Phase 5 false-pass lesson: ALSO verify actual work happened by reading
+  // run.json from disk + asserting turnCount > 0 + finalText non-empty +
+  // expected v7 chunk types (tool-input-{start,delta,available} +
+  // tool-output-available) appear in the chunk log.
 
   info(`(stub) live streaming assertions pending implementer handoff`)
   // Cancel the run to keep the test-suite teardown fast.
@@ -464,20 +483,27 @@ async function scenario3ApprovalFromUI(): Promise<void> {
 
   if (!ctx.server) throw new Error('server not initialized')
 
-  // TODO[#16-3]: Start run. Approval is now driven by the bash tool's
-  // needsApproval predicate (mutating actions). The PROMPT_APPROVAL prompt
-  // ("tap any feed item") triggers a mutating tap, which suspends.
+  // P6-E #3: Start run. Approval driven by bash tool's needsApproval predicate
+  // (mutating actions). PROMPT_APPROVAL ("tap any feed item") triggers a
+  // mutating tap → workflow run terminates → conversation history holds the
+  // tool-approval-request. UI's useChat surfaces this via approval-card.
   //
   // 1. POST /api/v1/runs → runId
   // 2. Navigate to /runs/:id
   // 3. Wait for [data-testid="approval-card"] to appear
   // 4. Verify it contains the tool args (e.g., the bash command preview)
   // 5. Click [data-testid="approval-approve"]
+  //    → useChat.addToolApprovalResponse(...) adds tool-approval-response
+  //      to messages, then POST /api/v1/runs/:id/messages with full history.
+  //      Server's WorkflowAgent collects approvals via
+  //      collectToolApprovalsFromMessages → fresh workflow run continues.
   // 6. Assert subsequent chunks arrive and run reaches data-run-completed
-  // 7. Verify run.json: status=completed, turnCount > 0, finalText non-empty
+  //    (poll [data-testid="run-status"]).
+  // 7. Verify run.json: status=completed, turnCount > 0, finalText non-empty.
+  //    Phase 5 false-pass lesson — completion alone isn't enough.
   //
-  // Selectors per data-testid contract confirmed by lead:
-  //   - approval-card (container)
+  // Locked testids:
+  //   - approval-card (container — AI SDK UI Elements primitive, NOT old custom signal card)
   //   - approval-approve / approval-deny / approval-skip (buttons)
 
   info(`(stub) approval-from-UI assertions pending implementer handoff`)
@@ -494,26 +520,27 @@ async function scenario4PhoneActionCards(): Promise<void> {
 
   if (!ctx.server) throw new Error('server not initialized')
 
-  // TODO[#16-4]: Run a scenario that produces a phone-action chunk
-  // (any mutating tap). The auto-screenshot wrapper (src/sandbox/build-fs.ts
-  // from P2) emits data-phone-action with before/annotated/after URLs.
+  // P6-E #4: Run a scenario that produces a phone-action chunk (any
+  // mutating tap). The auto-screenshot wrapper (src/sandbox/build-fs.ts from
+  // P2) emits data-phone-action chunks (now via DATA namespace per task #1
+  // locked decision) with before/annotated/after URLs.
   //
-  // Assertions:
+  // This scenario can piggyback on the approval scenario's run (after
+  // approving a mutating tap, the action emits data-phone-action). To keep
+  // assertions independent, kick off a fresh run here and wait for
+  // phone-action-card to appear.
+  //
+  // Assertions (locked testids):
   //   - [data-testid="phone-action-card"] count >= 1
-  //   - Inside each: [data-testid="phone-action-thumb-before"],
-  //                  [data-testid="phone-action-thumb-annotated"],
-  //                  [data-testid="phone-action-thumb-after"]
+  //   - Inside each:
+  //       [data-testid="phone-action-thumb-before"]
+  //       [data-testid="phone-action-thumb-annotated"]
+  //       [data-testid="phone-action-thumb-after"]
   //     are all <img> tags with non-empty src
-  //   - Click thumb-before → modal appears (data-testid="phone-action-modal")
-  //     with the same image enlarged
-  //   - Modal navigation: arrow keys / next/prev buttons cycle through the
-  //     three images
+  //   - Click thumb-before → modal appears (modal testid TBD by implementer
+  //     — not in locked contract, ask at handoff)
+  //   - Modal navigation: prev/next buttons cycle through the three images
   //   - Click outside modal / press Escape → modal closes
-  //
-  // Selectors per data-testid contract confirmed by lead:
-  //   - phone-action-card
-  //   - phone-action-thumb-before / -annotated / -after
-  //   - phone-action-modal (TBD with implementer; not in lead's listed contract)
 
   info(`(stub) phone-action card assertions pending implementer handoff`)
 }
@@ -528,31 +555,35 @@ async function scenario4PhoneActionCards(): Promise<void> {
 async function scenario5DurabilityAcrossRestart(): Promise<void> {
   section('5. Durability across server restart (CRITICAL)')
 
-  // TODO[#16-5]: This scenario uses its own fresh tmpDir + server instance
-  // because we kill + restart mid-run. Pattern:
+  // P6-E #5 (CRITICAL): own fresh tmpDir + server because we kill + restart
+  // mid-run. Pattern:
   //
-  //   1. Spawn server v1 on tmpDir-d (fresh)
-  //   2. Bootstrap (seed + add-account) inline OR reuse global tmpDir
+  //   1. Spawn server v1 on a fresh tmpDir-d
+  //   2. Bootstrap inline (seed-team + add-account)
   //   3. Open browser, POST /api/v1/runs, navigate to /runs/:id
   //   4. Wait for [data-testid="approval-card"] to appear
-  //   5. server.kill() (SIGTERM, then SIGKILL)
-  //   6. Verify GET /runs/:id is unreachable (server is dead)
-  //   7. Spawn server v2 on the SAME tmpDir (same data dir = persisted state)
-  //   8. Wait for server ready
-  //   9. Refresh browser tab (page.reload())
-  //  10. Verify approval-card is STILL present after reload — proves
-  //      the run's pre-approval state was persisted via RunStore +
-  //      messages history (per lead semantic note: WorkflowAgent +
-  //      needsApproval terminates the workflow run at approval; state
-  //      lives in conversation history, not in a suspended workflow).
+  //   5. server.kill() (SIGTERM, then SIGKILL after grace)
+  //   6. Verify GET /runs/:id is unreachable (server v1 dead)
+  //   7. Spawn server v2 on the SAME tmpDir-d (same data dir = persisted
+  //      RunStore.messages with the tool-approval-request in history)
+  //   8. Wait for server v2 ready
+  //   9. Refresh browser (page.reload()) — useChat re-fetches messages from
+  //      RunStore via initial GET, sees the tool-approval-request, renders
+  //      approval-card again.
+  //  10. Verify approval-card is STILL present after reload.
+  //      Per task #1 locked decision: under WorkflowAgent + needsApproval,
+  //      the workflow run terminates at approval; state lives in conversation
+  //      history (RunStore.messages). Restart-then-approve = POST /messages
+  //      with updated history → fresh workflow run continues.
   //  11. Click [data-testid="approval-approve"]
-  //  12. Wait for run to reach data-run-completed (poll API)
+  //  12. Wait for [data-testid="run-status"] = completed
   //  13. Assert run.json: status=completed, turnCount > 0, finalText non-empty
-  //  14. Cleanup the second server
+  //      (Phase 5 false-pass lesson)
+  //  14. Cleanup the second server (first was killed in step 5)
   //
-  // This is the CRITICAL scenario — proves the migration preserved
-  // durable approval suspension. Phase 3 had it via signal hooks; P6
-  // does it via WorkflowAgent's terminate-and-resume conversation model.
+  // This is the CRITICAL scenario — proves the migration preserved durable
+  // approval suspension. Phase 3 had it via signal hooks; P6 does it via
+  // WorkflowAgent's terminate-and-resume conversation model.
 
   info(`(stub) durability-across-restart assertions pending implementer handoff`)
 }
@@ -568,7 +599,8 @@ async function scenario6CliParity(): Promise<void> {
 
   if (!ctx.server) throw new Error('server not initialized')
 
-  // TODO[#16-6]: per lead answer: command is `runs create`, asserts:
+  // P6-E #6: command is `runs create`. NOTE: NO --prompt flag — browser-only
+  // entry per locked CLI surface in task #1 (C4). Asserts:
   //   - exit 0
   //   - stdout matches https?://.* /runs/[A-Z0-9]+
   //   - GET on the URL returns 200 HTML containing React root
@@ -579,7 +611,6 @@ async function scenario6CliParity(): Promise<void> {
   //     'runs', 'create',
   //     '--account', ACCOUNT_ID,
   //     '--team', TEAM_NAME,
-  //     '--prompt', PROMPT_STREAMING,
   //   ], { ORCHESTRATOR_DATA_DIR: ctx.tmpDir })
   //   assert(result.status === 0, 'runs create exits 0')
   //   const urlMatch = result.stdout.match(/https?:\/\/\S*\/runs\/([A-Z0-9]+)/)
@@ -595,7 +626,10 @@ async function scenario6CliParity(): Promise<void> {
   //   const apiBody = await apiRes.json()
   //   assert(['created', 'running'].includes(apiBody.status), `run status is created|running (got ${apiBody.status})`)
   //
-  // Cancel the run after asserting to keep teardown fast.
+  // Note: with no --prompt, the run is created in a "draft" state — user
+  // sends the first prompt via the UI's chat input. Confirm with implementer
+  // whether `runs create` produces a run that's immediately runnable or one
+  // that requires a follow-up POST /messages from the UI.
 
   info(`(stub) CLI parity assertions pending implementer handoff`)
 }
