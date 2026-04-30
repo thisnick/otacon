@@ -1,6 +1,6 @@
 {
   "name": "otacon-orchestrator",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "orchestrator": "node --no-warnings --import tsx/esm src/index.ts",
@@ -14,20 +14,16 @@
     "test:e2e:smoke": "tsx ../../tests/orchestrator/e2e/test-workflow-smoke.ts",
     "test:e2e:approval-flow": "tsx ../../tests/orchestrator/e2e/test-approval-flow.ts",
     "test:e2e:failure-flow": "tsx ../../tests/orchestrator/e2e/test-failure-flow.ts",
-    "test:e2e:phase1": "tsx ../../tests/orchestrator/e2e/phase1-xhs-scroll.ts",
-    "db:generate": "npx drizzle-kit generate",
-    "db:migrate": "npx tsx src/db/migrate.ts"
+    "test:e2e:phase1": "tsx ../../tests/orchestrator/e2e/phase1-xhs-scroll.ts"
   },
   "dependencies": {
     "@ai-sdk/gateway": "^3.0.0",
-    "@neondatabase/serverless": "^1.0.0",
     "@workflow/ai": "^4.1.0",
     "@workflow/core": "^4.2.4",
     "@workflow/world-local": "^4.1.0",
     "ai": "7.0.0-beta.111",
     "commander": "^13.0.0",
     "dotenv": "^16.4.0",
-    "drizzle-orm": "^0.40.0",
     "h3": "2.0.1-rc.5",
     "just-bash": "^2.14.0",
     "nitro": "3.0.1-alpha.1",
@@ -40,7 +36,6 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "drizzle-kit": "^0.31.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"
   }

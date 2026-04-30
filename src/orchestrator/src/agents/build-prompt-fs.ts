@@ -13,7 +13,9 @@
  */
 import type { TeamStore } from '../storage/team-store.js'
 import { otaconRegistry } from 'otacon-cli/commands/otacon'
-import { buildAllocRegistry } from '../sandbox/alloc-commands.js'
+import { buildAllocRegistryFs } from '../sandbox/alloc-commands-fs.js'
+import type { AllocationStore } from '../storage/allocation-store.js'
+import type { AllocationContext } from '../sandbox/allocation-context.js'
 
 export interface BuildPromptOpts {
   teamStore: TeamStore
@@ -81,12 +83,19 @@ function buildToolReference(): string {
   lines.push('Manage the lease that grants the agent phone access.')
   lines.push('')
   // Build a placeholder alloc registry just to read names/descriptions —
-  // no DB / accountId needed for static metadata.
-  const placeholder = buildAllocRegistry({
-    db: null as unknown as Parameters<typeof buildAllocRegistry>[0]['db'],
+  // no AllocationStore / accountId needed for static metadata. We pass
+  // null casts because nothing actually executes here; we only enumerate
+  // each spec's `name`, `description`, `usage`, and `examples`.
+  const placeholder = buildAllocRegistryFs({
+    allocationStore: null as unknown as AllocationStore,
     accountId: '',
-    conversationId: '',
-    allocCtx: { peek: () => null, get: () => null, set: () => undefined, clear: () => undefined } as unknown as Parameters<typeof buildAllocRegistry>[0]['allocCtx'],
+    runId: '',
+    allocCtx: {
+      peek: () => null,
+      get: () => null,
+      set: () => undefined,
+      clear: () => undefined,
+    } as unknown as AllocationContext,
   })
   for (const name of Object.keys(placeholder).sort()) {
     const spec = placeholder[name]

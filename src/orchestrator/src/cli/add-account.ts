@@ -1,22 +1,14 @@
 /**
- * `service add-account` — register a new account.
+ * `service add-account` — register a new account in the FS-backed
+ * AccountStore.
  *
- * During the orchestrator-v2 migration, this command writes to BOTH backends:
- *   - the existing Drizzle `accounts` + `account_credentials` tables (kept
- *     so the legacy team-runner / inspect / allocations flow keeps working)
- *   - the FS-backed AccountStore at ${ORCHESTRATOR_DATA_DIR}/accounts/<id>/
- *
- * Once all legacy callers (team-runner, allocations, inspect, logs, status)
- * are migrated to AccountStore, the Drizzle writes go away.
- *
- * The AccountStore write also bootstraps placeholder env files
- * (`env/persona.md`, `env/soul.md`, `env/agents.md`) for the agent's
- * read-only mounts. Existing files are NOT overwritten — re-running
- * `add-account` over an account whose env was edited preserves the edits.
+ * Writes to `${ORCHESTRATOR_DATA_DIR}/accounts/<id>/` :
+ *   - `account.json`
+ *   - `credentials.json`
+ *   - `env/{persona,soul,agents}.md` placeholders (only if missing —
+ *      re-running preserves user edits)
+ *   - `workspace/` (mountpoint for the agent sandbox)
  */
-import { ulid } from 'ulid'
-import type { Db } from '../db/client.js'
-import { accounts, accountCredentials } from '../db/schema.js'
 import { makeStores } from '../storage/factory.js'
 import type { AccountStore } from '../storage/account-store.js'
 
@@ -48,44 +40,14 @@ export async function addAccountCommand(opts: {
   id: string
   phoneNumber?: string
   email?: string
-  db: Db
   dataDir?: string
 }) {
-  const { id, phoneNumber, email, db } = opts
+  const { id, phoneNumber, email } = opts
 
   if (!phoneNumber && !email) {
     throw new Error('At least one credential required: --phone-number or --email')
   }
 
-  // 1. Drizzle writes (legacy path; team-runner / allocations / inspect read here)
-  await db.insert(accounts).values({
-    id,
-    accountType: 'xhs',
-    status: 'active',
-    config: {},
-  }).onConflictDoNothing()
-
-  if (phoneNumber) {
-    await db.insert(accountCredentials).values({
-      id: ulid(),
-      accountId: id,
-      credentialType: 'phone',
-      identifier: phoneNumber,
-      isPrimary: true,
-    }).onConflictDoNothing()
-  }
-
-  if (email) {
-    await db.insert(accountCredentials).values({
-      id: ulid(),
-      accountId: id,
-      credentialType: 'email',
-      identifier: email,
-      isPrimary: !phoneNumber,
-    }).onConflictDoNothing()
-  }
-
-  // 2. FS writes (AccountStore — what the orchestrator-v2 server will read)
   const dataDir = opts.dataDir ?? process.env.ORCHESTRATOR_DATA_DIR ?? '.orchestrator-data'
   const { accountStore } = await makeStores({ dataDir })
   await accountStore.create({ id, accountType: 'xhs' })

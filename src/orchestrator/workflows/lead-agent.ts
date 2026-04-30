@@ -516,7 +516,7 @@ async function persistSignalForEscalateStep(p: {
  */
 async function isMutatingStep(command: string): Promise<boolean> {
   'use step'
-  const { isMutating } = await import('../src/sandbox/build.js')
+  const { isMutating } = await import('../src/sandbox/mutating.js')
   return isMutating(command)
 }
 

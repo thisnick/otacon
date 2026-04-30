@@ -17,9 +17,7 @@ import type { AllocationContext } from './allocation-context.js'
 import { OtaconClient } from 'otacon-cli/client'
 import { otaconRegistry } from 'otacon-cli/commands/otacon'
 import { buildAllocRegistryFs } from './alloc-commands-fs.js'
-import { redactPhoneIdentifiers, otaconRegistry as legacyOtaconRegistry } from './build.js'
-
-void legacyOtaconRegistry // keep build.ts as the canonical export
+import { redactPhoneIdentifiers } from './redact.js'
 
 interface SandboxFsOptions {
   blobStore: BlobStore
