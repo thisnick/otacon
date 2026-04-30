@@ -76,8 +76,10 @@ ssh "${REMOTE}" "sudo mkdir -p ${REMOTE_DIR} && sudo chown ${SSH_USER}:${SSH_USE
 rsync -az docker-compose.orchestrator.yml "${REMOTE}:${REMOTE_DIR}/docker-compose.yml"
 
 # Write .env on the remote. Cloud-init pre-populates this on first
-# boot but each deploy refreshes it so secret rotations land cleanly.
-ssh "${REMOTE}" "cat > ${REMOTE_DIR}/.env" <<EOF
+# boot (root-owned) but each deploy refreshes it so secret rotations
+# land cleanly. Use sudo + tee since the file may be root-owned from
+# the cloud-init write_files step.
+ssh "${REMOTE}" "sudo tee ${REMOTE_DIR}/.env > /dev/null && sudo chmod 600 ${REMOTE_DIR}/.env" <<EOF
 OTACON_REPO=${OTACON_REPO:-otacon-dev}
 OTACON_REGISTRY_URL=${OTACON_REGISTRY_URL:-https://otacon-registry.tail0437b8.ts.net:9080}
 OTACON_TOKEN=${OTACON_TOKEN}
@@ -89,9 +91,10 @@ ORCHESTRATOR_PORT=9090
 EOF
 
 # Pull + restart. `docker compose up -d` is a no-op when nothing
-# changed; safe to run on every deploy.
+# changed; safe to run on every deploy. sudo because /opt/orchestrator/
+# .env is root-owned (mode 600) since cloud-init wrote it.
 echo "Pulling images and (re)starting services..."
-ssh "${REMOTE}" "cd ${REMOTE_DIR} && docker compose pull && docker compose up -d"
+ssh "${REMOTE}" "cd ${REMOTE_DIR} && sudo docker compose pull && sudo docker compose up -d"
 
 echo
 echo "=== Orchestrator deployed ==="
