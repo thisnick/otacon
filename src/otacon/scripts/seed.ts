@@ -34,7 +34,7 @@ const SEED_TEAM: Team = {
     {
       role: 'engagement-lead',
       promptFile: 'lead.md',
-      model: 'claude-sonnet-4-6',
+      model: 'anthropic/claude-sonnet-4.6',
     },
   ],
 }

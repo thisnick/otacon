@@ -98,10 +98,10 @@ export async function runSession(opts: RunOpts): Promise<RunResult> {
   const leadAgent = team.agents.find(a => a.role === agentRole)
   if (!leadAgent) throw new Error(`team "${opts.teamName}" has no agent matching lead role "${agentRole}"`)
 
-  // Spike model resolution: leadAgent.model is e.g. "claude-sonnet-4-6";
-  // the provider defaults to "anthropic" unless overridden. Future task
-  // is a richer model spec format.
-  const provider = opts.modelProvider ?? 'anthropic'
+  // Spike model resolution: leadAgent.model is a Gateway-resolvable id
+  // like "anthropic/claude-sonnet-4.6"; provider defaults to
+  // "vercel-ai-gateway" (reads AI_GATEWAY_API_KEY) unless overridden.
+  const provider = opts.modelProvider ?? 'vercel-ai-gateway'
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const model = getModel(provider as any, leadAgent.model as any)
 

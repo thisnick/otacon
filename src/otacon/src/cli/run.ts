@@ -29,7 +29,7 @@ export function registerRun(program: Command): void {
     .option('--auto-approve', 'Auto-approve every mutating bash call (no TTY prompt).')
     .option('--auto-reject', 'Auto-reject every mutating bash call (for testing).')
     .option('--open-screenshots', 'Open annotated.png in macOS Preview after each phone action.')
-    .option('--model-provider <id>', 'Model provider id (default: anthropic).')
+    .option('--model-provider <id>', 'Model provider id (default: vercel-ai-gateway).')
     .option('--phone <url>', 'OtaconClient base URL for the phone (e.g. https://otacon-pi.tail0437b8.ts.net/phones/phone-r5ct60sd).')
     .argument('<message...>', 'User message (text). Joined with spaces.')
     .action(async (messageWords: string[], optsRaw: RunCommandOpts) => {
