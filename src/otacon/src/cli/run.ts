@@ -15,7 +15,7 @@ export interface RunCommandOpts {
   autoReject?: boolean
   openScreenshots?: boolean
   modelProvider?: string
-  phoneClientBaseUrl?: string
+  phone?: string
 }
 
 export function registerRun(program: Command): void {
@@ -47,7 +47,7 @@ export function registerRun(program: Command): void {
         resume,
         userMessage: message,
         modelProvider: optsRaw.modelProvider,
-        phoneClientBaseUrl: optsRaw.phoneClientBaseUrl,
+        phoneClientBaseUrl: optsRaw.phone,
         openScreenshots: optsRaw.openScreenshots,
         autoApprove: optsRaw.autoApprove,
         autoReject: optsRaw.autoReject,

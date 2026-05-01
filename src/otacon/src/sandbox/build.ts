@@ -168,11 +168,20 @@ export function buildBash(opts: BuildBashOpts): Bash {
 
   // Spike: no allocation system. The phone is bound at session start via
   // getClientBaseUrl() — the `provision` flow will be added when the
-  // multi-phone story matters.
+  // multi-phone story matters. `provision` reports the actual binding
+  // state so the agent isn't misled when no phone is wired.
   const otaconAllocCmd = defineCommand('otacon-alloc', async (args) => {
     const [verb] = args
     if (verb === 'provision') {
-      return { stdout: 'phone bound at session start (spike — no real allocation)\n', stderr: '', exitCode: 0 }
+      const baseUrl = opts.getClientBaseUrl()
+      if (!baseUrl) {
+        return {
+          stdout: '',
+          stderr: 'NO_PHONE: no phone bound to this session. Re-run with --phone <url>.\n',
+          exitCode: 1,
+        }
+      }
+      return { stdout: `phone bound at session start (spike — no real allocation): ${baseUrl}\n`, stderr: '', exitCode: 0 }
     }
     return {
       stdout: '',
