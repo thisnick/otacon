@@ -1,35 +1,37 @@
 /**
  * Pi-spike S3 — Force new session via --new.
  *
- * Authoritative test for task #4 scenario S3. Verifies that `--new` overrides
- * the resume-by-default behavior: a fresh session id is allocated, a new
- * sessions/{id}/ dir is created, last-session.txt is updated to point at the
- * new id, and the OLD session's files are unchanged.
+ * Authoritative test for task #4 scenario S3.
  *
- * Pre-condition: S1 has run (or an equivalent first pass populates the data
- * dir). Then re-run with `--new` and assert:
+ * Pre-condition: a first run has populated `last-session.txt`. Then re-run
+ * with `--new` and assert:
+ *
  *   - New session id (different from the original)
  *   - sessions/ dir now has TWO session subdirs
  *   - last-session.txt updated to the new id
- *   - Old session's messages.jsonl + events.jsonl are byte-identical to the
- *     pre-second-run snapshot (proves --new doesn't accidentally append to
- *     the old session)
- *
- * Hardware: phone-4 + XHS canonical.
- *
- * STATUS: SKELETON — assertions stubbed pending implementer (#3) handoff.
+ *   - Old session's messages.jsonl + events.jsonl are byte-identical to
+ *     pre-second-run snapshot (proves --new doesn't append to the old
+ *     session)
  *
  * Run:
  *   pnpm test:e2e:spike-pi:s3
  */
+import * as fs from 'node:fs'
+import * as path from 'node:path'
 import {
-  bootstrapTODO,
+  assert,
   cleanupFixture,
+  exitFromCounters,
   info,
+  listSessionIds,
   makeCounters,
   makeFixture,
+  readLastSessionId,
+  resolvePhoneBaseUrl,
+  runOtaconRun,
   section,
-  skeletonExit,
+  seedSpike,
+  sessionDirOf,
   summary,
 } from './helpers/spike.js'
 
@@ -48,30 +50,83 @@ async function main(): Promise<void> {
   console.log(`dataDir = ${fix.dataDir}`)
 
   try {
-    section('0. Bootstrap')
-    bootstrapTODO(fix)
+    section('0. Seed')
+    const seed = seedSpike(fix)
+    assert(c, seed.status === 0, `seed exits 0 (got ${seed.status})`)
 
-    section('1. First run (establishes a session)')
-    // TODO[#4-S3]: as in S2 — run otacon with PROMPT_FIRST. Record sid1.
-    // Snapshot byte-length of messages.jsonl + events.jsonl.
-    info(`(stub) first-run pending implementer handoff`)
+    let phoneUrl = ''
+    try { phoneUrl = await resolvePhoneBaseUrl() } catch (e) { info(`resolvePhone failed: ${(e as Error).message}`) }
+
+    section('1. First run (establishes session sid1)')
+    const r1 = runOtaconRun(fix, {
+      message: PROMPT_FIRST,
+      phone: phoneUrl || undefined,
+      autoApprove: true,
+    })
+    assert(c, r1.status === 0, `first run exits 0 (got ${r1.status})`)
+    if (r1.status !== 0) info(`r1 stderr: ${r1.stderr.slice(0, 800)}`)
+
+    const sids1 = listSessionIds(fix)
+    assert(c, sids1.length === 1, `1st run: exactly one session (got ${sids1.length})`)
+    const sid1 = sids1[0] ?? ''
+    if (!sid1) {
+      summary('S3', c)
+      exitFromCounters('S3', c)
+    }
+    const sdir1 = sessionDirOf(fix, sid1)
+    const msgFile1 = path.join(sdir1, 'messages.jsonl')
+    const evFile1 = path.join(sdir1, 'events.jsonl')
+    const msgBytes1 = fs.statSync(msgFile1).size
+    const evBytes1 = fs.statSync(evFile1).size
+    const msgHash1 = fs.readFileSync(msgFile1).toString('base64')
+    const evHash1 = fs.readFileSync(evFile1).toString('base64')
 
     section('2. Second run with --new (forces fresh session)')
-    // TODO[#4-S3]: run otacon with --new + PROMPT_NEW. Assert:
-    //   - exit 0
-    //   - sessions/ dir now has 2 entries (sid1 + sid2 != sid1)
-    //   - last-session.txt updated to sid2
-    //   - sessions/{sid1}/messages.jsonl byte length unchanged from snapshot
-    //   - sessions/{sid1}/events.jsonl byte length unchanged from snapshot
-    //   - sessions/{sid2}/messages.jsonl exists with ≥3 lines
-    //   - sessions/{sid2}/events.jsonl exists with ≥3 lines
-    info(`(stub) --new behavior assertions pending implementer handoff`)
+    const r2 = runOtaconRun(fix, {
+      message: PROMPT_NEW,
+      resume: 'new',
+      phone: phoneUrl || undefined,
+      autoApprove: true,
+    })
+    assert(c, r2.status === 0, `second --new run exits 0 (got ${r2.status})`)
+    if (r2.status !== 0) info(`r2 stderr: ${r2.stderr.slice(0, 800)}`)
+
+    section('3. --new behavior assertions')
+    const sids2 = listSessionIds(fix)
+    assert(c, sids2.length === 2, `--new run: now 2 sessions (got ${sids2.length})`)
+    const sid2 = sids2.find(s => s !== sid1) ?? ''
+    assert(c, sid2 !== '' && sid2 !== sid1, `sid2 differs from sid1 (sid1=${sid1}, sid2=${sid2})`)
+
+    // last-session.txt UPDATED to sid2.
+    const lastAfter2 = readLastSessionId(fix)
+    assert(c, lastAfter2 === sid2,
+      `after --new: last-session.txt → sid2 (got ${lastAfter2}, want ${sid2})`)
+
+    // Old session: byte-identical (no append).
+    const msgBytes1After = fs.statSync(msgFile1).size
+    const evBytes1After = fs.statSync(evFile1).size
+    const msgHash1After = fs.readFileSync(msgFile1).toString('base64')
+    const evHash1After = fs.readFileSync(evFile1).toString('base64')
+    assert(c, msgBytes1After === msgBytes1,
+      `sid1's messages.jsonl byte length unchanged (${msgBytes1} → ${msgBytes1After})`)
+    assert(c, evBytes1After === evBytes1,
+      `sid1's events.jsonl byte length unchanged (${evBytes1} → ${evBytes1After})`)
+    assert(c, msgHash1After === msgHash1,
+      `sid1's messages.jsonl bytes unchanged (sha-equivalent)`)
+    assert(c, evHash1After === evHash1,
+      `sid1's events.jsonl bytes unchanged`)
+
+    // New session has its own files.
+    const sdir2 = sessionDirOf(fix, sid2)
+    assert(c, fs.existsSync(path.join(sdir2, 'messages.jsonl')), `sid2/messages.jsonl exists`)
+    assert(c, fs.existsSync(path.join(sdir2, 'events.jsonl')), `sid2/events.jsonl exists`)
+    assert(c, fs.existsSync(path.join(sdir2, 'session.json')), `sid2/session.json exists`)
   } finally {
     cleanupFixture(fix)
   }
 
   summary('S3', c)
-  skeletonExit('S3', c)
+  exitFromCounters('S3', c)
 }
 
 main().catch(err => {

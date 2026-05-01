@@ -1,47 +1,49 @@
 /**
  * Pi-spike S2 — Resume by team default.
  *
- * Authoritative test for task #4 scenario S2. Verifies that re-running
- * `otacon run` on the same workspace + team without `--new` continues the
- * prior session (does NOT spawn a new one).
+ * Authoritative test for task #4 scenario S2.
  *
- * Pre-condition: S1 has run (or this scenario runs an S1-equivalent first
- * pass to populate the data dir). Then re-run with a different prompt and
- * assert:
+ * Pre-condition: seed (idempotent) populates `memory/sessions.log` with the
+ * `INIT_SENTINEL_aXY7` marker (per task #3 C2). First run reads the marker
+ * file. Second run (no flag — default = continue last session) verifies:
+ *
  *   - Same session id continues (NOT a new one)
- *   - `messages.jsonl` is APPENDED to (line count grows; pre-existing
- *     lines are byte-identical)
- *   - `events.jsonl` is APPENDED to (line count grows)
- *   - Agent's response demonstrates awareness of prior conversation
- *     (mentions specifics from the first run)
- *   - `last-session.txt` unchanged (same id)
- *
- * Hardware: phone-4 + XHS canonical.
- *
- * STATUS: SKELETON — assertions stubbed pending implementer (#3) handoff.
+ *   - sessions/ dir still has exactly ONE session subdir
+ *   - messages.jsonl APPENDED (line count + byte length grow)
+ *   - events.jsonl APPENDED similarly
+ *   - last-session.txt unchanged (same id)
+ *   - Agent's response on the second run demonstrates awareness of prior
+ *     conversation: stdout contains the `INIT_SENTINEL_aXY7` token.
  *
  * Run:
  *   pnpm test:e2e:spike-pi:s2
  */
+import * as fs from 'node:fs'
+import * as path from 'node:path'
 import {
-  ACCOUNT_ID,
-  TEAM_NAME,
-  bootstrapTODO,
+  assert,
   cleanupFixture,
+  countLines,
+  exitFromCounters,
   info,
+  listSessionIds,
   makeCounters,
   makeFixture,
+  readLastSessionId,
+  resolvePhoneBaseUrl,
+  runOtaconRun,
   section,
-  skeletonExit,
+  seedSpike,
+  sessionDirOf,
   summary,
 } from './helpers/spike.js'
 
 const PROMPT_FIRST =
   process.env.OTACON_SPIKE_S1_PROMPT ??
-  'list files in memory and tell me what you see'
+  'read memory/sessions.log and tell me exactly what marker you see'
 const PROMPT_RESUME =
   process.env.OTACON_SPIKE_S2_PROMPT ??
-  'what did you see last time? summarize'
+  'in this same session, what marker did you just read? repeat it back exactly.'
 
 async function main(): Promise<void> {
   const c = makeCounters()
@@ -49,42 +51,85 @@ async function main(): Promise<void> {
 
   console.log(`\n=== Pi-spike S2: resume by team default ===`)
   console.log(`dataDir = ${fix.dataDir}`)
-  console.log(`prompt1 = ${PROMPT_FIRST}`)
-  console.log(`prompt2 = ${PROMPT_RESUME}`)
 
   try {
-    section('0. Bootstrap')
-    bootstrapTODO(fix)
+    section('0. Seed')
+    const seed = seedSpike(fix)
+    assert(c, seed.status === 0, `seed exits 0 (got ${seed.status})`)
 
-    section('1. First run (establishes a session, like S1)')
-    // TODO[#4-S2]: run otacon with PROMPT_FIRST, capture the session id from
-    // last-session.txt. Snapshot the line counts for messages.jsonl and
-    // events.jsonl AND the byte length of each (so we can assert the prior
-    // bytes are unchanged after the second run).
-    info(`(stub) first-run pending implementer handoff`)
+    let phoneUrl = ''
+    try { phoneUrl = await resolvePhoneBaseUrl() } catch (e) { info(`resolvePhone failed: ${(e as Error).message}`) }
 
-    section('2. Second run (default = continue last session)')
-    // TODO[#4-S2]: run otacon with PROMPT_RESUME (NO --new flag). Verify:
-    //   - exit 0
-    //   - last-session.txt is unchanged (same sid)
-    //   - sessions/{sid}/messages.jsonl line count > snapshot AND first N bytes
-    //     match snapshot byte-for-byte (proves append, not rewrite)
-    //   - sessions/{sid}/events.jsonl appended similarly
-    //   - sessions/ dir has only ONE session id (no new dir created)
-    //   - agent stdout mentions something specific from PROMPT_FIRST's run
-    //     (a memory-file name from the first run, ideally — but at minimum,
-    //     a reference indicating it has prior context, not a cold start).
-    //     This is the substance assertion that distinguishes "resume worked"
-    //     from "new session that reads from memory dir." Keyword check is
-    //     inherently fuzzy — implementer to confirm at handoff what unique
-    //     marker we can rely on (e.g. echoing back a memory file name).
-    info(`(stub) resume assertions pending implementer handoff`)
+    section('1. First run (establishes a session)')
+    const r1 = runOtaconRun(fix, {
+      message: PROMPT_FIRST,
+      phone: phoneUrl || undefined,
+      autoApprove: true,
+    })
+    assert(c, r1.status === 0, `first run exits 0 (got ${r1.status})`)
+    if (r1.status !== 0) info(`r1 stderr: ${r1.stderr.slice(0, 1000)}`)
+
+    const sids1 = listSessionIds(fix)
+    assert(c, sids1.length === 1, `1st run: exactly one session created (got ${sids1.length})`)
+    const sid = sids1[0] ?? ''
+    if (!sid) {
+      summary('S2', c)
+      exitFromCounters('S2', c)
+    }
+    const sdir = sessionDirOf(fix, sid)
+    const msgFile = path.join(sdir, 'messages.jsonl')
+    const evFile = path.join(sdir, 'events.jsonl')
+    const msgBytes1 = fs.statSync(msgFile).size
+    const evBytes1 = fs.statSync(evFile).size
+    const msgLines1 = countLines(msgFile)
+    const evLines1 = countLines(evFile)
+    info(`after r1: messages=${msgLines1} lines / ${msgBytes1}B; events=${evLines1} lines / ${evBytes1}B`)
+    assert(c, readLastSessionId(fix) === sid, `after r1: last-session.txt = sid`)
+
+    // Phase 5 false-pass: ensure first run actually had real assistant work.
+    let firstRunOk = false
+    try {
+      const lines = fs.readFileSync(msgFile, 'utf-8').split('\n').filter(Boolean)
+      const last = JSON.parse(lines[lines.length - 1])
+      firstRunOk = last.role === 'assistant' && last.stopReason !== 'error'
+    } catch { /* fall through */ }
+    assert(c, firstRunOk,
+      `first run's last assistant message has stopReason !== 'error' (Phase 5 false-pass guard)`)
+
+    section('2. Second run — default resume (no --new, no --session)')
+    const r2 = runOtaconRun(fix, {
+      message: PROMPT_RESUME,
+      phone: phoneUrl || undefined,
+      autoApprove: true,
+    })
+    assert(c, r2.status === 0, `second run exits 0 (got ${r2.status})`)
+    if (r2.status !== 0) info(`r2 stderr: ${r2.stderr.slice(0, 1000)}`)
+
+    section('3. Resume assertions')
+    const sids2 = listSessionIds(fix)
+    assert(c, sids2.length === 1, `still exactly one session (got ${sids2.length})`)
+    assert(c, sids2[0] === sid, `session id unchanged (got ${sids2[0]} vs ${sid})`)
+    assert(c, readLastSessionId(fix) === sid, `last-session.txt still = sid`)
+
+    const msgBytes2 = fs.statSync(msgFile).size
+    const evBytes2 = fs.statSync(evFile).size
+    const msgLines2 = countLines(msgFile)
+    const evLines2 = countLines(evFile)
+    info(`after r2: messages=${msgLines2} lines / ${msgBytes2}B; events=${evLines2} lines / ${evBytes2}B`)
+    assert(c, msgBytes2 > msgBytes1, `messages.jsonl byte length grew (${msgBytes1} → ${msgBytes2})`)
+    assert(c, evBytes2 > evBytes1, `events.jsonl byte length grew (${evBytes1} → ${evBytes2})`)
+    assert(c, msgLines2 > msgLines1, `messages.jsonl line count grew (${msgLines1} → ${msgLines2})`)
+    assert(c, evLines2 > evLines1, `events.jsonl line count grew (${evLines1} → ${evLines2})`)
+
+    // S2 marker — agent must echo INIT_SENTINEL_aXY7 from prior context.
+    assert(c, r2.stdout.includes('INIT_SENTINEL_aXY7'),
+      `r2 stdout contains INIT_SENTINEL_aXY7 (proves resume-context-awareness)`)
   } finally {
     cleanupFixture(fix)
   }
 
   summary('S2', c)
-  skeletonExit('S2', c)
+  exitFromCounters('S2', c)
 }
 
 main().catch(err => {

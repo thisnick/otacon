@@ -76,25 +76,17 @@ async function main(): Promise<void> {
   console.log(`  Pi-spike sign-off summary`)
   console.log(`========================================`)
   for (const r of results) {
-    const tag =
-      r.status === 0 ? 'PASS' :
-      r.status === 2 ? 'SKEL' :
-      'FAIL'
+    const tag = r.status === 0 ? 'PASS' : 'FAIL'
     console.log(`  ${tag}  ${r.id}  (exit ${r.status})`)
   }
 
-  const failed = results.filter(r => r.status === 1)
-  const skel = results.filter(r => r.status === 2)
+  const failed = results.filter(r => r.status !== 0)
   const pass = results.filter(r => r.status === 0)
-  console.log(`\n  pass: ${pass.length} / fail: ${failed.length} / skeleton: ${skel.length} / total: ${results.length}`)
+  console.log(`\n  pass: ${pass.length} / fail: ${failed.length} / total: ${results.length}`)
 
   if (failed.length > 0) {
     console.log(`\n  FAILURES — file observed-vs-expected per item in TaskUpdate.`)
     process.exit(1)
-  }
-  if (skel.length > 0 && process.env.OTACON_SPIKE_ALLOW_SKELETON_EXIT !== '1') {
-    console.log(`\n  SKELETON — ${skel.length} scenarios still stubbed. Set OTACON_SPIKE_ALLOW_SKELETON_EXIT=1 to silence.`)
-    process.exit(2)
   }
   process.exit(0)
 }

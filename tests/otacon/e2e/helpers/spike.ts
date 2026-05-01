@@ -1,14 +1,13 @@
 /**
  * Shared helpers for Pi-spike e2e tests.
  *
- * STATUS: SKELETON — pending implementer (#3) handoff. All `runOtacon`
- * invocations target `pnpm otacon` against the `src/otacon/` tree on the
- * `pi-spike` branch. The exact command shape (`otacon run`, `otacon sessions
- * list`) is per task #3's CLI design; if implementer ships a different shape,
- * the evaluator files observed-vs-expected in TaskUpdate.
+ * All `runOtacon` invocations target the spike's CLI on the `pi-spike` branch
+ * via `pnpm --filter otacon-spike otacon ...`. Mirrors the style of
+ * `tests/orchestrator/e2e/helpers/run-and-tail.ts`.
  *
- * Mirrors the style of `tests/orchestrator/e2e/helpers/run-and-tail.ts` so
- * Pi-spike scenarios read like phase 1-5.
+ * Phone resolution uses the orchestrator package's resolvePhone helper —
+ * looks up phone-4's local id from the registry (OTACON_REGISTRY_URL +
+ * OTACON_TOKEN env or ~/.otacon/config.toml).
  */
 import { spawnSync, spawn, type ChildProcess } from 'node:child_process'
 import * as fs from 'node:fs'
@@ -71,30 +70,13 @@ export function summary(name: string, c: AssertCounters): void {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Skeleton-exit semantics
-// ---------------------------------------------------------------------------
-
-/**
- * Each stub scenario calls this at the end. With assertions stubbed and no
- * failures, exit 2 to flag "skeleton not yet wired" — matches the phase6
- * convention. `OTACON_SPIKE_ALLOW_SKELETON_EXIT=1` silences this and exits 0.
- *
- * Once the scenario has real assertions and they pass, this exit gate is
- * removed in the same commit that wires the assertions.
- */
-export function skeletonExit(name: string, c: AssertCounters): never {
+export function exitFromCounters(name: string, c: AssertCounters): never {
   if (c.failed > 0) {
-    console.log(`\n  SKELETON FAILURE — ${c.failed} assertions failed in ${name}`)
+    console.log(`\n  ${name}: ${c.failed} assertions failed.`)
     process.exit(1)
   }
-  if (process.env.OTACON_SPIKE_ALLOW_SKELETON_EXIT === '1') {
-    console.log(`  OTACON_SPIKE_ALLOW_SKELETON_EXIT=1 — exiting 0 despite stubs`)
-    process.exit(0)
-  }
-  console.log(`\n  NOTE: ${name} is a SKELETON. Assertions stubbed pending #3 handoff.`)
-  console.log(`  Set OTACON_SPIKE_ALLOW_SKELETON_EXIT=1 to silence and exit 0.`)
-  process.exit(2)
+  console.log(`\n  ${name}: all ${c.passed} assertions passed.`)
+  process.exit(0)
 }
 
 // ---------------------------------------------------------------------------
@@ -102,13 +84,15 @@ export function skeletonExit(name: string, c: AssertCounters): never {
 // ---------------------------------------------------------------------------
 
 export interface SpikeFixture {
-  /** `.otacon-data/` root for this scenario. */
+  /** Tmp root dir (parent of `.otacon-data/`) — gets nuked on cleanup. */
+  tmpRoot: string
+  /** `.otacon-data/` root for this scenario (absolute). */
   dataDir: string
   /** Absolute path to the workspace dir under dataDir. */
   workspaceDir: string
-  /** Absolute path to the team-state dir under workspaceDir. */
+  /** Absolute path to the team-state dir (under workspaceDir/teams/<team>). */
   teamStateDir: string
-  /** Absolute path to the team definition dir under dataDir. */
+  /** Absolute path to the team definition dir (under dataDir/teams/<team>). */
   teamDefDir: string
 }
 
@@ -116,10 +100,10 @@ export function makeFixture(name: string): SpikeFixture {
   const tmpRoot =
     process.env.OTACON_SPIKE_DATA_DIR ??
     fs.mkdtempSync(path.join(os.tmpdir(), `otacon-spike-${name}-`))
-  // .otacon-data/ lives inside the tmpRoot so cleanup is one rm.
-  const dataDir = path.join(tmpRoot, '.otacon-data')
+  const dataDir = path.join(tmpRoot, '.otacon-test-data')
   fs.mkdirSync(dataDir, { recursive: true })
   return {
+    tmpRoot,
     dataDir,
     workspaceDir: path.join(dataDir, 'workspaces', ACCOUNT_ID),
     teamStateDir: path.join(dataDir, 'workspaces', ACCOUNT_ID, 'teams', TEAM_NAME),
@@ -129,48 +113,24 @@ export function makeFixture(name: string): SpikeFixture {
 
 export function cleanupFixture(fix: SpikeFixture): void {
   if (process.env.KEEP_TMP_DIR === '1') {
-    console.log(`KEEP_TMP_DIR=1 — preserving ${fix.dataDir} for manual inspection`)
+    console.log(`KEEP_TMP_DIR=1 — preserving ${fix.tmpRoot} for manual inspection`)
     return
   }
-  // We delete the parent of dataDir (the mkdtemp dir) so we don't leave the
-  // mkdtemp shell behind.
-  const tmpRoot = path.dirname(fix.dataDir)
-  if (fs.existsSync(tmpRoot)) {
-    fs.rmSync(tmpRoot, { recursive: true, force: true })
+  if (fs.existsSync(fix.tmpRoot)) {
+    fs.rmSync(fix.tmpRoot, { recursive: true, force: true })
   }
 }
 
 // ---------------------------------------------------------------------------
-// CLI invocation — per task #3 the CLI is `otacon run ...`. The package
-// surface (workspace path, package.json bin name) is per implementer's
-// commit; this helper takes the cmdline as-is and runs it under
-// `pnpm otacon` (or whatever `pnpm` script the implementer wires up). If
-// they ship a different invocation surface, evaluator files
-// observed-vs-expected.
+// Bootstrap — calls the spike's seed script against fix.dataDir.
+// Per task #3 handoff runbook: `pnpm --filter otacon-spike seed` with
+// OTACON_DATA_DIR set produces workspace + team + S2 marker file.
 // ---------------------------------------------------------------------------
 
-export interface RunResult {
-  status: number
-  stdout: string
-  stderr: string
-}
-
-/**
- * Run a synchronous `otacon` CLI command against a per-scenario data dir.
- * For interactive scenarios (S4 — TTY approval prompt), use `runOtaconInteractive`.
- */
-export function runOtacon(
-  args: string[],
-  dataDir: string,
-  extraEnv: NodeJS.ProcessEnv = {},
-): RunResult {
-  const res = spawnSync('pnpm', ['otacon', ...args], {
+export function seedSpike(fix: SpikeFixture): { status: number; stdout: string; stderr: string } {
+  const res = spawnSync('pnpm', ['--filter', 'otacon-spike', 'seed'], {
     cwd: REPO_ROOT,
-    env: {
-      ...process.env,
-      OTACON_DATA_DIR: dataDir,
-      ...extraEnv,
-    },
+    env: { ...process.env, OTACON_DATA_DIR: fix.dataDir },
     encoding: 'utf-8',
     stdio: ['ignore', 'pipe', 'pipe'],
   })
@@ -181,59 +141,148 @@ export function runOtacon(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Phone resolver — uses the orchestrator's resolvePhone to look up phone-4's
+// local id from the registry and produce the --phone <baseUrl> arg.
+// Cached across scenarios so we don't hammer the registry.
+// ---------------------------------------------------------------------------
+
+let cachedPhoneBaseUrl: string | null = null
+
+export async function resolvePhoneBaseUrl(
+  phoneNumber: string = ACCOUNT_PHONE,
+): Promise<string> {
+  if (cachedPhoneBaseUrl) return cachedPhoneBaseUrl
+  const mod = await import(
+    path.resolve(REPO_ROOT, 'src/orchestrator/src/resolve/phone.ts')
+  ) as { resolvePhone: (n: string) => Promise<{ baseUrl: string }> }
+  const r = await mod.resolvePhone(phoneNumber)
+  cachedPhoneBaseUrl = r.baseUrl
+  return r.baseUrl
+}
+
+// ---------------------------------------------------------------------------
+// CLI invocation
+// ---------------------------------------------------------------------------
+
+export interface RunResult {
+  status: number
+  stdout: string
+  stderr: string
+}
+
+export interface OtaconRunArgs {
+  workspace?: string
+  team?: string
+  /** Either '--new' / '-s <id>' / nothing (default = last). */
+  resume?: 'new' | { sessionId: string } | undefined
+  phone?: string
+  autoApprove?: boolean
+  autoReject?: boolean
+  message: string
+}
+
 /**
- * Spawn `otacon` with stdin available — used by S4 to drive the TTY approval
- * prompt. Caller writes `y\n` or `n\n` to `proc.stdin` and consumes stdout.
- *
- * NOTE: Pi's TTY approval gate (per task #3 design) reads via readline. If
- * the implementer's prompt requires a real PTY (not a piped stdin), the
- * scenario must use `node-pty` instead — that's a feedback item for #3
- * if `process.stdin` from a piped stdio is rejected by Pi's gate.
+ * Run `otacon run` synchronously against a per-scenario data dir.
+ * Stdin is /dev/null. For interactive TTY runs (S4 manual y/n) use
+ * `runOtaconWithStdin`.
  */
-export function runOtaconInteractive(
-  args: string[],
-  dataDir: string,
+export function runOtaconRun(
+  fix: SpikeFixture,
+  args: OtaconRunArgs,
   extraEnv: NodeJS.ProcessEnv = {},
-): ChildProcess {
-  return spawn('pnpm', ['otacon', ...args], {
+  timeoutMs: number = SPIKE_TIMEOUT_MS,
+): RunResult {
+  const argv: string[] = [
+    '--filter', 'otacon-spike', 'otacon', 'run',
+    '-w', args.workspace ?? ACCOUNT_ID,
+    '-t', args.team ?? TEAM_NAME,
+  ]
+  if (args.resume === 'new') argv.push('--new')
+  else if (args.resume && typeof args.resume === 'object') argv.push('--session', args.resume.sessionId)
+  if (args.phone) argv.push('--phone', args.phone)
+  if (args.autoApprove) argv.push('--auto-approve')
+  if (args.autoReject) argv.push('--auto-reject')
+  argv.push(args.message)
+
+  const res = spawnSync('pnpm', argv, {
     cwd: REPO_ROOT,
     env: {
       ...process.env,
-      OTACON_DATA_DIR: dataDir,
+      OTACON_DATA_DIR: fix.dataDir,
       ...extraEnv,
     },
-    stdio: ['pipe', 'pipe', 'pipe'],
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: timeoutMs,
+    maxBuffer: 50 * 1024 * 1024,
+  })
+  return {
+    status: res.status ?? 1,
+    stdout: res.stdout ?? '',
+    stderr: res.stderr ?? '',
+  }
+}
+
+/**
+ * Spawn `otacon run` with a piped stdin. Per implementer's contract, the
+ * approval gate uses readline on stdin (prompts go to stderr). Caller can
+ * pipe `y\n` / `n\n` answers via the `stdinFeed` string.
+ */
+export function runOtaconWithStdin(
+  fix: SpikeFixture,
+  args: OtaconRunArgs,
+  stdinFeed: string,
+  extraEnv: NodeJS.ProcessEnv = {},
+  timeoutMs: number = SPIKE_TIMEOUT_MS,
+): Promise<RunResult> {
+  const argv: string[] = [
+    '--filter', 'otacon-spike', 'otacon', 'run',
+    '-w', args.workspace ?? ACCOUNT_ID,
+    '-t', args.team ?? TEAM_NAME,
+  ]
+  if (args.resume === 'new') argv.push('--new')
+  else if (args.resume && typeof args.resume === 'object') argv.push('--session', args.resume.sessionId)
+  if (args.phone) argv.push('--phone', args.phone)
+  if (args.autoApprove) argv.push('--auto-approve')
+  if (args.autoReject) argv.push('--auto-reject')
+  argv.push(args.message)
+
+  return new Promise<RunResult>(resolve => {
+    const proc = spawn('pnpm', argv, {
+      cwd: REPO_ROOT,
+      env: {
+        ...process.env,
+        OTACON_DATA_DIR: fix.dataDir,
+        ...extraEnv,
+      },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    proc.stdout!.on('data', chunk => { stdout += chunk.toString('utf-8') })
+    proc.stderr!.on('data', chunk => { stderr += chunk.toString('utf-8') })
+    proc.stdin!.write(stdinFeed)
+    proc.stdin!.end()
+    const timer = setTimeout(() => {
+      proc.kill('SIGTERM')
+      setTimeout(() => proc.kill('SIGKILL'), 5_000)
+    }, timeoutMs)
+    proc.on('exit', code => {
+      clearTimeout(timer)
+      resolve({ status: code ?? 1, stdout, stderr })
+    })
   })
 }
 
 // ---------------------------------------------------------------------------
-// Bootstrap helpers — populate the `.otacon-data/` tree per task #3 layout.
-// Implementer (#3) ships a `bootstrap` script or seed CLI; we DEFER calling
-// theirs in skeleton-mode and just stub a TODO. Real assertions wire to
-// whatever the implementer surfaces at handoff (probably `otacon workspace
-// init xhs:test` + `otacon team init social-media-engagement` or a one-shot
-// `pnpm tsx scripts/bootstrap-spike.ts`).
-// ---------------------------------------------------------------------------
-
-export function bootstrapTODO(fix: SpikeFixture): void {
-  info(`(stub) bootstrap pending implementer handoff. Need:`)
-  info(`  ${fix.workspaceDir}/workspace.json`)
-  info(`  ${fix.workspaceDir}/credentials.json`)
-  info(`  ${fix.workspaceDir}/env/{persona.md,soul.md,agents.md}`)
-  info(`  ${fix.workspaceDir}/memory/  (empty dir)`)
-  info(`  ${fix.teamDefDir}/team.json`)
-  info(`  ${fix.teamDefDir}/prompts/{lead.md,tools.md}`)
-}
-
-// ---------------------------------------------------------------------------
-// JSONL line-count helper — used by S2/S3 to assert append vs replace.
+// JSONL helpers
 // ---------------------------------------------------------------------------
 
 export function countLines(filePath: string): number {
   if (!fs.existsSync(filePath)) return 0
   const content = fs.readFileSync(filePath, 'utf-8')
   if (content.length === 0) return 0
-  // Trailing newline doesn't count as an entry.
   return content.split('\n').filter(line => line.length > 0).length
 }
 
@@ -242,3 +291,41 @@ export function readLines(filePath: string): string[] {
   const content = fs.readFileSync(filePath, 'utf-8')
   return content.split('\n').filter(line => line.length > 0)
 }
+
+export function readJsonlEvents(filePath: string): Array<Record<string, unknown>> {
+  return readLines(filePath).map(line => {
+    try {
+      return JSON.parse(line) as Record<string, unknown>
+    } catch {
+      return { __parseError: true, raw: line } as Record<string, unknown>
+    }
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Path helpers (relative to a fixture)
+// ---------------------------------------------------------------------------
+
+export function sessionDirOf(fix: SpikeFixture, sessionId: string): string {
+  return path.join(fix.teamStateDir, 'sessions', sessionId)
+}
+
+export function lastSessionFileOf(fix: SpikeFixture): string {
+  return path.join(fix.teamStateDir, 'last-session.txt')
+}
+
+export function readLastSessionId(fix: SpikeFixture): string | null {
+  const f = lastSessionFileOf(fix)
+  if (!fs.existsSync(f)) return null
+  const v = fs.readFileSync(f, 'utf-8').trim()
+  return v.length > 0 ? v : null
+}
+
+export function listSessionIds(fix: SpikeFixture): string[] {
+  const root = path.join(fix.teamStateDir, 'sessions')
+  if (!fs.existsSync(root)) return []
+  return fs.readdirSync(root).sort()
+}
+
+// Re-export ChildProcess for type referencing in scenario files if needed.
+export type { ChildProcess }
