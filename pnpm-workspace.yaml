@@ -1,6 +1,7 @@
 packages:
   - src/cli
   - src/orchestrator
+  - src/otacon
 
 allowBuilds:
   esbuild: true

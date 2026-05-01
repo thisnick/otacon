@@ -1,0 +1,26 @@
+{
+  "name": "otacon-spike",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "otacon": "tsx src/cli/index.ts",
+    "typecheck": "tsc --noEmit",
+    "seed": "tsx scripts/seed.ts"
+  },
+  "dependencies": {
+    "@mariozechner/pi-agent-core": "latest",
+    "@mariozechner/pi-ai": "latest",
+    "commander": "^13.0.0",
+    "just-bash": "^2.14.0",
+    "otacon-cli": "workspace:*",
+    "sharp": "^0.33.0",
+    "typebox": "^1.0.0",
+    "ulid": "^2.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}
