@@ -95,8 +95,11 @@ async function main(): Promise<void> {
       info(`r1 stdout (last 1000):  ${r1.stdout.slice(-1000)}`)
     }
     // Approval prompt is written to stderr per implementer's gate impl.
-    assert(c, /Approve:.*\?\s*\[y\/n\]/i.test(r1.stderr) || /Approve:.*\?\s*\[y\/n\]/i.test(r1.stdout),
-      `r1: approval prompt 'Approve: ...? [y/n]' appeared (stderr or stdout)`)
+    // Actual format (observed in S4-fail-1 log): `⚠ approve mutating command?\n  $ <cmd>\n  rationale: <text>\n[y/n/s]`.
+    // Match either the multi-line implementer format OR the simpler legacy format.
+    const promptRe = /(approve mutating command|Approve:).*\[y\/n(\/s)?\]/is
+    assert(c, promptRe.test(r1.stderr) || promptRe.test(r1.stdout),
+      `r1: approval prompt (any [y/n] or [y/n/s] form) appeared (stderr or stdout)`)
 
     const sids1 = listSessionIds(fix)
     assert(c, sids1.length >= 1, `r1: at least one session created`)
