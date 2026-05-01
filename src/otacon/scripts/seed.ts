@@ -72,6 +72,15 @@ async function main() {
     '# kept so the dir lands in checkouts\n',
     'utf8',
   )
+  // Deterministic resume-context-awareness marker. The evaluator's S2
+  // scenario greps stdout for `INIT_SENTINEL_aXY7` after asking the agent
+  // to read this file — distinguishes "agent saw prior context" from
+  // cold-start. Idempotent overwrite is fine.
+  await fs.writeFile(
+    path.join(workspaceMemoryDir(root, WORKSPACE_ID), 'sessions.log'),
+    '# session-marker\nINIT_SENTINEL_aXY7\n',
+    'utf8',
+  )
 
   await writeTeam(root, SEED_TEAM)
   await writeTeamPrompt(root, TEAM_NAME, 'lead.md', LEAD_PROMPT)

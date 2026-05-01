@@ -240,7 +240,14 @@ export async function runSession(opts: RunOpts): Promise<RunResult> {
     error: runError,
   }
   await writeSessionMeta(opts.dataRoot, opts.workspaceId, opts.teamName, finalMeta)
-  await writeLastSessionId(opts.dataRoot, opts.workspaceId, opts.teamName, sessionId)
+  // Update last-session.txt only for default ("last") and "new" resumes.
+  // Explicit `--session <id>` is "look at history" — leave the resume
+  // pointer alone so the next default invocation continues whatever the
+  // user was previously working on, not the historical session they just
+  // peeked at.
+  if (opts.resume === 'last' || opts.resume === 'new') {
+    await writeLastSessionId(opts.dataRoot, opts.workspaceId, opts.teamName, sessionId)
+  }
 
   return {
     sessionId,
