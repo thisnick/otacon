@@ -213,7 +213,10 @@ async function serveStatic(req: IncomingMessage, res: ServerResponse, ctx: Handl
 async function sendIndexHtml(res: ServerResponse, ctx: HandlerCtx): Promise<void> {
   const indexPath = join(ctx.distDir, 'index.html')
   const html = await readFile(indexPath, 'utf8')
-  const inject = `<script>window.__API_BASE__ = ${JSON.stringify(ctx.apiBase)};</script>`
+  // Inject empty string so the web app uses same-origin and routes through
+  // this CLI's `/api/*` proxy (which forwards to ctx.apiBase). Injecting the
+  // upstream URL directly defeats the proxy and trips CORS on the API server.
+  const inject = `<script>window.__API_BASE__ = '';</script>`
   const injected = html.includes('</head>')
     ? html.replace('</head>', `    ${inject}\n  </head>`)
     : inject + html

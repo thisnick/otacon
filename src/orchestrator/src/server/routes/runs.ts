@@ -26,7 +26,7 @@ import { ulid } from 'ulid'
 import { runSession } from '../../runtime/run.js'
 import { readWorkspace } from '../../storage/workspace.js'
 import { readTeam } from '../../storage/team.js'
-import { readLastSessionId } from '../../storage/session.js'
+import { readLastSessionId, writeLastSessionId } from '../../storage/session.js'
 import { makeServerApprovalGate } from '../../agents/approval-gate-server.js'
 import type { OtaconEvent } from '../../types.js'
 import { apiError } from '../errors.js'
@@ -148,7 +148,20 @@ export function makeRunsRoutes(ctx: RunsContext): Hono {
             autoReject: body.autoReject,
           }),
         })
-          .then(() => {
+          .then(async (result) => {
+            // Runtime only writes last-session.txt for the literal 'last'/'new'
+            // resume modes; here we always force a ulid, so the route owns the
+            // resume pointer. Only on clean completion — failed runs land with
+            // status='error' and are still resumable via explicit `--session
+            // <id>`, but `resume='last'` should skip them.
+            if (result.status === 'completed') {
+              try {
+                await writeLastSessionId(ctx.dataRoot, body.workspace!, body.team!, resolvedSessionId)
+              } catch {
+                // Best-effort; don't break the stream close on a pointer-write
+                // hiccup. The run itself succeeded.
+              }
+            }
             writeDoneAndClose()
           })
           .catch((err) => {
