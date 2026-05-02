@@ -1,68 +1,95 @@
-# Stage 1: install + build
+# Orchestrator Docker image (Pi-based, post-Phase-A rename).
+#
+# Stage 1 (builder): pnpm install across the workspace, then
+# `pnpm --filter orchestrator build` runs `tsc` against
+# `src/orchestrator/`. Output: `src/orchestrator/dist/`.
+#
+# Stage 2 (runtime): copies `dist/`, the workspace `package.json` files,
+# pnpm-lock + workspace config, then re-installs prod-only dependencies
+# so `node_modules` lives at the repo root + per-package pnpm symlinks
+# resolve. CMD launches the compiled CLI's `serve` subcommand.
+#
+# No Nitro, no SWC plugin, no Rollup workflow patches — this is a plain
+# Hono + Node 22 server compiled by tsc. Web UI ships via the
+# `orchestrator` CLI npm package (NOT bundled into the server image).
+
+# ---------- Stage 1: build ----------
 FROM node:22-bookworm-slim AS builder
 
-# Build deps for native modules (sharp needs libvips at install time on
-# arm64; the prebuilt artifacts skip the cmake step but pkg-config keeps
-# the install-time fall-back working when the prebuilt mismatch happens).
+# Build deps for native modules. `sharp` is a runtime dep; on arm64 the
+# prebuilt binary usually loads fine, but pkg-config keeps the
+# install-time fall-back working when the prebuilt mismatches.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-# pnpm via corepack — same lock-file, no separate install step.
 RUN corepack enable && corepack prepare pnpm@9.12.3 --activate
 
 WORKDIR /src
 
-# Copy lock + workspace manifests first for better layer caching. The
-# orchestrator depends on the otacon-cli workspace (`workspace:*`) which
-# in turn pulls api-types, so we copy ALL the package.json files before
-# `pnpm install`.
+# Copy lock + workspace manifests first for better layer caching.
+# Orchestrator depends on `otacon-cli` (workspace:*) which pulls
+# api-types, so all package.json files must be present before install.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY src/cli/package.json ./src/cli/
 COPY src/orchestrator/package.json ./src/orchestrator/
+COPY src/orchestrator/web/package.json ./src/orchestrator/web/
 RUN pnpm install --frozen-lockfile
 
-# Now copy sources and build.
+# Now copy sources and build only the orchestrator package.
 COPY src/cli/ ./src/cli/
 COPY src/orchestrator/ ./src/orchestrator/
-RUN pnpm --filter otacon-orchestrator build:server
+RUN pnpm --filter orchestrator build
 
-# Stage 2: minimal runtime
+# ---------- Stage 2: runtime ----------
 FROM node:22-bookworm-slim AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Run as a non-root user owning the data dir.
+RUN corepack enable && corepack prepare pnpm@9.12.3 --activate
+
+# Non-root user owning the data dir.
 RUN groupadd -r orchestrator && useradd -r -g orchestrator -d /data -m orchestrator \
     && mkdir -p /data/orchestrator && chown -R orchestrator:orchestrator /data
 
 WORKDIR /app
 
-# Nitro's `nitro build` writes a self-contained server bundle to
-# `.output/`. Copy the whole tree (it's small — node_modules excluded
-# from the bundle, only what's used at runtime).
-COPY --from=builder /src/src/orchestrator/.output ./.output
-COPY --from=builder /src/src/orchestrator/static ./static
+# Workspace manifests — needed at runtime so pnpm's per-package
+# `node_modules` symlinks (workspace:* dependencies) resolve.
+COPY --from=builder /src/package.json /src/pnpm-lock.yaml /src/pnpm-workspace.yaml ./
+COPY --from=builder /src/src/cli/package.json ./src/cli/
+COPY --from=builder /src/src/orchestrator/package.json ./src/orchestrator/
+COPY --from=builder /src/src/orchestrator/web/package.json ./src/orchestrator/web/
 
-# Static UI lives where nitro.config.ts's publicAssets points (`static/`
-# resolved relative to the orchestrator package root). The bundled
-# server resolves `static/` relative to its own cwd, so we put it
-# alongside `.output/`.
+# CLI sources — `otacon-cli` is consumed at runtime via `workspace:*`
+# from the orchestrator package. The CLI runs from source via tsx in
+# dev; here we ship sources so the workspace symlink resolves at
+# require-time.
+COPY --from=builder /src/src/cli/ ./src/cli/
+
+# Compiled orchestrator output. tsc emits to `dist/` mirroring the
+# input layout under `rootDir: "."`, so the entry is at
+# `dist/src/cli/index.js`.
+COPY --from=builder /src/src/orchestrator/dist ./src/orchestrator/dist
+
+# Prod-only install. With sources + manifests in place, pnpm rebuilds
+# the workspace `node_modules` graph at this fresh location; only
+# production dependencies are linked (skips tsx, typescript, etc).
+RUN pnpm install --frozen-lockfile --prod \
+    && pnpm store prune
 
 ENV NODE_ENV=production
 ENV ORCHESTRATOR_DATA_DIR=/data/orchestrator
-ENV ORCHESTRATOR_PORT=9090
+ENV PORT=9090
 
 EXPOSE 9090
 
 USER orchestrator
 WORKDIR /app
 
-# Volume mount — orchestrator state lives outside the image so the
-# container is replaceable.
 VOLUME ["/data/orchestrator"]
 
-CMD ["node", "--no-warnings", ".output/server/index.mjs"]
+CMD ["node", "--no-warnings", "src/orchestrator/dist/src/cli/index.js", "serve", "--port", "9090"]

@@ -9,6 +9,7 @@
   "scripts": {
     "orchestrator": "tsx src/cli/index.ts",
     "typecheck": "tsc --noEmit",
+    "build": "tsc",
     "seed": "tsx scripts/seed.ts"
   },
   "dependencies": {

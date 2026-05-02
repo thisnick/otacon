@@ -106,10 +106,8 @@ OTACON_REPO=${OTACON_REPO:-otacon-dev}
 OTACON_REGISTRY_URL=${OTACON_REGISTRY_URL:-http://otacon-registry.tail0437b8.ts.net:9080}
 OTACON_TOKEN=${OTACON_TOKEN}
 AI_GATEWAY_API_KEY=${AI_GATEWAY_API_KEY}
-ORCHESTRATOR_AUTH_REQUIRED=0
 ORCHESTRATOR_DATA_DIR=/data/orchestrator
 PORT=9090
-ORCHESTRATOR_PORT=9090
 EOF
 
 # Pull + restart. `docker compose up -d` is a no-op when nothing

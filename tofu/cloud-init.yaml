@@ -47,11 +47,7 @@ write_files:
     owner: root:root
     content: |
       ORCHESTRATOR_DATA_DIR=/data/orchestrator
-      # Nitro reads PORT for its listener; ORCHESTRATOR_PORT kept for
-      # any orchestrator code that might key on it.
       PORT=9090
-      ORCHESTRATOR_PORT=9090
-      ORCHESTRATOR_AUTH_REQUIRED=0
       OTACON_TOKEN=${otacon_token}
       AI_GATEWAY_API_KEY=${ai_gateway_api_key}
       OTACON_REPO=${otacon_repo}
@@ -64,6 +60,11 @@ write_files:
       services:
         otacon-orchestrator:
           image: ghcr.io/thisnick/$${OTACON_REPO:-otacon-dev}/orchestrator:latest
+          # Pin the container name so Watchtower's filter
+          # (`--include-restarting otacon-orchestrator`) matches
+          # reliably, independent of compose's default
+          # `<dir>-<service>-<n>` naming.
+          container_name: otacon-orchestrator
           restart: unless-stopped
           # Host networking: container shares the host netns so it
           # inherits Tailscale DNS + routing (required to reach
@@ -78,8 +79,6 @@ write_files:
           environment:
             - ORCHESTRATOR_DATA_DIR=$${ORCHESTRATOR_DATA_DIR:-/data/orchestrator}
             - PORT=$${PORT:-9090}
-            - ORCHESTRATOR_PORT=$${ORCHESTRATOR_PORT:-9090}
-            - ORCHESTRATOR_AUTH_REQUIRED=$${ORCHESTRATOR_AUTH_REQUIRED:-0}
             - OTACON_REGISTRY_URL=$${OTACON_REGISTRY_URL:-http://otacon-registry.${tailnet_domain}:9080}
             - OTACON_TOKEN=$${OTACON_TOKEN}
             - AI_GATEWAY_API_KEY=$${AI_GATEWAY_API_KEY}

@@ -1,7 +1,7 @@
-# Local build target for the orchestrator image — mirrors what cloud-init
-# writes to /opt/orchestrator/docker-compose.yml on the deployed VM, so
-# `make orchestrator-build` + `make orchestrator-push` produce the same
-# artifact Watchtower picks up.
+# Local + VPS deploy target for the orchestrator image. Cloud-init
+# writes a near-identical compose to /opt/orchestrator/docker-compose.yml
+# on the VM (see tofu/cloud-init.yaml); changes here should be mirrored
+# there.
 #
 # Topology: the orchestrator runs in `network_mode: host` so it inherits
 # the VM's Tailscale interface — required to reach
@@ -9,19 +9,26 @@
 # over the tailnet. Bridge networking would lose Tailscale DNS + routing.
 # The container binds 0.0.0.0:9090 directly on the host; Tailscale Serve
 # on the host proxies 443 → 127.0.0.1:9090. OCI security list still
-# blocks 9090 publicly so external exposure is unchanged. NO tailscale
+# blocks 9090 publicly so external exposure is unchanged. NO Tailscale
 # sidecar — one Tailscale node per VM, one hostname (otacon-
 # orchestrator), no `-1` auto-suffix from a duplicate registration.
 #
-# Boot locally: `docker compose -f docker-compose.orchestrator.yml up -d`
+# Image is built + pushed to ghcr.io by `make orchestrator-build`
+# (uses `docker buildx --push --platform linux/arm64`). Watchtower on
+# the VPS picks it up within ~60s. NO `build:` block here — local
+# `docker compose build` would only produce a host-arch image, which
+# wouldn't run on the ARM Ampere VPS.
+#
+# Boot locally for smoke: `docker compose -f docker-compose.orchestrator.yml up -d`
 # runs the container with the laptop's network stack. For pure local
-# dev (no Docker), use `pnpm orchestrator dev` instead.
+# dev (no Docker), use `pnpm orchestrator serve` instead.
 services:
   otacon-orchestrator:
-    build:
-      context: .
-      dockerfile: Dockerfile.orchestrator
     image: ghcr.io/thisnick/${OTACON_REPO:-otacon-dev}/orchestrator:latest
+    # Pin the container name so Watchtower's filter
+    # (`--include-restarting otacon-orchestrator`) matches reliably,
+    # independent of compose's default `<dir>-<service>-<n>` naming.
+    container_name: otacon-orchestrator
     restart: unless-stopped
     # Host networking: container shares host netns. Tailscale DNS +
     # routing become available; the container can resolve
@@ -32,12 +39,7 @@ services:
     network_mode: host
     environment:
       - ORCHESTRATOR_DATA_DIR=${ORCHESTRATOR_DATA_DIR:-/data/orchestrator}
-      # Nitro reads PORT for its listener; ORCHESTRATOR_PORT kept for
-      # any orchestrator code that may key on it (none currently does
-      # — they're equivalent until that diverges).
       - PORT=${PORT:-9090}
-      - ORCHESTRATOR_PORT=${ORCHESTRATOR_PORT:-9090}
-      - ORCHESTRATOR_AUTH_REQUIRED=${ORCHESTRATOR_AUTH_REQUIRED:-0}
       - OTACON_REGISTRY_URL=${OTACON_REGISTRY_URL:-}
       - OTACON_TOKEN=${OTACON_TOKEN:-}
       - AI_GATEWAY_API_KEY=${AI_GATEWAY_API_KEY:-}

@@ -167,18 +167,34 @@ ORCH_HOST ?= otacon-orchestrator.tail0437b8.ts.net
 ORCH_SSH := ubuntu@$(ORCH_HOST)
 OTACON_REPO ?= otacon-dev
 
+# Build + push the ARM64 image directly to ghcr.io. The VPS is ARM
+# Ampere, so a host-arch build (e.g. amd64 on a Mac) wouldn't run there.
+# `docker buildx --push` does the cross-build + registry push in one
+# step; Watchtower on the VPS picks up the new image within ~60s.
 orchestrator-build:
-	docker compose -f docker-compose.orchestrator.yml build
+	docker buildx build \
+		-f Dockerfile.orchestrator \
+		-t ghcr.io/thisnick/$(OTACON_REPO)/orchestrator:latest \
+		--platform linux/arm64 \
+		--push \
+		.
 
-orchestrator-push:
-	docker compose -f docker-compose.orchestrator.yml build
-	docker compose -f docker-compose.orchestrator.yml push otacon-orchestrator
+# Local-only smoke build (no push, host arch). Use to verify the
+# Dockerfile + workspace build before triggering the real ARM64 push.
+orchestrator-build-local:
+	docker buildx build \
+		-f Dockerfile.orchestrator \
+		-t orchestrator-test:local \
+		--load \
+		.
+
+orchestrator-push: orchestrator-build
 
 orchestrator-deploy:
 	./scripts/deploy-orchestrator.sh $(ORCH_HOST)
 
 orchestrator-logs:
-	ssh $(ORCH_SSH) 'cd /opt/orchestrator && docker compose logs -f --tail=50 otacon-orchestrator'
+	ssh $(ORCH_SSH) 'docker logs -f --tail=50 otacon-orchestrator'
 
 orchestrator-restart:
 	ssh $(ORCH_SSH) 'cd /opt/orchestrator && docker compose restart otacon-orchestrator'
