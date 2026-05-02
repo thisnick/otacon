@@ -30,6 +30,12 @@
     "test:e2e:phase-f:f6": "pnpm --filter orchestrator exec tsx ../../tests/orchestrator/e2e/phase-f6-resume-by-team.ts",
     "test:e2e:phase-f:f7": "pnpm --filter orchestrator exec tsx ../../tests/orchestrator/e2e/phase-f7-trace-png-serving.ts",
     "test:e2e:phase-f:f8": "pnpm --filter orchestrator exec tsx ../../tests/orchestrator/e2e/phase-f8-phone4-canonical.ts",
+    "test:e2e:phase-g": "pnpm --filter orchestrator exec tsx ../../tests/orchestrator/e2e/phase-g-run-all.ts",
+    "test:e2e:phase-g:g1": "pnpm --filter orchestrator exec tsx ../../tests/orchestrator/e2e/phase-g1-deployed-ui-browser.ts",
+    "test:e2e:phase-g:g2": "pnpm --filter orchestrator exec tsx ../../tests/orchestrator/e2e/phase-g2-f1-regression.ts",
+    "test:e2e:phase-g:g3": "pnpm --filter orchestrator exec tsx ../../tests/orchestrator/e2e/phase-g3-f8-regression.ts",
+    "test:e2e:phase-g:g4": "pnpm --filter orchestrator exec tsx ../../tests/orchestrator/e2e/phase-g4-local-ui-no-flag.ts",
+    "test:e2e:phase-g:g5": "pnpm --filter orchestrator exec tsx ../../tests/orchestrator/e2e/phase-g5-api-flag-removed.ts",
     "changeset": "changeset",
     "version": "changeset version"
   },

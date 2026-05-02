@@ -205,3 +205,85 @@ headers. (c) is least desirable per the spec's "CORS not required" stance.
 | `OTACON_F8_PROMPT` | "open Xiaohongshu (com.xingin.xhs) and scroll the home feed once, then exit. Tell me what you saw in one sentence." | F8 canonical prompt. |
 | `OTACON_F8_TIMEOUT_MS` | `1500000` (25 min) | F8 hard timeout. |
 | `KEEP_TMP_DIR` | unset | When `1`, preserves F3's tmp data dir. |
+
+## Phase G — Server-hosted UI sign-off
+
+Phase G flipped UI hosting from "CLI hosts UI + proxies API" (Phase D/F)
+to "API server hosts UI same-origin at /". The CLI `orchestrator ui` is
+now a local-only convenience launcher (no `--api` flag). Phase G's
+test surface is small because the API + agent surfaces are unchanged —
+G2/G3 are F1/F8 regression re-runs.
+
+### Prereqs
+
+1. **Phase G implementer commit deployed** — `make orchestrator-deploy`
+   succeeded against `pi-spike` at `2fc644a` or later. The container's
+   stderr should show `[orchestrator-server] serving web UI from
+   /app/src/orchestrator/dist/web/dist`. Verify pre-test:
+   ```bash
+   curl https://otacon-orchestrator.tail0437b8.ts.net/ \
+     | grep -c '<div id="app">'    # → 1
+   curl https://otacon-orchestrator.tail0437b8.ts.net/ \
+     | grep -c 'Web UI not built'  # → 0 (placeholder absent)
+   ```
+2. **Local web bundle built** — for G4 (the local-UI scenario), the
+   `src/orchestrator/web/dist/` directory must exist:
+   ```bash
+   pnpm --filter orchestrator-web build
+   ```
+3. **Seed for G4** — G4 spins up its own local server on a tmp data dir
+   and seeds it via `pnpm --filter orchestrator seed:dev`. No manual
+   step required.
+4. **VPS seed for G1/G2** — same as Phase F (the deployed VPS volume
+   carries `xhs:test` + `social-media-engagement`).
+5. **Playwright** — `npx playwright install chromium` (same as Phase F).
+6. **Phone-4 + XHS for G3** — same as Phase F's F8.
+
+### Run
+
+```sh
+pnpm test:e2e:phase-g                  # all 5 scenarios in order
+pnpm test:e2e:phase-g:g1               # individual scenario
+# ... pnpm test:e2e:phase-g:g{1..5}
+```
+
+Runner ordering: G2 → G1 → G5 → G4 → G3. Fast no-hardware scenarios
+first; G3 (phone-4, ~3-8 min) last. For G3 use `screen -dmS phase-g-g3`
+if the controlling terminal may close.
+
+### Scenario list
+
+| # | File | What it asserts | Hardware |
+|---|---|---|---|
+| G1 | `phase-g1-deployed-ui-browser.ts` | Playwright opens deployed `/`, page title set, `#app` populates, RunsList renders (workspace/team ref OR empty state), every browser `/api/*` + `/traces/*` request hits VPS same-origin (no off-origin), zero non-ignorable console errors. If sessions exist, opens first session and asserts SessionDetail loads same-origin. | none |
+| G2 | `phase-g2-f1-regression.ts` | Wraps `phase-f1-api-smoke.ts` and surfaces its exit code. F1's 45 assertions should all still pass; Phase G touched only the static handler, not API routes. | phone-4 (resolver only) |
+| G3 | `phase-g3-f8-regression.ts` | Wraps `phase-f8-phone4-canonical.ts`. Confirms agent + sharp + trace pipeline still work end-to-end through the deployed VPS. P5 false-pass guards (turnCount > 0, finalText non-empty, status=completed, ≥1 phone_action with all 3 trace screenshots, sha256(annotated)≠sha256(before), no sharp errors in logs). | phone-4 + XHS |
+| G4 | `phase-g4-local-ui-no-flag.ts` | Boots local API server on :9090 with seeded tmp data dir; spawns `pnpm orchestrator ui --no-open` (no `--api` flag); Playwright opens the printed local URL. RunsList renders, every browser `/api/*` request goes through the local UI proxy (no bypass), zero non-ignorable console errors. Tests the kept "convenience launcher for local dev" path. | none |
+| G5 | `phase-g5-api-flag-removed.ts` | Spawns `pnpm orchestrator ui --api https://example.com --no-open`. Asserts the process either exits non-zero OR emits a clear error/deprecation message — must NOT silently succeed. Belt-and-braces: process must actually exit (no SIGTERM-from-timeout). | none |
+
+### Console error policy (G1, G4)
+
+Strict default: any `error`-level console message OR pageerror fails the
+test. Exclusions (per `feedback_team_roles.md` discipline — file edge
+cases as observable behavior, not silent filters):
+- favicon-related 404s
+- React DevTools install prompts
+
+Warning-level messages are NOT errors and don't fail the test.
+
+### Override knobs (Phase G)
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `ORCHESTRATOR_API_URL` | `https://otacon-orchestrator.tail0437b8.ts.net` | Override the VPS API base URL (used by G1, G2, G3). |
+| `OTACON_G4_PORT` | `9090` | Local server port for G4. |
+| `OTACON_G5_API_ARG` | `https://example.com` | The `--api` value G5 passes (it just needs to be syntactically a URL). |
+| `KEEP_TMP_DIR` | unset | When `1`, preserves G4's tmp data dir. |
+
+### Sign-off rules (Phase G)
+
+Same as Phase F:
+- All scenarios pass + run output captured in TaskUpdate
+- Test artifacts committed + pushed before sign-off
+- On failure: TaskUpdate observed-vs-expected + repro command + ping
+  team-lead. Do NOT debug. Do NOT mark implementer's task complete.
