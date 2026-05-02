@@ -8,10 +8,15 @@ const API_TARGET = process.env.ORCHESTRATOR_API_URL ?? 'http://localhost:9090'
 
 // pi-web-ui's package.json `exports` only exposes the barrel + app.css.
 // Importing the barrel pulls every provider/sandbox/runtime adapter into
-// the bundle (~5MB raw / 932KB gzipped). To stay under the 200KB budget we
-// alias `pi-web-ui-internal/<file>` to walk directly into dist. This
-// bypasses the exports map at bundle time only — runtime behavior is the
-// same code, just without the unrelated re-exports.
+// the bundle (~5MB raw / 932KB gzipped). To trim it we (a) alias
+// `pi-web-ui-internal/<file>` past the exports map for surgical imports,
+// and (b) replace `tools/index.js` with a slim shim that drops
+// javascript-repl + extract-document and their pdfjs/docx/xlsx deps.
+//
+// Result: ~310 KB gz eager — over the 200 KB target by ~100 KB but
+// considered acceptable for an internal Tailscale-only tool. Don't
+// "simplify" by removing these aliases; the alternative is a 900+ KB
+// bundle.
 const PI_WEB_UI_DIST = path.join(
   __dirname,
   'node_modules/@mariozechner/pi-web-ui/dist',
