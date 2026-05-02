@@ -8,6 +8,8 @@
     "build": "pnpm -r run build",
     "generate": "pnpm -r run generate",
     "typecheck": "pnpm -r run typecheck",
+    "ui-dev": "pnpm --filter orchestrator-web dev",
+    "ui-build": "pnpm --filter orchestrator-web build",
     "cli": "pnpm --filter otacon-cli exec node --no-warnings --import tsx/esm src/index.ts",
     "test:e2e:orchestrator": "pnpm --filter orchestrator exec tsx ../../tests/orchestrator/e2e/run-all.ts",
     "test:e2e:orchestrator:s1": "pnpm --filter orchestrator exec tsx ../../tests/orchestrator/e2e/s1-fresh-run-smoke.ts",

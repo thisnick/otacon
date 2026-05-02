@@ -1,6 +1,7 @@
 packages:
   - src/cli
   - src/orchestrator
+  - src/orchestrator/web
 
 allowBuilds:
   esbuild: true
