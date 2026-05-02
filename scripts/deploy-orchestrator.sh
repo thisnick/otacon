@@ -86,10 +86,17 @@ if [ -z "${AI_GATEWAY_API_KEY}" ]; then
     echo "WARNING: AI_GATEWAY_API_KEY not set. Model calls will fail."
 fi
 
-# Build + push the orchestrator image.
-echo "Building and pushing orchestrator image..."
-docker compose -f docker-compose.orchestrator.yml build otacon-orchestrator
-docker compose -f docker-compose.orchestrator.yml push otacon-orchestrator
+# Build + push the orchestrator image. The VPS is ARM Ampere, so we
+# cross-build for linux/arm64 via buildx — a host-arch build (e.g.
+# amd64 on a Mac) wouldn't run there. `--push` ships directly to ghcr.io.
+# Mirrors `make orchestrator-build`.
+echo "Building and pushing orchestrator image (linux/arm64)..."
+docker buildx build \
+    -f Dockerfile.orchestrator \
+    -t "ghcr.io/thisnick/${OTACON_REPO:-otacon-dev}/orchestrator:latest" \
+    --platform linux/arm64 \
+    --push \
+    .
 
 # Sync compose file. The remote name is plain `docker-compose.yml` so
 # `docker compose ...` Just Works without a -f flag.
