@@ -12,7 +12,12 @@
  */
 import { Agent } from '@mariozechner/pi-agent-core'
 import { getModel } from '@mariozechner/pi-ai'
-import type { AgentMessage, AgentTool } from '@mariozechner/pi-agent-core'
+import type {
+  AgentMessage,
+  AgentTool,
+  BeforeToolCallContext,
+  BeforeToolCallResult,
+} from '@mariozechner/pi-agent-core'
 import type { Message } from '@mariozechner/pi-ai'
 import { ulid } from 'ulid'
 import { SessionBus } from './session-bus.js'
@@ -58,6 +63,44 @@ export interface RunOpts {
   autoReject?: boolean
   /** Optional abort signal — propagated into the agent. */
   signal?: AbortSignal
+  /**
+   * Override Pi's `beforeToolCall` (approval gate). Server mode passes a
+   * file-backed gate that polls escalations/<token>.json. Defaults to the
+   * CLI's TTY prompt gate when omitted.
+   *
+   * Mutually exclusive with `makeBeforeToolCall` — pass one or the other.
+   */
+  beforeToolCall?: (
+    ctx: BeforeToolCallContext,
+    signal?: AbortSignal,
+  ) => Promise<BeforeToolCallResult | undefined>
+  /**
+   * Factory variant: receives the runtime's `SessionBus` and returns a
+   * `beforeToolCall`. Server mode uses this so the file-backed gate can
+   * emit `escalation_requested`/`escalation_resolved` on the same bus
+   * the runtime emits to (so they hit the SSE writer + events.jsonl).
+   */
+  makeBeforeToolCall?: (bus: SessionBus) => (
+    ctx: BeforeToolCallContext,
+    signal?: AbortSignal,
+  ) => Promise<BeforeToolCallResult | undefined>
+  /**
+   * When true, suppress the console subscriber and the `▶ run ...` stdout
+   * header. Server mode sets this so the HTTP context isn't polluted by
+   * stray console writes. Defaults to false (CLI behavior).
+   */
+  silent?: boolean
+  /**
+   * Extra bus subscribers (e.g. SSE writer) attached before the agent
+   * runs. Listeners receive every OtaconEvent in subscription order.
+   */
+  extraSubscribers?: Array<(event: import('../types.js').OtaconEvent) => void>
+  /**
+   * Receives the resolved session id once it's known but before any
+   * events are emitted. Server mode uses this to set the
+   * `x-orchestrator-session-id` response header before the SSE body opens.
+   */
+  onSessionResolved?: (sessionId: string) => void
 }
 
 export interface RunResult {
@@ -108,17 +151,21 @@ export async function runSession(opts: RunOpts): Promise<RunResult> {
   const sandboxDir = await buildSandbox(opts.dataRoot, opts.workspaceId, opts.teamName, sessionId)
   const wsRoot = workspaceDir(opts.dataRoot, opts.workspaceId)
 
+  opts.onSessionResolved?.(sessionId)
+
   const bus = new SessionBus()
-  const consoleSubscriber = makeConsolePrinter({ openScreenshots: opts.openScreenshots })
-  const messagesSubscriber = makeMessagesPersister({
+  if (!opts.silent) {
+    bus.subscribe(makeConsolePrinter({ openScreenshots: opts.openScreenshots }))
+  }
+  bus.subscribe(makeMessagesPersister({
     dataRoot: opts.dataRoot, workspaceId: opts.workspaceId, teamName: opts.teamName, sessionId,
-  })
-  const eventsSubscriber = makeEventsPersister({
+  }))
+  bus.subscribe(makeEventsPersister({
     dataRoot: opts.dataRoot, workspaceId: opts.workspaceId, teamName: opts.teamName, sessionId,
-  })
-  bus.subscribe(consoleSubscriber)
-  bus.subscribe(messagesSubscriber)
-  bus.subscribe(eventsSubscriber)
+  }))
+  if (opts.extraSubscribers) {
+    for (const sub of opts.extraSubscribers) bus.subscribe(sub)
+  }
 
   const bash = buildBash({
     dataRoot: opts.dataRoot,
@@ -185,7 +232,9 @@ export async function runSession(opts: RunOpts): Promise<RunResult> {
     : []
 
   // Print run header now that everything is wired.
-  process.stdout.write(`▶ run ${sessionId} (${ws.id} / ${opts.teamName} / ${leadAgent.model})\n`)
+  if (!opts.silent) {
+    process.stdout.write(`▶ run ${sessionId} (${ws.id} / ${opts.teamName} / ${leadAgent.model})\n`)
+  }
   bus.emit({ kind: 'system_set', prompt: systemPrompt, ts: Date.now() })
 
   const agent = new Agent({
@@ -197,10 +246,13 @@ export async function runSession(opts: RunOpts): Promise<RunResult> {
       messages: priorMessages as AgentMessage[],
     },
     convertToLlm: (messages) => messages.filter(isLlmMessage) as Message[],
-    beforeToolCall: makeApprovalGate({
-      autoApprove: opts.autoApprove,
-      autoReject: opts.autoReject,
-    }),
+    beforeToolCall:
+      opts.beforeToolCall ??
+      opts.makeBeforeToolCall?.(bus) ??
+      makeApprovalGate({
+        autoApprove: opts.autoApprove,
+        autoReject: opts.autoReject,
+      }),
   })
 
   agent.subscribe((piEvent) => {

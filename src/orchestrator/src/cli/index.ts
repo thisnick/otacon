@@ -4,10 +4,12 @@
  * Subcommands:
  *   - run       — run an agent session against a workspace.
  *   - sessions  — list/inspect sessions.
+ *   - serve     — run the HTTP API server.
  */
 import { Command } from 'commander'
 import { registerRun } from './run.js'
 import { registerSessionsList } from './sessions-list.js'
+import { registerServe } from './serve.js'
 
 const program = new Command()
 program
@@ -17,6 +19,7 @@ program
 
 registerRun(program)
 registerSessionsList(program)
+registerServe(program)
 
 program.parseAsync(process.argv).catch(err => {
   console.error(err)
