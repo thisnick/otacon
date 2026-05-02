@@ -5,11 +5,13 @@
  *   - run       — run an agent session against a workspace.
  *   - sessions  — list/inspect sessions.
  *   - serve     — run the HTTP API server.
+ *   - ui        — open the bundled web UI in a browser.
  */
 import { Command } from 'commander'
 import { registerRun } from './run.js'
 import { registerSessionsList } from './sessions-list.js'
 import { registerServe } from './serve.js'
+import { registerUi } from './ui.js'
 
 const program = new Command()
 program
@@ -20,6 +22,7 @@ program
 registerRun(program)
 registerSessionsList(program)
 registerServe(program)
+registerUi(program)
 
 program.parseAsync(process.argv).catch(err => {
   console.error(err)
