@@ -11,6 +11,7 @@
     "ui-dev": "pnpm --filter orchestrator-web dev",
     "ui-build": "pnpm --filter orchestrator-web build",
     "cli": "pnpm --filter otacon-cli exec node --no-warnings --import tsx/esm src/index.ts",
+    "orchestrator": "pnpm --filter orchestrator orchestrator",
     "test:unit:orchestrator": "pnpm --filter orchestrator exec tsx ../../tests/orchestrator/unit/test-annotate.ts",
     "test:e2e:orchestrator": "pnpm --filter orchestrator exec tsx ../../tests/orchestrator/e2e/run-all.ts",
     "test:e2e:orchestrator:s1": "pnpm --filter orchestrator exec tsx ../../tests/orchestrator/e2e/s1-fresh-run-smoke.ts",
