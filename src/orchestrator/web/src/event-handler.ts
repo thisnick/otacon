@@ -82,7 +82,9 @@ export class TranscriptStore {
         this.append({ kind: 'system', ts: ev.ts, prompt: ev.prompt })
         break
       case 'user_message':
-        this.append({ kind: 'user_text', ts: ev.ts, text: ev.text })
+        // The orchestrator also persists user messages as `pi.message_end`
+        // events with role=user. MessageList renders those, so emitting a
+        // `user_text` card here would duplicate the bubble. Skip.
         break
       case 'phone_action':
         this.append({ kind: 'phone_action', ts: ev.ts, payload: ev.payload })

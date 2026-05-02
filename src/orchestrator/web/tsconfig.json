@@ -14,7 +14,13 @@
     "isolatedModules": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "types": ["vite/client"]
+    "types": ["vite/client"],
+    "baseUrl": ".",
+    "paths": {
+      "pi-web-ui-internal/*": [
+        "node_modules/@mariozechner/pi-web-ui/dist/*"
+      ]
+    }
   },
   "include": ["src/**/*.ts", "vite.config.ts"]
 }

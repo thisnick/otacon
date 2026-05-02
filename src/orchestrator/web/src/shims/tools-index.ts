@@ -23,20 +23,24 @@ export function setShowJsonMode(enabled: boolean): void {
   showJsonMode = enabled
 }
 
+// `result` is typed as `ToolResultMessage<unknown> | undefined` upstream,
+// but the call site passes `unknown` (lit-html's typing for child values).
+// Cast at the boundary — pi-web-ui's renderer dispatches on shape.
 export function renderTool(
   toolName: string,
   params: unknown,
   result: unknown,
   isStreaming?: boolean,
 ) {
+  const r = result as Parameters<DefaultRenderer['render']>[1]
   if (showJsonMode) {
-    return defaultRenderer.render(params, result, isStreaming)
+    return defaultRenderer.render(params, r, isStreaming)
   }
   const renderer = getToolRenderer(toolName)
   if (renderer) {
-    return renderer.render(params, result, isStreaming)
+    return renderer.render(params, r, isStreaming)
   }
-  return defaultRenderer.render(params, result, isStreaming)
+  return defaultRenderer.render(params, r, isStreaming)
 }
 
 export { getToolRenderer, registerToolRenderer }
