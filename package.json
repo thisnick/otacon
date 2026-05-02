@@ -21,10 +21,19 @@
     "test:e2e:orchestrator:s6": "pnpm --filter orchestrator exec tsx ../../tests/orchestrator/e2e/s6-sandbox-acl.ts",
     "test:e2e:orchestrator:s7": "pnpm --filter orchestrator exec tsx ../../tests/orchestrator/e2e/s7-resume-pi-roundtrip.ts",
     "test:e2e:orchestrator:s8": "pnpm --filter orchestrator exec tsx ../../tests/orchestrator/e2e/s8-specific-session-resume.ts",
+    "test:e2e:phase-f": "pnpm --filter orchestrator exec tsx ../../tests/orchestrator/e2e/phase-f-run-all.ts",
+    "test:e2e:phase-f:f1": "pnpm --filter orchestrator exec tsx ../../tests/orchestrator/e2e/phase-f1-api-smoke.ts",
+    "test:e2e:phase-f:f3": "pnpm --filter orchestrator exec tsx ../../tests/orchestrator/e2e/phase-f3-local-ui.ts",
+    "test:e2e:phase-f:f4": "pnpm --filter orchestrator exec tsx ../../tests/orchestrator/e2e/phase-f4-remote-ui.ts",
+    "test:e2e:phase-f:f5": "pnpm --filter orchestrator exec tsx ../../tests/orchestrator/e2e/phase-f5-approval-from-ui.ts",
+    "test:e2e:phase-f:f6": "pnpm --filter orchestrator exec tsx ../../tests/orchestrator/e2e/phase-f6-resume-by-team.ts",
+    "test:e2e:phase-f:f7": "pnpm --filter orchestrator exec tsx ../../tests/orchestrator/e2e/phase-f7-trace-png-serving.ts",
+    "test:e2e:phase-f:f8": "pnpm --filter orchestrator exec tsx ../../tests/orchestrator/e2e/phase-f8-phone4-canonical.ts",
     "changeset": "changeset",
     "version": "changeset version"
   },
   "devDependencies": {
-    "@changesets/cli": "^2.30.0"
+    "@changesets/cli": "^2.30.0",
+    "playwright": "^1.59.0"
   }
 }
