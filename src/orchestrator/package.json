@@ -10,7 +10,8 @@
     "orchestrator": "tsx src/cli/index.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
-    "seed": "tsx scripts/seed.ts"
+    "seed": "node dist/scripts/seed.js",
+    "seed:dev": "tsx scripts/seed.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.0.1",
