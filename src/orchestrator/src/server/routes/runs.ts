@@ -133,8 +133,6 @@ export function makeRunsRoutes(ctx: RunsContext): Hono {
           userMessage: body.userMessage!,
           modelProvider: body.modelProvider,
           phoneClientBaseUrl: body.phone,
-          autoApprove: body.autoApprove,
-          autoReject: body.autoReject,
           silent: true,
           signal,
           extraSubscribers: [writeEvent],

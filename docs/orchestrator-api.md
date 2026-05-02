@@ -1,8 +1,8 @@
 # Orchestrator HTTP API
 
 Contract between the orchestrator web server (`src/orchestrator/server/`,
-implemented in Phase B) and its consumers (the web UI in Phase C, the
-`orchestrator ui` CLI subcommand in Phase D, and any external automation).
+implemented in Phase B) and its consumers (the web UI hosted same-origin at
+`/`, and any external automation that POSTs against the API).
 
 This is the lock-point: once committed, B and C implement against this spec
 in parallel without coordinating.

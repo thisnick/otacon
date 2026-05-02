@@ -90,10 +90,10 @@ async function main() {
   process.stdout.write(`  team:      ${TEAM_NAME} → ${root}/teams/${TEAM_NAME}\n`)
   process.stdout.write(`\n`)
   process.stdout.write(`run with:\n`)
-  process.stdout.write(`  pnpm --filter orchestrator orchestrator run \\\n`)
-  process.stdout.write(`    --workspace ${WORKSPACE_ID} --team ${TEAM_NAME} \\\n`)
-  process.stdout.write(`    --phone https://otacon-pi.tail0437b8.ts.net/phones/<localPhoneId> \\\n`)
-  process.stdout.write(`    "list files in memory/"\n`)
+  process.stdout.write(`  curl -N -X POST http://localhost:9090/api/v1/runs \\\n`)
+  process.stdout.write(`    -H 'content-type: application/json' \\\n`)
+  process.stdout.write(`    -d '{"workspace":"${WORKSPACE_ID}","team":"${TEAM_NAME}","phone":"https://otacon-pi.tail0437b8.ts.net/phones/<localPhoneId>","userMessage":"list files in memory/"}'\n`)
+  process.stdout.write(`(or open the same-origin web UI at http://localhost:9090/)\n`)
 }
 
 main().catch(err => {

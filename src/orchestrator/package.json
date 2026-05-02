@@ -3,13 +3,11 @@
   "version": "0.1.0",
   "type": "module",
   "private": true,
-  "bin": {
-    "orchestrator": "src/cli/index.ts"
-  },
   "scripts": {
-    "orchestrator": "tsx src/cli/index.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
+    "start": "node dist/src/server/start.js",
+    "dev": "tsx --watch src/server/start.ts",
     "seed": "node dist/scripts/seed.js",
     "seed:dev": "tsx scripts/seed.ts"
   },
@@ -17,12 +15,10 @@
     "@hono/node-server": "^2.0.1",
     "@mariozechner/pi-agent-core": "latest",
     "@mariozechner/pi-ai": "latest",
-    "commander": "^13.0.0",
     "hono": "^4.12.16",
     "just-bash": "^2.14.0",
     "otacon-cli": "workspace:*",
     "sharp": "^0.33.0",
-    "smol-toml": "^1.4.0",
     "typebox": "^1.0.0",
     "ulid": "^2.3.0"
   },

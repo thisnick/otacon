@@ -5,7 +5,7 @@
  *   - SessionBus + three subscribers (console, messages persister, events persister)
  *   - just-bash with otacon/otacon-alloc + ReadWriteFs root at workspace
  *   - Pi tools: bash, read_file, write_file, escalate (closure-bound to bus + bash)
- *   - Pi Agent with approval gate + Pi → bus event forwarding
+ *   - Pi Agent with caller-supplied approval gate + Pi → bus event forwarding
  *   - Loads prior messages.jsonl on resume
  *   - Calls agent.prompt(userMessage) (or agent.continue() for resume)
  *   - On agent_end: writes session.json + last-session.txt
@@ -21,7 +21,6 @@ import type {
 import type { Message } from '@mariozechner/pi-ai'
 import { ulid } from 'ulid'
 import { SessionBus } from './session-bus.js'
-import { makeApprovalGate } from '../agents/approval-gate.js'
 import { buildSystemPrompt } from '../agents/build-prompt.js'
 import { buildBash } from '../sandbox/build.js'
 import { makeBashTool } from '../tools/bash.js'
@@ -57,29 +56,23 @@ export interface RunOpts {
   phoneClientBaseUrl?: string
   /** Console printer extras. */
   openScreenshots?: boolean
-  /** Bypass the TTY approval prompt. */
-  autoApprove?: boolean
-  /** Always reject mutating commands (for testing the rejection path). */
-  autoReject?: boolean
   /** Optional abort signal — propagated into the agent. */
   signal?: AbortSignal
   /**
-   * Override Pi's `beforeToolCall` (approval gate). Server mode passes a
-   * file-backed gate that polls escalations/<token>.json. Defaults to the
-   * CLI's TTY prompt gate when omitted.
+   * Pi's `beforeToolCall` approval gate. Required — the runtime no longer
+   * has a built-in fallback. Pass either:
+   *   - `beforeToolCall`: a ready-made gate, OR
+   *   - `makeBeforeToolCall`: a factory that receives the runtime's
+   *     `SessionBus` so file-backed gates can emit
+   *     `escalation_requested`/`escalation_resolved` onto the same bus
+   *     the runtime emits to (so they hit the SSE writer + events.jsonl).
    *
-   * Mutually exclusive with `makeBeforeToolCall` — pass one or the other.
+   * Mutually exclusive — pass one or the other.
    */
   beforeToolCall?: (
     ctx: BeforeToolCallContext,
     signal?: AbortSignal,
   ) => Promise<BeforeToolCallResult | undefined>
-  /**
-   * Factory variant: receives the runtime's `SessionBus` and returns a
-   * `beforeToolCall`. Server mode uses this so the file-backed gate can
-   * emit `escalation_requested`/`escalation_resolved` on the same bus
-   * the runtime emits to (so they hit the SSE writer + events.jsonl).
-   */
   makeBeforeToolCall?: (bus: SessionBus) => (
     ctx: BeforeToolCallContext,
     signal?: AbortSignal,
@@ -246,13 +239,7 @@ export async function runSession(opts: RunOpts): Promise<RunResult> {
       messages: priorMessages as AgentMessage[],
     },
     convertToLlm: (messages) => messages.filter(isLlmMessage) as Message[],
-    beforeToolCall:
-      opts.beforeToolCall ??
-      opts.makeBeforeToolCall?.(bus) ??
-      makeApprovalGate({
-        autoApprove: opts.autoApprove,
-        autoReject: opts.autoReject,
-      }),
+    beforeToolCall: resolveBeforeToolCall(opts, bus),
   })
 
   agent.subscribe((piEvent) => {
@@ -314,5 +301,16 @@ function isLlmMessage(m: AgentMessage): m is Message {
     m && typeof m === 'object' &&
     'role' in m &&
     (m.role === 'user' || m.role === 'assistant' || m.role === 'toolResult')
+  )
+}
+
+function resolveBeforeToolCall(
+  opts: RunOpts,
+  bus: SessionBus,
+): (ctx: BeforeToolCallContext, signal?: AbortSignal) => Promise<BeforeToolCallResult | undefined> {
+  if (opts.beforeToolCall) return opts.beforeToolCall
+  if (opts.makeBeforeToolCall) return opts.makeBeforeToolCall(bus)
+  throw new Error(
+    'runSession requires `beforeToolCall` or `makeBeforeToolCall` — no built-in fallback.',
   )
 }

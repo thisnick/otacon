@@ -7,7 +7,8 @@
 # Stage 2 (runtime): copies `dist/`, the workspace `package.json` files,
 # pnpm-lock + workspace config, then re-installs prod-only dependencies
 # so `node_modules` lives at the repo root + per-package pnpm symlinks
-# resolve. CMD launches the compiled CLI's `serve` subcommand.
+# resolve. CMD launches the compiled server entry point at
+# `dist/src/server/start.js`.
 #
 # No Nitro, no SWC plugin, no Rollup workflow patches — this is a plain
 # Hono + Node 22 server compiled by tsc. The web UI is built by Vite
@@ -73,8 +74,8 @@ COPY --from=builder /src/src/orchestrator/web/package.json ./src/orchestrator/we
 COPY --from=builder /src/src/cli/ ./src/cli/
 
 # Compiled orchestrator output. tsc emits to `dist/` mirroring the
-# input layout under `rootDir: "."`, so the entry is at
-# `dist/src/cli/index.js`.
+# input layout under `rootDir: "."`, so the server entry is at
+# `dist/src/server/start.js`.
 COPY --from=builder /src/src/orchestrator/dist ./src/orchestrator/dist
 
 # Built web UI bundle. The server's static handler resolves the bundle
@@ -100,4 +101,4 @@ WORKDIR /app
 
 VOLUME ["/data/orchestrator"]
 
-CMD ["node", "--no-warnings", "src/orchestrator/dist/src/cli/index.js", "serve", "--port", "9090"]
+CMD ["node", "--no-warnings", "src/orchestrator/dist/src/server/start.js"]

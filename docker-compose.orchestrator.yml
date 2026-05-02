@@ -21,7 +21,8 @@
 #
 # Boot locally for smoke: `docker compose -f docker-compose.orchestrator.yml up -d`
 # runs the container with the laptop's network stack. For pure local
-# dev (no Docker), use `pnpm orchestrator serve` instead.
+# dev (no Docker), use `pnpm dev` from the repo root — boots the
+# server (tsx --watch) + Vite UI (HMR on :5173) concurrently.
 services:
   otacon-orchestrator:
     image: ghcr.io/thisnick/${OTACON_REPO:-otacon-dev}/orchestrator:latest

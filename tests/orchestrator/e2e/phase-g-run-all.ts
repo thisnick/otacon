@@ -4,12 +4,13 @@
  * Ordering rationale:
  *   G2 (F1 regression — fast, no hardware)
  *   G1 (deployed-UI browser — fast, no hardware)
- *   G5 (--api flag rejected — fast, no hardware)
- *   G4 (local UI no-flag — local server + browser, no hardware)
  *   G3 (F8 regression — phone-4 + ~3-8 min, last)
  *
  * G3 last so the fast scenarios fail-fast if Phase G broke something
  * fundamental. Each scenario is its own child process.
+ *
+ * G4 + G5 (CLI `orchestrator ui` subcommand checks) were deleted in
+ * Phase H along with the entire `orchestrator` CLI.
  *
  * Run:
  *   pnpm test:e2e:phase-g
@@ -23,8 +24,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const SCENARIOS = [
   { id: 'G2', file: 'phase-g2-f1-regression.ts' },
   { id: 'G1', file: 'phase-g1-deployed-ui-browser.ts' },
-  { id: 'G5', file: 'phase-g5-api-flag-removed.ts' },
-  { id: 'G4', file: 'phase-g4-local-ui-no-flag.ts' },
   { id: 'G3', file: 'phase-g3-f8-regression.ts' },
 ]
 
@@ -44,7 +43,7 @@ function runScenario(file: string): number {
 
 async function main(): Promise<void> {
   console.log(`\n========================================`)
-  console.log(`  Phase G sign-off — 5 scenarios`)
+  console.log(`  Phase G sign-off — 3 scenarios`)
   console.log(`========================================\n`)
 
   const results: { id: string; status: number }[] = []

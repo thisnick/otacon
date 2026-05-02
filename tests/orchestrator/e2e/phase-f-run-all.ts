@@ -10,8 +10,11 @@
  *   F7 (reads F8's traces — fast, no phone)
  *   F6 (resume-by-team, phone-4 — memory-only prompts but resolves phone)
  *   F5 (approval flows, phone-4)
- *   F3 (local serve + ui — local data dir, no shared phone state)
- *   F4 (remote ui via VPS — no phone)
+ *
+ * F3 + F4 (local-/remote-CLI UI) were deleted in Phase H along with the
+ * `orchestrator` CLI. Local-dev UI now goes through `pnpm dev` (Vite +
+ * --watch server, see root package.json); deployed UI is exercised by
+ * Phase G's G1.
  *
  * If F1 is failing, downstream scenarios will likely also fail; runner does
  * NOT abort, so the operator gets the full picture in one pass.
@@ -34,8 +37,6 @@ const SCENARIOS = [
   { id: 'F7', file: 'phase-f7-trace-png-serving.ts' },
   { id: 'F6', file: 'phase-f6-resume-by-team.ts' },
   { id: 'F5', file: 'phase-f5-approval-from-ui.ts' },
-  { id: 'F3', file: 'phase-f3-local-ui.ts' },
-  { id: 'F4', file: 'phase-f4-remote-ui.ts' },
 ]
 
 function runScenario(file: string): number {
@@ -54,7 +55,7 @@ function runScenario(file: string): number {
 
 async function main(): Promise<void> {
   console.log(`\n========================================`)
-  console.log(`  Phase F sign-off — 7 scenarios`)
+  console.log(`  Phase F sign-off — 5 scenarios`)
   console.log(`========================================\n`)
 
   const results: { id: string; status: number }[] = []
