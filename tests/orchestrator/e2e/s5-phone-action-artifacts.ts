@@ -7,7 +7,7 @@
  *   - traces/{tool_call_id}/before.png is a valid PNG (sharp metadata)
  *   - traces/{tool_call_id}/annotated.png is a valid PNG
  *   - traces/{tool_call_id}/after.png is a valid PNG
- *   - annotated.png perceptually differs from before.png (≥5 bit pHash)
+ *   - annotated.png bytes differ from before.png (sha256)
  *   - events.jsonl phone_action.payload.screenshots paths resolve to those
  *     files on disk. Per implementer: paths are relative to
  *     ORCHESTRATOR_DATA_DIR when set absolute, else relative to process.cwd().
@@ -36,8 +36,12 @@ import {
   summary,
 } from './helpers/spike.js'
 
-// Tiny perceptual-hash helper for trace-screenshot validation.
-import { pHash, hammingDistance } from './helpers/png-diff.js'
+// SHA-256 file digest for trace-screenshot validation. pHash is too coarse
+// for localized tap-circle / arrow / box overlays (an 8x8 grayscale-mean
+// hash quantizes 1080x2340 → 64 pixels, so a 50px ring may not flip a
+// single bit). sha256 is the right "did the overlay actually get drawn"
+// check — see png-diff.ts comments.
+import { sha256File } from './helpers/png-diff.js'
 import sharp from 'sharp'
 
 const PROMPT_MUTATE =
@@ -139,21 +143,23 @@ async function main(): Promise<void> {
         }
       }
 
-      // Visual diff: annotated should differ from before by ≥5 bits.
+      // Byte diff: annotated.png must not be byte-identical to before.png.
+      // sha256 catches "overlay didn't draw" regressions reliably; pHash was
+      // too coarse and produced false-fails for legitimately-annotated
+      // screenshots (a localized 50px tap circle won't flip an 8x8-mean bit).
       if (beforePath && annotatedPath) {
         try {
-          const beforeHash = await pHash(beforePath)
-          const annotatedHash = await pHash(annotatedPath)
-          if (beforeHash !== null && annotatedHash !== null) {
-            const dist = hammingDistance(beforeHash, annotatedHash)
-            assert(c, dist >= 5,
-              `phone_action[${actionIdx}] annotated differs from before by ≥5 bits (got ${dist})`)
+          const beforeSha = sha256File(beforePath)
+          const annotatedSha = sha256File(annotatedPath)
+          if (beforeSha !== null && annotatedSha !== null) {
+            assert(c, beforeSha !== annotatedSha,
+              `phone_action[${actionIdx}] annotated.png bytes differ from before.png (sha256)`)
           } else {
             assert(c, false,
-              `phone_action[${actionIdx}] pHash returned null (before=${beforeHash}, annotated=${annotatedHash})`)
+              `phone_action[${actionIdx}] sha256 returned null (before=${beforeSha}, annotated=${annotatedSha})`)
           }
         } catch (e) {
-          assert(c, false, `phone_action[${actionIdx}] pHash diff (${(e as Error).message})`)
+          assert(c, false, `phone_action[${actionIdx}] sha256 diff (${(e as Error).message})`)
         }
       }
       actionIdx++
