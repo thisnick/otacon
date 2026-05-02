@@ -1,21 +1,24 @@
 /**
- * `orchestrator ui` subcommand. Spawns a tiny static HTTP server that
- * serves the bundled web UI from `web/dist/` and proxies `/api/*` to a
- * configured remote API. Same-origin proxy keeps trace PNGs and SSE
- * streams from tripping CORS.
+ * `orchestrator ui` — local-dev convenience launcher for the web UI.
+ *
+ * Spawns a tiny static HTTP server that serves the bundled web UI from
+ * `web/dist/` and proxies `/api/*` to a local API server. Used during
+ * local iteration so the UI bundle resolves same-origin against the
+ * `orchestrator serve` running on `localhost:9090`.
+ *
+ * For the deployed orchestrator, the API server hosts the UI itself at
+ * `/` — open the deployed URL directly in a browser. There is no
+ * remote-mode flag here; this subcommand exists for local dev only.
  */
 import type { Command } from 'commander'
 import { createServer as createHttpServer, request as httpRequest, type IncomingMessage, type ServerResponse } from 'node:http'
-import { request as httpsRequest } from 'node:https'
 import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import { homedir } from 'node:os'
 import { dirname, extname, join, normalize, resolve, sep } from 'node:path'
 import { fileURLToPath, URL } from 'node:url'
 import { spawn } from 'node:child_process'
-import { parse as parseToml } from 'smol-toml'
 
-const DEFAULT_API = 'http://localhost:9090'
+const LOCAL_API = 'http://localhost:9090'
 const PORT_RANGE_START = 5174
 const PORT_RANGE_END = 5184
 
@@ -40,7 +43,6 @@ const MIME: Record<string, string> = {
 }
 
 export interface UiCommandOpts {
-  api?: string
   port?: string
   open?: boolean
 }
@@ -48,12 +50,14 @@ export interface UiCommandOpts {
 export function registerUi(program: Command): void {
   program
     .command('ui')
-    .description('Open the web UI in a browser, served locally with API proxy.')
-    .option('--api <url>', 'API base URL to proxy to (overrides env + config).')
+    .description(
+      'Open the web UI for a LOCAL orchestrator (http://localhost:9090). ' +
+        'For the deployed orchestrator, just open its URL in a browser — ' +
+        'the server hosts the UI same-origin at /.',
+    )
     .option('-p, --port <number>', `Local port (default auto-pick in ${PORT_RANGE_START}-${PORT_RANGE_END}).`)
     .option('--no-open', "Don't auto-open the browser.")
     .action(async (optsRaw: UiCommandOpts) => {
-      const apiBase = resolveApiBase(optsRaw.api)
       const distDir = resolveDistDir()
       if (!existsSync(distDir) || !existsSync(join(distDir, 'index.html'))) {
         process.stderr.write(
@@ -66,7 +70,7 @@ export function registerUi(program: Command): void {
       const port = await pickPort(requestedPort)
 
       const server = createHttpServer((req, res) => {
-        handleRequest(req, res, { distDir, apiBase }).catch(err => {
+        handleRequest(req, res, { distDir, apiBase: LOCAL_API }).catch(err => {
           process.stderr.write(`[orchestrator-ui] handler error: ${String((err as Error)?.message ?? err)}\n`)
           if (!res.headersSent) {
             res.writeHead(500, { 'content-type': 'text/plain; charset=utf-8' })
@@ -85,8 +89,8 @@ export function registerUi(program: Command): void {
 
       const localUrl = `http://localhost:${port}`
       const lines = [
-        'orchestrator ui',
-        `  api:    ${apiBase}`,
+        'orchestrator ui (local dev)',
+        `  api:    ${LOCAL_API}`,
         `  local:  ${localUrl}`,
       ]
       if (optsRaw.open !== false) lines.push('  opening browser...')
@@ -105,33 +109,6 @@ export function registerUi(program: Command): void {
 
       await new Promise<void>(() => {})
     })
-}
-
-function resolveApiBase(flag: string | undefined): string {
-  if (flag && flag.length > 0) return stripTrailingSlash(flag)
-  const env = process.env.ORCHESTRATOR_API_URL
-  if (env && env.length > 0) return stripTrailingSlash(env)
-  const fromConfig = readConfigApiUrl()
-  if (fromConfig) return stripTrailingSlash(fromConfig)
-  return DEFAULT_API
-}
-
-function readConfigApiUrl(): string | undefined {
-  const path = join(homedir(), '.orchestrator', 'config.toml')
-  if (!existsSync(path)) return undefined
-  try {
-    const text = readFileSync(path, 'utf8')
-    const parsed = parseToml(text) as Record<string, unknown>
-    const value = parsed['api_url']
-    return typeof value === 'string' && value.length > 0 ? value : undefined
-  } catch (err) {
-    process.stderr.write(`[orchestrator-ui] warn: failed to parse ${path}: ${String((err as Error)?.message ?? err)}\n`)
-    return undefined
-  }
-}
-
-function stripTrailingSlash(s: string): string {
-  return s.replace(/\/+$/, '')
 }
 
 function resolveDistDir(): string {
@@ -215,7 +192,7 @@ async function sendIndexHtml(res: ServerResponse, ctx: HandlerCtx): Promise<void
   const html = await readFile(indexPath, 'utf8')
   // Inject empty string so the web app uses same-origin and routes through
   // this CLI's `/api/*` proxy (which forwards to ctx.apiBase). Injecting the
-  // upstream URL directly defeats the proxy and trips CORS on the API server.
+  // upstream URL directly would defeat the proxy.
   const inject = `<script>window.__API_BASE__ = '';</script>`
   const injected = html.includes('</head>')
     ? html.replace('</head>', `    ${inject}\n  </head>`)
@@ -239,8 +216,6 @@ function sendFile(res: ServerResponse, filePath: string): void {
 
 function proxyApi(req: IncomingMessage, res: ServerResponse, apiBase: string, incoming: URL): void {
   const target = new URL(apiBase + incoming.pathname + incoming.search)
-  const transport = target.protocol === 'https:' ? httpsRequest : httpRequest
-
   const headers: Record<string, string | string[]> = {}
   for (const [k, v] of Object.entries(req.headers)) {
     if (v === undefined) continue
@@ -254,11 +229,11 @@ function proxyApi(req: IncomingMessage, res: ServerResponse, apiBase: string, in
     headers['accept'] = 'text/event-stream'
   }
 
-  const upstream = transport(
+  const upstream = httpRequest(
     {
       protocol: target.protocol,
       hostname: target.hostname,
-      port: target.port || (target.protocol === 'https:' ? 443 : 80),
+      port: target.port || 80,
       method: req.method,
       path: target.pathname + target.search,
       headers,

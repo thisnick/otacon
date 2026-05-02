@@ -21,6 +21,7 @@ import { makeWorkspacesRoutes } from './routes/workspaces.js'
 import { makeSessionsRoutes } from './routes/sessions.js'
 import { makeRunsRoutes } from './routes/runs.js'
 import { makeEscalationsRoutes } from './routes/escalations.js'
+import { makeStaticRoutes } from './routes/static.js'
 
 export interface ServerOpts {
   port?: number
@@ -47,7 +48,14 @@ export function buildApp(opts: { dataRoot: string }): Hono {
 
   app.route('/api/v1', v1)
 
+  // Static UI bundle, mounted AFTER the API so /api/* always wins.
+  // Unknown GETs fall through to the SPA index.html (skipping /api/*
+  // so unknown API routes still get the JSON 404 below).
+  app.route('/', makeStaticRoutes())
+
   // Standard 404 for unknown routes — matches spec's error envelope.
+  // Reached for non-GET unmatched routes and for unknown /api/* GETs
+  // (which the static handler explicitly skips).
   app.notFound((c) =>
     c.json({ error: { code: 'bad_request', message: `route not found: ${c.req.method} ${c.req.path}` } }, 404),
   )

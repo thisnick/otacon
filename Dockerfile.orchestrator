@@ -10,8 +10,9 @@
 # resolve. CMD launches the compiled CLI's `serve` subcommand.
 #
 # No Nitro, no SWC plugin, no Rollup workflow patches — this is a plain
-# Hono + Node 22 server compiled by tsc. Web UI ships via the
-# `orchestrator` CLI npm package (NOT bundled into the server image).
+# Hono + Node 22 server compiled by tsc. The web UI is built by Vite
+# in the same builder stage and shipped inside the server image so the
+# orchestrator hosts the UI same-origin at `/`.
 
 # ---------- Stage 1: build ----------
 FROM node:22-bookworm-slim AS builder
@@ -37,10 +38,11 @@ COPY src/orchestrator/package.json ./src/orchestrator/
 COPY src/orchestrator/web/package.json ./src/orchestrator/web/
 RUN pnpm install --frozen-lockfile
 
-# Now copy sources and build only the orchestrator package.
+# Now copy sources and build only the orchestrator package + web bundle.
 COPY src/cli/ ./src/cli/
 COPY src/orchestrator/ ./src/orchestrator/
 RUN pnpm --filter orchestrator build
+RUN pnpm --filter orchestrator-web build
 
 # ---------- Stage 2: runtime ----------
 FROM node:22-bookworm-slim AS runtime
@@ -74,6 +76,12 @@ COPY --from=builder /src/src/cli/ ./src/cli/
 # input layout under `rootDir: "."`, so the entry is at
 # `dist/src/cli/index.js`.
 COPY --from=builder /src/src/orchestrator/dist ./src/orchestrator/dist
+
+# Built web UI bundle. The server's static handler resolves the bundle
+# via `import.meta.url` from `dist/src/server/routes/static.js` going
+# up three levels + `web/dist` — so the bundle must live at
+# `src/orchestrator/dist/web/dist/`.
+COPY --from=builder /src/src/orchestrator/web/dist ./src/orchestrator/dist/web/dist
 
 # Prod-only install. With sources + manifests in place, pnpm rebuilds
 # the workspace `node_modules` graph at this fresh location; only
