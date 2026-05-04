@@ -124,6 +124,8 @@ pub async fn register(
             // will pick up the new PhoneState via Arc indirection.
             let audio_config = crate::AudioConfig::from_env();
             let phone_state = crate::create_phone_state(config.clone(), &audio_config);
+            let ps = phone_state.clone();
+            tokio::spawn(async move { ps.refresh_phone_number_cache().await; });
             phones.insert(id.clone(), phone_state);
 
             // Persist to disk
@@ -187,6 +189,9 @@ pub async fn register(
 
     // Start lazy VNC proxy for this phone
     crate::spawn_vnc_proxy(phone_state.clone());
+
+    let ps = phone_state.clone();
+    tokio::spawn(async move { ps.refresh_phone_number_cache().await; });
 
     phones.insert(id.clone(), phone_state);
 

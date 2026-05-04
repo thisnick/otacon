@@ -103,9 +103,87 @@ pub struct PhoneState {
     pub a2dp_capture_running: AtomicBool,
     /// Fleet-agent monitor status (pushed via internal event channel)
     pub monitor_status: Mutex<Option<serde_json::Value>>,
+    /// Cached phone_number (E.164). Populated lazily from ADB once after the
+    /// phone is connected; refreshed only on phone-add/reconnect lifecycle —
+    /// reconciler reads this without shelling out to ADB per heartbeat tick.
+    pub phone_number_cache: Mutex<Option<String>>,
+}
+
+/// Backoff schedule for the phone_number populator. Exposed so tests can
+/// reuse the schedule shape without sleeping. Values cap at ~2.5 minutes —
+/// long enough to outlast container-startup ADB races + snapshot bridge
+/// boot, short enough that a phone genuinely missing a number is reported
+/// as None within bounded time.
+pub const PHONE_NUMBER_BACKOFF_SECS: &[u64] = &[5, 10, 20, 40, 80];
+
+/// Pure retry loop. Calls `attempt` up to `delays.len() + 1` times: first
+/// immediately, then once after each delay until one returns Some. No-op if
+/// `already_have` is true. Returns the populated value (or None if every
+/// attempt failed). Generic over the sleeper so tests don't real-sleep.
+pub async fn populate_with_retry<F, Fut, S, SF>(
+    already_have: bool,
+    delays: &[u64],
+    mut attempt: F,
+    mut sleeper: S,
+) -> Option<String>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Option<String>>,
+    S: FnMut(u64) -> SF,
+    SF: std::future::Future<Output = ()>,
+{
+    if already_have {
+        return None;
+    }
+    if let Some(v) = attempt().await {
+        return Some(v);
+    }
+    for &secs in delays {
+        sleeper(secs).await;
+        if let Some(v) = attempt().await {
+            return Some(v);
+        }
+    }
+    None
 }
 
 impl PhoneState {
+    /// Refresh the cached phone_number by querying ADB. Retries with
+    /// exponential backoff to ride out container-startup ADB races and the
+    /// snapshot bridge coming online late. Once populated stays populated
+    /// for the process lifetime — caller (phone-add lifecycle) is the only
+    /// way to refresh, which matches reconciler-doesn't-shellout invariant.
+    pub async fn refresh_phone_number_cache(&self) {
+        let already_have = self.phone_number_cache.lock().await.is_some();
+        let phone_id = self.config.id.clone();
+        let result = populate_with_retry(
+            already_have,
+            PHONE_NUMBER_BACKOFF_SECS,
+            || async {
+                match crate::api::device::get_phone_number(self).await {
+                    Ok(num) => Some(num),
+                    Err(e) => {
+                        eprintln!("[{}] phone_number lookup failed (will retry): {:?}", phone_id, e);
+                        None
+                    }
+                }
+            },
+            |secs| async move {
+                tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
+            },
+        ).await;
+
+        if let Some(num) = result {
+            eprintln!("[{}] phone_number cache populated: {}", phone_id, num);
+            *self.phone_number_cache.lock().await = Some(num);
+        } else if !already_have {
+            eprintln!(
+                "[{}] phone_number retry budget exhausted; cache stays None (phone may have no SIM)",
+                phone_id,
+            );
+        }
+    }
+
     /// Start the display (Xvnc + scrcpy) if not already running.
     pub async fn ensure_display(&self) -> Result<(), String> {
         let mut display = self.display.lock().await;
@@ -340,4 +418,126 @@ pub async fn save_phones(path: &std::path::Path, phones: &[PhoneConfig]) -> std:
     f.sync_all().await?;
     tokio::fs::rename(&tmp_path, path).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod populate_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicUsize, AtomicU64, Ordering};
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn returns_some_on_first_try_no_retries() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let slept = Arc::new(AtomicU64::new(0));
+        let a = attempts.clone();
+        let s = slept.clone();
+        let got = populate_with_retry(
+            false,
+            &[1, 2, 3],
+            move || {
+                let a = a.clone();
+                async move {
+                    a.fetch_add(1, Ordering::SeqCst);
+                    Some("+15551234567".to_string())
+                }
+            },
+            move |secs| {
+                let s = s.clone();
+                async move { s.fetch_add(secs, Ordering::SeqCst); }
+            },
+        ).await;
+        assert_eq!(got.as_deref(), Some("+15551234567"));
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+        assert_eq!(slept.load(Ordering::SeqCst), 0, "should not sleep on first-try success");
+    }
+
+    #[tokio::test]
+    async fn returns_some_on_second_try_one_retry() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let slept = Arc::new(AtomicU64::new(0));
+        let a = attempts.clone();
+        let s = slept.clone();
+        let got = populate_with_retry(
+            false,
+            &[5, 10, 20],
+            move || {
+                let a = a.clone();
+                async move {
+                    let n = a.fetch_add(1, Ordering::SeqCst) + 1;
+                    if n == 1 { None } else { Some("+15559999999".to_string()) }
+                }
+            },
+            move |secs| {
+                let s = s.clone();
+                async move { s.fetch_add(secs, Ordering::SeqCst); }
+            },
+        ).await;
+        assert_eq!(got.as_deref(), Some("+15559999999"));
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(slept.load(Ordering::SeqCst), 5, "exactly one backoff slot consumed");
+    }
+
+    #[tokio::test]
+    async fn returns_none_when_all_attempts_fail() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let slept = Arc::new(AtomicU64::new(0));
+        let a = attempts.clone();
+        let s = slept.clone();
+        let got = populate_with_retry(
+            false,
+            &[1, 2, 3, 4, 5],
+            move || {
+                let a = a.clone();
+                async move {
+                    a.fetch_add(1, Ordering::SeqCst);
+                    None
+                }
+            },
+            move |secs| {
+                let s = s.clone();
+                async move { s.fetch_add(secs, Ordering::SeqCst); }
+            },
+        ).await;
+        assert!(got.is_none());
+        // delays.len() + 1 = 6 attempts total
+        assert_eq!(attempts.load(Ordering::SeqCst), 6);
+        assert_eq!(slept.load(Ordering::SeqCst), 1 + 2 + 3 + 4 + 5);
+    }
+
+    #[tokio::test]
+    async fn already_have_short_circuits() {
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let slept = Arc::new(AtomicU64::new(0));
+        let a = attempts.clone();
+        let s = slept.clone();
+        let got = populate_with_retry(
+            true,
+            &[5, 10, 20],
+            move || {
+                let a = a.clone();
+                async move {
+                    a.fetch_add(1, Ordering::SeqCst);
+                    Some("+15551111111".to_string())
+                }
+            },
+            move |secs| {
+                let s = s.clone();
+                async move { s.fetch_add(secs, Ordering::SeqCst); }
+            },
+        ).await;
+        assert!(got.is_none(), "should not produce a fresh value when cache is already populated");
+        assert_eq!(attempts.load(Ordering::SeqCst), 0, "should not call the fetcher at all");
+        assert_eq!(slept.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn backoff_schedule_caps_around_two_and_a_half_minutes() {
+        // The schedule the populator actually uses must be bounded —
+        // a phone genuinely without a SIM should be reported None within a
+        // sensible window so the registry doesn't show stale "still trying".
+        let total: u64 = PHONE_NUMBER_BACKOFF_SECS.iter().sum();
+        assert!(total >= 60, "schedule too short to outlast startup: {total}s");
+        assert!(total <= 300, "schedule too long, callers will appear stuck: {total}s");
+    }
 }

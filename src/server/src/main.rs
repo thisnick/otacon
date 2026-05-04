@@ -198,6 +198,7 @@ fn create_phone_state(config: phone::PhoneConfig, audio_config: &AudioConfig) ->
         capture_running: std::sync::atomic::AtomicBool::new(false),
         a2dp_capture_running: std::sync::atomic::AtomicBool::new(false),
         monitor_status: Mutex::new(None),
+        phone_number_cache: Mutex::new(None),
     })
 }
 
@@ -238,6 +239,10 @@ async fn main() {
     for config in &phone_configs {
         let phone_state = create_phone_state(config.clone(), &audio_config);
         eprintln!("Loaded phone '{}' (serial: {})", config.id, config.adb_serial);
+        // Kick off phone_number cache population once. ADB shellout, but
+        // off the main path — reconciler never re-fires this per tick.
+        let ps = phone_state.clone();
+        tokio::spawn(async move { ps.refresh_phone_number_cache().await; });
         phones.insert(config.id.clone(), phone_state);
     }
 
@@ -319,6 +324,8 @@ async fn main() {
                         eprintln!("[reload] New phone detected: '{}' (serial: {})", config.id, config.adb_serial);
                         let phone_state = create_phone_state(config.clone(), &audio_config_reload);
                         spawn_vnc_proxy(phone_state.clone());
+                        let ps = phone_state.clone();
+                        tokio::spawn(async move { ps.refresh_phone_number_cache().await; });
                         phones.insert(config.id.clone(), phone_state);
                         known_serials.insert(config.adb_serial.clone());
                     }

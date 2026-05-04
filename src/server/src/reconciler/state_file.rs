@@ -14,6 +14,10 @@ pub struct PersistedPhone {
     pub adb_serial: String,
     pub adapter_mac: Option<String>,
     pub status: String,
+    /// Default keeps older state files (written before this field existed)
+    /// deserializable; first reconcile after upgrade will populate it.
+    #[serde(default)]
+    pub phone_number: Option<String>,
 }
 
 /// Persisted dongle state (for diffing).

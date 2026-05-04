@@ -22,6 +22,7 @@ pub fn compute_events(previous: &PersistedState, current: &PersistedState) -> Ve
                                 phone_id: cur_phone.phone_id.clone(),
                                 adb_serial: cur_phone.adb_serial.clone(),
                                 adapter_mac: cur_phone.adapter_mac.clone(),
+                                phone_number: cur_phone.phone_number.clone(),
                             });
                         }
                         "disconnected" => {
@@ -31,6 +32,21 @@ pub fn compute_events(previous: &PersistedState, current: &PersistedState) -> Ve
                         }
                         _ => {}
                     }
+                } else if cur_phone.status == "connected"
+                    && prev_phone.phone_number != cur_phone.phone_number
+                    && cur_phone.phone_number.is_some()
+                {
+                    // SIM-swap-style change: re-emit PhoneConnected so the
+                    // registry picks up the new number. Set-style replay-safe
+                    // per CLAUDE.md. Only fires when we observe a non-None
+                    // value — matches Q2 conservative policy: don't blow away
+                    // a known number based on a transient ADB None reading.
+                    events.push(FleetEvent::PhoneConnected {
+                        phone_id: cur_phone.phone_id.clone(),
+                        adb_serial: cur_phone.adb_serial.clone(),
+                        adapter_mac: cur_phone.adapter_mac.clone(),
+                        phone_number: cur_phone.phone_number.clone(),
+                    });
                 }
             }
             None => {
@@ -39,6 +55,7 @@ pub fn compute_events(previous: &PersistedState, current: &PersistedState) -> Ve
                     phone_id: cur_phone.phone_id.clone(),
                     adb_serial: cur_phone.adb_serial.clone(),
                     adapter_mac: cur_phone.adapter_mac.clone(),
+                    phone_number: cur_phone.phone_number.clone(),
                 });
             }
         }
@@ -94,4 +111,76 @@ pub fn compute_events(previous: &PersistedState, current: &PersistedState) -> Ve
     }
 
     events
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::state_file::PersistedPhone;
+    use std::collections::HashMap;
+
+    fn phone(id: &str, status: &str, phone_number: Option<&str>) -> PersistedPhone {
+        PersistedPhone {
+            phone_id: id.into(),
+            adb_serial: format!("{id}-serial"),
+            adapter_mac: None,
+            status: status.into(),
+            phone_number: phone_number.map(|s| s.into()),
+        }
+    }
+
+    fn state_with(phones: Vec<PersistedPhone>) -> PersistedState {
+        let mut map = HashMap::new();
+        for p in phones {
+            map.insert(p.phone_id.clone(), p);
+        }
+        PersistedState { phones: map, dongles: HashMap::new() }
+    }
+
+    #[test]
+    fn migration_path_emits_phone_connected_when_number_appears() {
+        // Simulates first reconcile after host upgrade: previous state file
+        // (loaded from disk) has phone_number=None for an existing connected
+        // phone; observe() now reports Some(...) from the populator cache.
+        let prev = state_with(vec![phone("phone-1", "connected", None)]);
+        let cur = state_with(vec![phone("phone-1", "connected", Some("+15551234567"))]);
+
+        let events = compute_events(&prev, &cur);
+
+        assert_eq!(events.len(), 1, "expected one PhoneConnected event, got {events:?}");
+        match &events[0] {
+            FleetEvent::PhoneConnected { phone_id, phone_number, .. } => {
+                assert_eq!(phone_id, "phone-1");
+                assert_eq!(phone_number.as_deref(), Some("+15551234567"));
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn transient_none_does_not_emit_event() {
+        // Q2 conservative policy: an observed None when previously known
+        // must NOT emit an event (would clobber the registry's known number).
+        let prev = state_with(vec![phone("phone-1", "connected", Some("+15551234567"))]);
+        let cur = state_with(vec![phone("phone-1", "connected", None)]);
+
+        let events = compute_events(&prev, &cur);
+        assert!(events.is_empty(), "expected no events on Some→None, got {events:?}");
+    }
+
+    #[test]
+    fn new_phone_carries_phone_number() {
+        let prev = state_with(vec![]);
+        let cur = state_with(vec![phone("phone-2", "connected", Some("+15559999999"))]);
+
+        let events = compute_events(&prev, &cur);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            FleetEvent::PhoneConnected { phone_id, phone_number, .. } => {
+                assert_eq!(phone_id, "phone-2");
+                assert_eq!(phone_number.as_deref(), Some("+15559999999"));
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
 }

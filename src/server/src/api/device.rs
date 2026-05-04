@@ -250,7 +250,7 @@ async fn get_bt_connected(adapter_mac: Option<&str>, phone_bt_mac: Option<&str>)
     text.contains("Connected: yes")
 }
 
-async fn get_phone_number(state: &PhoneState) -> Result<String, ApiError> {
+pub(crate) async fn get_phone_number(state: &PhoneState) -> Result<String, ApiError> {
     let serial = &state.config.adb_serial;
 
     // Prefer the snapshot server (system UID) — it can call

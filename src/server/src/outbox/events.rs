@@ -13,6 +13,10 @@ pub enum FleetEvent {
         phone_id: String,
         adb_serial: String,
         adapter_mac: Option<String>,
+        /// Default keeps older queued events (in flight from previous binary)
+        /// deserializable.
+        #[serde(default)]
+        phone_number: Option<String>,
     },
     #[serde(rename = "phone.disconnected")]
     PhoneDisconnected { phone_id: String },
@@ -47,6 +51,9 @@ pub struct SnapshotPhone {
     pub adb_serial: String,
     pub adapter_mac: Option<String>,
     pub status: String,
+    /// Default keeps older queued snapshots deserializable.
+    #[serde(default)]
+    pub phone_number: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

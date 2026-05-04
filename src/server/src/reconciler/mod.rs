@@ -42,6 +42,7 @@ async fn reconciler_loop(state: Arc<AppState>, outbox: Arc<Outbox>, notify: Arc<
                 adb_serial: p.adb_serial.clone(),
                 adapter_mac: p.adapter_mac.clone(),
                 status: p.status.clone(),
+                phone_number: p.phone_number.clone(),
             }
         }).collect();
 

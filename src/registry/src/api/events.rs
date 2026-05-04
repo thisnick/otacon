@@ -160,8 +160,9 @@ pub async fn ingest(
                 let phone_id = payload.get("phone_id").and_then(|v| v.as_str()).unwrap_or("");
                 let adb_serial = payload.get("adb_serial").and_then(|v| v.as_str()).unwrap_or("");
                 let adapter_mac = payload.get("adapter_mac").and_then(|v| v.as_str());
+                let phone_number = payload.get("phone_number").and_then(|v| v.as_str());
                 if !phone_id.is_empty() && !adb_serial.is_empty() {
-                    apply::phone_connected(store, &body.host_id, phone_id, adb_serial, adapter_mac).await;
+                    apply::phone_connected(store, &body.host_id, phone_id, adb_serial, adapter_mac, phone_number).await;
                 }
             }
         }

@@ -233,11 +233,20 @@ impl FleetClient {
     }
 
     /// Register a phone with the registry. Stores the registry-assigned phone_id.
-    pub async fn register_phone(&self, local_id: &str, config: &crate::phone::PhoneConfig) {
+    /// `phone_number` is included when known so the registry mirror has a
+    /// usable E.164 for routing/UI; None is fine — registry treats absent or
+    /// null as "no info, keep existing" per RegisterPhoneBody update policy.
+    pub async fn register_phone(
+        &self,
+        local_id: &str,
+        config: &crate::phone::PhoneConfig,
+        phone_number: Option<&str>,
+    ) {
         let body = serde_json::json!({
             "host_id": self.host_id,
             "adb_serial": config.adb_serial,
             "adapter_mac": config.adapter_mac,
+            "phone_number": phone_number,
         });
 
         match self.authed_post(&format!("{}/api/v1/hosts/phones/register", self.registry_url))
@@ -364,7 +373,8 @@ pub fn spawn_heartbeat(fleet: Arc<FleetClient>, state: Arc<AppState>) {
         {
             let phones = state.phones.read().await;
             for (id, ps) in phones.iter() {
-                fleet.register_phone(id, &ps.config).await;
+                let pn = ps.phone_number_cache.lock().await.clone();
+                fleet.register_phone(id, &ps.config, pn.as_deref()).await;
             }
         }
 
@@ -378,17 +388,20 @@ pub fn spawn_heartbeat(fleet: Arc<FleetClient>, state: Arc<AppState>) {
             {
                 let phones = state.phones.read().await;
                 let reg_ids = fleet.registry_ids.lock().await;
-                let missing: Vec<(String, crate::phone::PhoneConfig)> = phones.iter()
-                    .filter(|(id, _)| !reg_ids.contains_key(*id))
-                    .map(|(id, ps)| (id.clone(), ps.config.clone()))
-                    .collect();
+                let mut missing: Vec<(String, crate::phone::PhoneConfig, Option<String>)> = Vec::new();
+                for (id, ps) in phones.iter() {
+                    if !reg_ids.contains_key(id) {
+                        let pn = ps.phone_number_cache.lock().await.clone();
+                        missing.push((id.clone(), ps.config.clone(), pn));
+                    }
+                }
                 drop(reg_ids);
                 drop(phones);
 
                 if !missing.is_empty() {
                     fleet.register_host().await;
-                    for (id, config) in &missing {
-                        fleet.register_phone(id, config).await;
+                    for (id, config, pn) in &missing {
+                        fleet.register_phone(id, config, pn.as_deref()).await;
                     }
                     // Also retry dongle registration
                     fleet.report_dongles(&state).await;

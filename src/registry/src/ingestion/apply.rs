@@ -8,12 +8,18 @@ use chrono::Utc;
 use crate::store::{Phone, PhoneConfig, Dongle, RegistryStore};
 
 /// Apply a phone.connected event: upsert phone, set status = connected.
+///
+/// `phone_number` policy: overwrite only when Some — preserves a previously-
+/// known number across transient ADB None readings (matches RegisterPhoneBody
+/// at api/phones.rs and SIM-removal is handled by the disconnect/reconnect
+/// path, not this update).
 pub async fn phone_connected(
     store: &RegistryStore,
     host_id: &str,
     phone_id: &str,
     adb_serial: &str,
     adapter_mac: Option<&str>,
+    phone_number: Option<&str>,
 ) {
     let now = Utc::now();
     let mut phones = store.phones.write().await;
@@ -34,11 +40,14 @@ pub async fn phone_connected(
         if let Some(mac) = adapter_mac {
             phone.adapter_mac = Some(mac.to_string());
         }
+        if let Some(num) = phone_number {
+            phone.phone_number = Some(num.to_string());
+        }
     } else {
         phones.insert(phone_id.to_string(), Phone {
             id: phone_id.to_string(),
             adb_serial: adb_serial.to_string(),
-            phone_number: None,
+            phone_number: phone_number.map(|s| s.to_string()),
             model: None,
             bt_mac: None,
             imei: None,
@@ -174,7 +183,10 @@ pub async fn host_snapshot(
         }
     }
 
-    // Upsert phones from snapshot
+    // Upsert phones from snapshot. `phone_number` policy: overwrite only
+    // when Some (matches phone_connected) — keeps known numbers across
+    // transient ADB None readings; SIM removal flows through the
+    // disconnect/reconnect path, not snapshot field updates.
     for sp in snapshot_phones {
         let existing_id = phones.iter()
             .find(|(_, p)| p.adb_serial == sp.adb_serial)
@@ -189,11 +201,14 @@ pub async fn host_snapshot(
             if sp.adapter_mac.is_some() {
                 phone.adapter_mac = sp.adapter_mac.clone();
             }
+            if sp.phone_number.is_some() {
+                phone.phone_number = sp.phone_number.clone();
+            }
         } else {
             phones.insert(sp.phone_id.clone(), Phone {
                 id: sp.phone_id.clone(),
                 adb_serial: sp.adb_serial.clone(),
-                phone_number: None,
+                phone_number: sp.phone_number.clone(),
                 model: None,
                 bt_mac: None,
                 imei: None,
@@ -264,6 +279,10 @@ pub struct SnapshotPhone {
     pub adb_serial: String,
     pub adapter_mac: Option<String>,
     pub status: String,
+    /// Default keeps older host events (in flight before host upgrade)
+    /// deserializable.
+    #[serde(default)]
+    pub phone_number: Option<String>,
 }
 
 /// Snapshot dongle entry (mirrors host's SnapshotDongle).
