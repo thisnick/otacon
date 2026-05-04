@@ -1,6 +1,13 @@
 /**
  * Phase F · F1 — API smoke against deployed VPS.
  *
+ * **Phase I migration**: dropped the `phone` field from `POST /api/v1/runs`.
+ * The server now resolves the phone base URL from the workspace's
+ * `phoneNumber` field via the registry. F1 still asserts the same SSE
+ * contract; the only request-shape change is the missing `phone` field.
+ * This makes F1 a regression check that the run path still works
+ * end-to-end after the Phase I refactor.
+ *
  * Folds in the original F2 ("CLI run/sessions list parity") because the
  * orchestrator CLI's `run` and `sessions list` are filesystem-only by design
  * (per docs/orchestrator-v2-plan.md load-bearing decision: remote control is
@@ -50,7 +57,6 @@ import {
   extractFinalText,
   extractInnerEventTypes,
   postRunAndConsume,
-  resolvePhoneBaseUrlPhaseF,
 } from './helpers/phase-f.js'
 import {
   assert,
@@ -207,22 +213,15 @@ async function main(): Promise<void> {
   section('3. POST /api/v1/runs — drive a full agent run via SSE (was F2)')
   // -----------------------------------------------------------------------
 
-  // Resolve phone-4 base URL for the lead workflow's allocator (memory-only
-  // prompt won't touch the phone but provision needs to succeed).
-  let phoneUrl = ''
-  try {
-    phoneUrl = await resolvePhoneBaseUrlPhaseF()
-    info(`phone base URL = ${phoneUrl}`)
-  } catch (e) {
-    assert(c, false, `resolvePhone(phone-4) succeeded — ${(e as Error).message}`)
-  }
+  // Phase I: the server resolves the phone from workspace.phoneNumber via
+  // the registry; no per-request phone URL needed.
+  info(`phone resolution: server-side via workspace.phoneNumber`)
 
   const t0 = Date.now()
   const run = await postRunAndConsume(
     {
       workspace: ACCOUNT_ID,
       team: TEAM_NAME,
-      phone: phoneUrl,
       userMessage: F1_PROMPT,
       resume: 'new',
       autoApprove: true,

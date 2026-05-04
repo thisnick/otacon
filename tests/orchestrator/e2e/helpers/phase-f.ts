@@ -112,7 +112,13 @@ export async function postRunAndConsume(
   body: {
     workspace: string
     team: string
-    phone: string
+    /**
+     * Phase I migration: the server now resolves the phone from the
+     * workspace's `phoneNumber` field via the registry. This field is
+     * accepted by the helper for back-compat with older test scripts
+     * but the server ignores it.
+     */
+    phone?: string
     userMessage: string
     resume?: 'last' | 'new' | string
     autoApprove?: boolean

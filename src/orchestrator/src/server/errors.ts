@@ -17,9 +17,18 @@ export type ErrorCode =
   | 'escalation_not_found'
   | 'escalation_already_resolved'
   | 'workspace_kind_mismatch'
+  | 'workspace_already_exists'
+  | 'team_already_exists'
+  | 'workspace_has_sessions'
+  | 'env_file_not_found'
+  | 'no_default_for_file'
+  | 'no_default_for_team'
+  | 'agent_role_not_found'
+  | 'phone_unresolvable'
+  | 'phones_unavailable'
   | 'internal'
 
-const STATUS: Record<ErrorCode, 400 | 404 | 409 | 500> = {
+const STATUS: Record<ErrorCode, 400 | 404 | 409 | 500 | 502> = {
   bad_request: 400,
   workspace_not_found: 404,
   team_not_found: 404,
@@ -27,6 +36,15 @@ const STATUS: Record<ErrorCode, 400 | 404 | 409 | 500> = {
   escalation_not_found: 404,
   escalation_already_resolved: 409,
   workspace_kind_mismatch: 409,
+  workspace_already_exists: 409,
+  team_already_exists: 409,
+  workspace_has_sessions: 409,
+  env_file_not_found: 404,
+  no_default_for_file: 404,
+  no_default_for_team: 404,
+  agent_role_not_found: 404,
+  phone_unresolvable: 400,
+  phones_unavailable: 502,
   internal: 500,
 }
 

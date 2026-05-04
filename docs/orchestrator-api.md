@@ -53,13 +53,22 @@ Common codes:
 
 | HTTP | Code | When |
 |---|---|---|
-| 400 | `bad_request` | Malformed body, missing required field, invalid enum value. |
-| 404 | `workspace_not_found` | Path `:workspace` doesn't exist on disk. |
-| 404 | `team_not_found` | Path `:team` doesn't exist on disk. |
+| 400 | `bad_request` | Malformed body, missing required field, invalid enum value, invalid format (E.164, workspace id pattern, etc.). |
+| 400 | `phone_unresolvable` | Workspace's `phoneNumber` couldn't be resolved at run-start (registry doesn't have it, host unreachable, or workspace lacks the field). |
+| 404 | `workspace_not_found` | Path `:workspace` / `:id` doesn't exist on disk. |
+| 404 | `team_not_found` | Path `:team` / `:name` doesn't exist on disk. |
 | 404 | `session_not_found` | Path `:sid` doesn't exist on disk. |
 | 404 | `escalation_not_found` | No pending escalation for the given token. |
+| 404 | `env_file_not_found` | Env file doesn't exist for that workspace. |
+| 404 | `no_default_for_file` | Reset requested but no seed-default exists (e.g. user-added env file or prompt with no template). |
+| 404 | `no_default_for_team` | Team reset requested but no seed-default `team.yaml` exists for that name. |
+| 404 | `agent_role_not_found` | Per-agent prompt route referenced a role that isn't on the team's `agents[]`. |
 | 409 | `escalation_already_resolved` | Token has already been resolved. |
 | 409 | `workspace_kind_mismatch` | Team's `expectedWorkspaceKind` ≠ workspace's `kind`. |
+| 409 | `workspace_already_exists` | `POST /workspaces` with an `id` that already has a `workspace.json` on disk. |
+| 409 | `team_already_exists` | `POST /teams` with a `name` that already has a `team.yaml` (or legacy `team.json`) on disk. |
+| 409 | `workspace_has_sessions` | `DELETE /workspaces/:id` without `?force=true` when sessions exist under any team. |
+| 502 | `phones_unavailable` | `GET /phones` couldn't reach the registry (no creds, network error, or non-2xx). |
 | 500 | `internal` | Anything unexpected (server bug, fs failure). |
 
 ## Routes
@@ -76,7 +85,6 @@ state or the client disconnects.
 interface StartRunRequest {
   workspace: string         // workspace id (e.g. "xhs:test")
   team: string              // team name (e.g. "social-media-engagement")
-  phone: string             // OtaconClient base URL, full https URL
   userMessage: string       // first user message for this turn
   resume?: 'last' | 'new' | string
                             // 'last' (default): resume last-session.txt
@@ -87,6 +95,11 @@ interface StartRunRequest {
   modelProvider?: string    // override team's default provider (e.g. 'vercel-ai-gateway')
 }
 ```
+
+> **Phase I migration:** the `phone` field was dropped. The server now
+> resolves the phone base URL from the workspace's `phoneNumber` via the
+> registry. Pre-Phase-I clients that still send `phone` aren't rejected —
+> the field is silently ignored. New clients should omit it.
 
 **Response:** `200 OK` with `Content-Type: text/event-stream` and SSE body
 (see [SSE event format](#sse-event-format) below). The first event is
@@ -111,6 +124,7 @@ sentinel and closes the connection.
 **Errors (returned as 4xx/5xx before the stream starts):**
 
 - 400 `bad_request` — missing required field or invalid `resume` value.
+- 400 `phone_unresolvable` — workspace's `phoneNumber` is unset or the registry can't resolve it to a host.
 - 404 `workspace_not_found` / `team_not_found` / `session_not_found`.
 - 409 `workspace_kind_mismatch`.
 
@@ -121,24 +135,137 @@ Pi event, NOT an HTTP 500.
 ### `GET /api/v1/workspaces` — list workspaces
 
 ```ts
-interface WorkspaceSummary {
-  id: string
+interface Workspace {
+  id: string                // unique, "kind:identifier" using [a-zA-Z0-9_-] + .
   displayName: string
   kind: string              // "social" or future kinds
+  phoneNumber?: string      // E.164; required on new workspaces (Phase I)
   externalRef?: string
   createdAt: number
 }
 
 // Response:
-type Response = WorkspaceSummary[]
+type Response = Workspace[]
 ```
 
 Walks `${dataRoot}/workspaces/*/workspace.json`. Stable sort by `id` ascending.
 
-### `GET /api/v1/workspaces/:workspace/teams` — list teams
+### `POST /api/v1/workspaces` — create a workspace
+
+**Request body:**
 
 ```ts
-interface TeamSummary {
+interface CreateWorkspaceRequest {
+  id: string                // required, unique, format "kind:identifier"
+  displayName: string       // required
+  kind: string              // required (currently only "social")
+  phoneNumber: string       // required, E.164 format (e.g. "+13412137456")
+  externalRef?: string      // optional
+}
+```
+
+**Response:** `201 Created` with the full `Workspace` (server fills `createdAt`).
+
+**Side effects** at create:
+1. Creates `${dataRoot}/workspaces/<id>/`
+2. Writes `workspace.json`
+3. Bootstraps `env/{persona,soul,memory}.md` from `seed-templates/workspaces/<kind>/`
+4. Creates an empty `memory/` dir
+
+**Errors:**
+- 400 `bad_request` — missing field, invalid id pattern, invalid `phoneNumber` E.164.
+- 409 `workspace_already_exists` — id collision.
+
+### `GET /api/v1/workspaces/:id` — single workspace
+
+Returns the `Workspace` object. 404 `workspace_not_found` if absent.
+
+### `PATCH /api/v1/workspaces/:id` — partial update
+
+Mutable fields: `displayName`, `kind`, `phoneNumber`, `externalRef`.
+Immutable: `id`, `createdAt`. Pass `externalRef: ""` (or `null`) to
+clear it.
+
+**Response:** `200 OK` with the full updated `Workspace`.
+
+### `DELETE /api/v1/workspaces/:id[?force=true]` — delete a workspace
+
+- Without `?force=true`: 409 `workspace_has_sessions` if any session
+  dirs exist under any team for this workspace. Otherwise 204.
+- With `?force=true`: cascade-deletes the entire workspace directory
+  (sessions, traces, memory, env, credentials). 204.
+
+### Env files — `/api/v1/workspaces/:id/env`
+
+Per-workspace markdown context the agent reads into its system prompt
+at run-start. File content is plain markdown (no frontmatter). All env
+files concatenated in alphabetical order.
+
+```
+GET    /api/v1/workspaces/:id/env                         → 200 EnvFileSummary[]
+GET    /api/v1/workspaces/:id/env/:file                   → 200 text/markdown
+PUT    /api/v1/workspaces/:id/env/:file                   → 204 (text/markdown body)
+DELETE /api/v1/workspaces/:id/env/:file                   → 204
+POST   /api/v1/workspaces/:id/env/:file/reset             → 200 text/markdown
+```
+
+```ts
+interface EnvFileSummary {
+  name: string              // e.g. "persona.md"
+  size: number              // bytes
+  modifiedAt: number        // ms epoch
+}
+```
+
+`POST .../reset` returns 404 `no_default_for_file` if the file isn't a
+seed-default for the workspace's `kind` (e.g. user-added `anything.md`).
+
+File names must match `[a-zA-Z0-9._-]+\.md` and not start with `.`.
+
+### Credentials — `/api/v1/workspaces/:id/credentials`
+
+Write-only. The server stores whatever JSON the client PUTs but the
+read endpoint never returns the values.
+
+```
+GET    /api/v1/workspaces/:id/credentials   → 200 {hasCredentials, fieldsSet}
+PUT    /api/v1/workspaces/:id/credentials   → 204 (JSON object body)
+DELETE /api/v1/workspaces/:id/credentials   → 204
+```
+
+```ts
+interface CredentialsStatus {
+  hasCredentials: boolean
+  fieldsSet: string[]       // top-level JSON object keys (sorted)
+}
+```
+
+PUT bodies must be JSON objects (not arrays / scalars).
+
+### `GET /api/v1/workspaces/:workspace/sessions` — cross-team sessions
+
+Returns every session under any team in this workspace's directory.
+Cheaper for the UI's WorkspaceDetail "Sessions" tab than iterating teams.
+
+```ts
+type Response = SessionSummary[]
+```
+
+`SessionSummary` shape is the same as the per-team sessions endpoint
+(see further down). Sort by `startedAt` descending (most recent first).
+
+Walks `${dataRoot}/workspaces/:workspace/teams/*/sessions/*/session.json`
+on disk — surfaces sessions even from teams that have been removed from
+the global team catalog. Returns `[]` for a workspace with no `teams/`
+directory or no sessions.
+
+**Errors:**
+- 404 `workspace_not_found`.
+
+### `GET /api/v1/workspaces/:workspace/teams` — list compatible teams
+
+```ts
+interface Team {
   name: string
   description: string
   expectedWorkspaceKind: string
@@ -146,16 +273,72 @@ interface TeamSummary {
   agents: Array<{ role: string; model: string; promptFile: string }>
 }
 
-type Response = TeamSummary[]
+type Response = Team[]
 ```
 
-Walks `${dataRoot}/teams/*/team.json` and filters to teams whose
+Walks `${dataRoot}/teams/*/team.{yaml,json}` and filters to teams whose
 `expectedWorkspaceKind` matches the workspace's `kind`. Sort by `name`
 ascending.
 
 (Note: `${dataRoot}/teams/` is the global team catalog; teams are not
 nested under a workspace on disk. The `:workspace` path param exists so
 the route surfaces only teams compatible with this workspace's kind.)
+
+### Teams CRUD — `/api/v1/teams`
+
+```
+GET    /api/v1/teams[?workspaceKind=social]  → 200 Team[]
+POST   /api/v1/teams                         → 201 Team
+GET    /api/v1/teams/:name                   → 200 Team
+PATCH  /api/v1/teams/:name                   → 200 Team
+DELETE /api/v1/teams/:name?force=true        → 204
+
+# Per-agent prompts (markdown):
+GET    /api/v1/teams/:name/prompts/:role           → 200 text/markdown
+PUT    /api/v1/teams/:name/prompts/:role           → 204 (text/markdown body)
+
+# Reset to seed defaults:
+POST   /api/v1/teams/:name/reset                   → 200 Team
+POST   /api/v1/teams/:name/prompts/:role/reset     → 200 text/markdown
+```
+
+Team names + agent roles must match `/^[a-z0-9][a-z0-9-]{0,63}$/`.
+
+`agents[].promptFile` is computed by the server (`<role>.md`) on agent
+addition; clients don't set it. PATCH preserves the existing
+`promptFile` for unchanged roles, ensuring seed-time filenames (e.g.
+`lead.md` for the seeded `engagement-lead` role) survive PATCH.
+
+Adding an agent via PATCH creates `prompts/<role>.md` (copying the
+seed-default if one exists, else empty). Removing an agent deletes the
+file.
+
+`POST /teams/:name/reset` returns the seed-default team config and
+overwrites disk. 404 `no_default_for_team` if no template exists.
+
+`DELETE` requires `?force=true` (cascade-delete).
+
+### `GET /api/v1/phones` — list registry phones (read-only proxy)
+
+Proxies the orchestrator's admin token against the otacon registry,
+filters to phones with a `phoneNumber`, and reshapes for the UI.
+
+```ts
+interface PhoneSummary {
+  phoneNumber: string                       // E.164
+  status: 'online' | 'offline' | 'unreachable'
+  registryId: string                        // e.g. "phone-4"
+  displayLabel: string                      // e.g. "+13412137456 — phone-4 (otacon-pi)"
+  hostId: string | null
+}
+
+type Response = PhoneSummary[]
+```
+
+Sort by `phoneNumber` ascending.
+
+**Errors:**
+- 502 `phones_unavailable` — registry unreachable, missing creds, or non-2xx.
 
 ### `GET /api/v1/workspaces/:workspace/teams/:team/sessions` — list sessions
 
@@ -374,9 +557,12 @@ writes. Documented here so consumers can debug by reading files directly.
 ${ORCHESTRATOR_DATA_DIR}/                 # default ".otacon-data"
   workspaces/<workspaceId>/
     workspace.json                        # → /api/v1/workspaces
-    credentials.json                      # NEVER served via API
-    env/                                  # workspace env files (RO from agent)
-    memory/                               # agent's persistent memory
+    credentials.json                      # value never served via API; status only
+    env/                                  # → /api/v1/workspaces/:id/env
+      persona.md                          #   default-seeded for kind=social
+      soul.md                             #   default-seeded for kind=social
+      memory.md                           #   default-seeded; agent-managed (renamed from agents.md in Phase I)
+    memory/                               # agent's persistent memory dir
     teams/<teamName>/
       last-session.txt                    # session id last written/read
       sessions/<sessionId>/
@@ -392,8 +578,9 @@ ${ORCHESTRATOR_DATA_DIR}/                 # default ".otacon-data"
         escalations/
           <urlEncodedToken>.json          # → POST /api/v1/escalations/:token/resolve
   teams/<teamName>/
-    team.json                             # → /api/v1/.../teams
-    prompts/*.md                          # not exposed via API; read via agent
+    team.yaml                             # → /api/v1/teams[/:name] (Phase I canonical)
+    team.json                             # ← legacy; reader still accepts but writer no longer emits
+    prompts/<role>.md                     # → /api/v1/teams/:name/prompts/:role
 ```
 
 ## Out of scope for v1
@@ -403,8 +590,7 @@ These show up in the longer roadmap but are NOT in this spec:
 - Token-based auth on individual routes (Tailscale ingress is the only fence).
 - Cancel endpoint for running sessions (`POST /runs/:sid/cancel`).
 - Inject-message endpoint for running sessions (`POST /runs/:sid/messages`).
-- Workspace/team CRUD beyond read.
-- Account/credential management endpoints.
+- Account-level credential management beyond opaque PUT/DELETE.
 - OpenAPI spec generation (we hand-write this doc; can codegen later).
 - Pagination on list endpoints (small data volume; revisit if it grows).
 - WebSocket transport (SSE is sufficient; one-way server-to-client is the

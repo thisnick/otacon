@@ -53,6 +53,12 @@ export interface Workspace {
   id: string
   displayName: string
   kind: WorkspaceKind
+  /**
+   * E.164 phone number. Required for new workspaces (Phase I); optional in
+   * the type for back-compat with pre-Phase-I `workspace.json` files. Run-
+   * time phone resolution via `resolvePhone()` rejects if missing.
+   */
+  phoneNumber?: string
   externalRef?: string
   createdAt: number
 }

@@ -1,6 +1,7 @@
 /**
  * Session read routes.
  *
+ *   GET /api/v1/workspaces/:w/sessions                              ← Phase I cross-team
  *   GET /api/v1/workspaces/:w/teams/:t/sessions
  *   GET /api/v1/workspaces/:w/teams/:t/sessions/:sid
  *   GET /api/v1/workspaces/:w/teams/:t/sessions/:sid/events    (NDJSON or SSE)
@@ -25,6 +26,7 @@ import {
   sessionEventsFile,
   sessionMessagesFile,
   sessionTracesDir,
+  workspaceDir,
 } from '../../storage/paths.js'
 import { listSessions, readSessionMeta } from '../../storage/session.js'
 import { readWorkspace } from '../../storage/workspace.js'
@@ -37,6 +39,39 @@ export interface SessionsContext {
 
 export function makeSessionsRoutes(ctx: SessionsContext): Hono {
   const app = new Hono()
+
+  app.get('/workspaces/:workspace/sessions', async (c) => {
+    const workspaceId = decodeURIComponent(c.req.param('workspace'))
+    const ws = await readWorkspace(ctx.dataRoot, workspaceId)
+    if (!ws) {
+      return apiError(c, 'workspace_not_found',
+        `workspace "${workspaceId}" not found`, { workspaceId })
+    }
+    const teamsDir = path.join(workspaceDir(ctx.dataRoot, workspaceId), 'teams')
+    let teamEntries: string[]
+    try {
+      teamEntries = await fs.readdir(teamsDir)
+    } catch (e: unknown) {
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return c.json([])
+      throw e
+    }
+    const summaries = []
+    for (const teamName of teamEntries) {
+      try {
+        const stat = await fs.stat(path.join(teamsDir, teamName))
+        if (!stat.isDirectory()) continue
+      } catch {
+        continue
+      }
+      const ids = await listSessions(ctx.dataRoot, workspaceId, teamName)
+      for (const id of ids) {
+        const meta = await readSessionMeta(ctx.dataRoot, workspaceId, teamName, id)
+        if (meta) summaries.push(meta)
+      }
+    }
+    summaries.sort((a, b) => b.startedAt - a.startedAt)
+    return c.json(summaries)
+  })
 
   app.get('/workspaces/:workspace/teams/:team/sessions', async (c) => {
     const workspaceId = decodeURIComponent(c.req.param('workspace'))

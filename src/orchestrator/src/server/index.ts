@@ -18,6 +18,8 @@ import { Hono } from 'hono'
 import { dataRoot as defaultDataRoot } from '../storage/paths.js'
 import { abortStaleRunningSessions } from './startup.js'
 import { makeWorkspacesRoutes } from './routes/workspaces.js'
+import { makeTeamsRoutes } from './routes/teams.js'
+import { makePhonesRoutes } from './routes/phones.js'
 import { makeSessionsRoutes } from './routes/sessions.js'
 import { makeRunsRoutes } from './routes/runs.js'
 import { makeEscalationsRoutes } from './routes/escalations.js'
@@ -42,6 +44,8 @@ export function buildApp(opts: { dataRoot: string }): Hono {
 
   const v1 = new Hono()
   v1.route('/', makeWorkspacesRoutes({ dataRoot: opts.dataRoot }))
+  v1.route('/', makeTeamsRoutes({ dataRoot: opts.dataRoot }))
+  v1.route('/', makePhonesRoutes())
   v1.route('/', makeSessionsRoutes({ dataRoot: opts.dataRoot }))
   v1.route('/', makeRunsRoutes({ dataRoot: opts.dataRoot }))
   v1.route('/', makeEscalationsRoutes({ dataRoot: opts.dataRoot }))

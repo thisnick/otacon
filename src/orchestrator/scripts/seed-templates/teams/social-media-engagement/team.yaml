@@ -1,0 +1,8 @@
+name: social-media-engagement
+description: Operates a social media account for warming/engagement.
+expectedWorkspaceKind: social
+lead: engagement-lead
+agents:
+  - role: engagement-lead
+    model: anthropic/claude-sonnet-4.6
+    promptFile: lead.md

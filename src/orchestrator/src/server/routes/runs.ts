@@ -28,6 +28,7 @@ import { readWorkspace } from '../../storage/workspace.js'
 import { readTeam } from '../../storage/team.js'
 import { readLastSessionId, writeLastSessionId } from '../../storage/session.js'
 import { makeServerApprovalGate } from '../../agents/approval-gate-server.js'
+import { resolvePhone } from '../../resolve/phone.js'
 import type { OtaconEvent } from '../../types.js'
 import { apiError } from '../errors.js'
 
@@ -38,6 +39,12 @@ export interface RunsContext {
 interface StartRunRequest {
   workspace?: string
   team?: string
+  /**
+   * Pre-Phase-I clients passed `phone` directly. Phase I drops it: the
+   * server now resolves the phone base URL from the workspace's
+   * `phoneNumber`. Field stays in the type only so older payloads don't
+   * trip the JSON shape — value is ignored.
+   */
   phone?: string
   userMessage?: string
   resume?: 'last' | 'new' | string
@@ -65,9 +72,6 @@ export function makeRunsRoutes(ctx: RunsContext): Hono {
     if (typeof body.userMessage !== 'string' || !body.userMessage) {
       return apiError(c, 'bad_request', 'missing required field "userMessage"')
     }
-    if (typeof body.phone !== 'string' || !body.phone) {
-      return apiError(c, 'bad_request', 'missing required field "phone"')
-    }
     if (body.resume !== undefined &&
         body.resume !== 'last' &&
         body.resume !== 'new' &&
@@ -89,6 +93,23 @@ export function makeRunsRoutes(ctx: RunsContext): Hono {
       return apiError(c, 'workspace_kind_mismatch',
         `team "${body.team}" expects workspace kind "${team.expectedWorkspaceKind}" but workspace "${ws.id}" is "${ws.kind}"`,
         { workspaceKind: ws.kind, expectedWorkspaceKind: team.expectedWorkspaceKind })
+    }
+
+    // Resolve phone base URL from workspace.phoneNumber. The pre-Phase-I
+    // `phone` field on the request is ignored — workspace owns this.
+    if (!ws.phoneNumber) {
+      return apiError(c, 'phone_unresolvable',
+        `workspace "${ws.id}" has no phoneNumber set`,
+        { workspaceId: ws.id })
+    }
+    let phoneBaseUrl: string
+    try {
+      const r = await resolvePhone(ws.phoneNumber)
+      phoneBaseUrl = r.baseUrl
+    } catch (err) {
+      return apiError(c, 'phone_unresolvable',
+        `failed to resolve phone "${ws.phoneNumber}": ${err instanceof Error ? err.message : String(err)}`,
+        { workspaceId: ws.id, phoneNumber: ws.phoneNumber })
     }
 
     // Resolve session id up-front so we can set the response header before
@@ -132,7 +153,7 @@ export function makeRunsRoutes(ctx: RunsContext): Hono {
           resume: resolvedSessionId, // forced; runtime treats as resume id
           userMessage: body.userMessage!,
           modelProvider: body.modelProvider,
-          phoneClientBaseUrl: body.phone,
+          phoneClientBaseUrl: phoneBaseUrl,
           silent: true,
           signal,
           extraSubscribers: [writeEvent],

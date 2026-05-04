@@ -127,8 +127,29 @@ export function teamRoot(root: string, teamName: string): string {
   return path.join(root, 'teams', teamName)
 }
 
-export function teamConfigFile(root: string, teamName: string): string {
+/**
+ * Legacy team-config path (`team.json`). Phase I migrated to `team.yaml`;
+ * the loader still accepts `.json` for back-compat with pre-Phase-I data.
+ */
+export function teamConfigFileJson(root: string, teamName: string): string {
   return path.join(teamRoot(root, teamName), 'team.json')
+}
+
+/** Phase I canonical team-config path (`team.yaml`). */
+export function teamConfigFileYaml(root: string, teamName: string): string {
+  return path.join(teamRoot(root, teamName), 'team.yaml')
+}
+
+/**
+ * Legacy alias for callers that haven't been updated. Returns the YAML
+ * path — the canonical write target after Phase I.
+ */
+export function teamConfigFile(root: string, teamName: string): string {
+  return teamConfigFileYaml(root, teamName)
+}
+
+export function teamPromptsDir(root: string, teamName: string): string {
+  return path.join(teamRoot(root, teamName), 'prompts')
 }
 
 export function teamPromptFile(root: string, teamName: string, file: string): string {

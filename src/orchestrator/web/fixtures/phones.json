@@ -1,0 +1,16 @@
+[
+  {
+    "phoneNumber": "+13412137456",
+    "status": "online",
+    "registryId": "phone-4",
+    "displayLabel": "Pixel 4a — phone-4",
+    "hostId": "otacon-pi"
+  },
+  {
+    "phoneNumber": "+14155551234",
+    "status": "offline",
+    "registryId": "phone-2",
+    "displayLabel": "Pixel 5 — phone-2",
+    "hostId": "otacon-pi"
+  }
+]

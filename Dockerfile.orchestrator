@@ -78,6 +78,12 @@ COPY --from=builder /src/src/cli/ ./src/cli/
 # `dist/src/server/start.js`.
 COPY --from=builder /src/src/orchestrator/dist ./src/orchestrator/dist
 
+# Seed templates (.md / .yaml) — not compiled by tsc but read at runtime
+# by the seed script + workspace-create env-file bootstrap. The path
+# resolver in src/storage/seed-templates.ts walks up from the compiled
+# JS to find this dir.
+COPY --from=builder /src/src/orchestrator/scripts/seed-templates ./src/orchestrator/scripts/seed-templates
+
 # Built web UI bundle. The server's static handler resolves the bundle
 # via `import.meta.url` from `dist/src/server/routes/static.js` going
 # up three levels + `web/dist` — so the bundle must live at

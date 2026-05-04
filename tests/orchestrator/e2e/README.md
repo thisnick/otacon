@@ -133,6 +133,79 @@ Warning-level messages are NOT errors and don't fail the test.
 |---|---|---|
 | `ORCHESTRATOR_API_URL` | `https://otacon-orchestrator.tail0437b8.ts.net` | Override the VPS API base URL (used by G1, G2, G3). |
 
+## Phase I — Workspace + Team CRUD APIs + UI rebuild sign-off
+
+Phase I added full CRUD over workspaces + teams (incl. nested env files,
+credentials, agent prompts), dropped the `phone` field from `POST /runs`
+(server resolves from `workspace.phoneNumber`), and rebuilt the web UI on
+React + shadcn with sidebar nav and per-resource detail pages.
+
+The Phase I sign-off has three buckets (per the established
+implementer/evaluator protocol). The evaluator scenarios below are
+**Bucket 3** — UI canary against the deployed VPS, distinct from the
+implementer's local-server I-UI suite.
+
+### Prereqs
+
+1. **Deployed orchestrator on `phase-i`** — `make orchestrator-deploy`
+   succeeded against the post-Phase-I image. Verify:
+   ```bash
+   curl https://otacon-orchestrator.tail0437b8.ts.net/ | grep -c '<div id="app">'    # → 1
+   curl https://otacon-orchestrator.tail0437b8.ts.net/api/v1/workspaces | jq         # xhs:test present
+   ```
+2. **xhs:test phoneNumber migrated** — the deployed `xhs:test` workspace
+   has `phoneNumber` set (Bucket 2 PATCH migration applied):
+   ```bash
+   curl -X PATCH https://otacon-orchestrator.tail0437b8.ts.net/api/v1/workspaces/xhs%3Atest \
+     -H 'Content-Type: application/json' \
+     -d '{"phoneNumber":"+13412137456"}'
+   ```
+3. **Playwright** — `npx playwright install chromium`.
+4. **SSH access** — `ssh ubuntu@otacon-orchestrator.tail0437b8.ts.net`
+   passwordless; needed for I-Eval-2 + I-Eval-3 disk-side-effect checks.
+5. **Phone-4 + XHS for I-Eval-4 + I-Eval-6** — same as Phase F's F8.
+
+### Run
+
+```sh
+pnpm test:e2e:phase-i:eval                  # all 6 scenarios
+pnpm test:e2e:phase-i:eval:1                # individual scenario
+# ... pnpm test:e2e:phase-i:eval:{1,2,3,4,5,6}
+```
+
+Runner ordering: I-Eval-{1,2,3,5,4,6}. Cheap UI scenarios + no-hardware
+F1 regression first; phone-4-touching I-Eval-4 + I-Eval-6 last. Single
+phone-4 lock — must NOT run them in parallel. For I-Eval-4 / I-Eval-6 use
+`screen -dmS phase-i-eval-4` if the controlling terminal may close.
+
+### Scenario list
+
+| # | File | What it asserts | Hardware |
+|---|---|---|---|
+| I-Eval-1 | `phase-i-eval-1-deployed-sidebar.ts` | Playwright opens deployed `/`; AppSidebar renders with all 3 nav items; theme toggle adds `.dark` to `<html>` on Dark; every browser `/api/*` request hits VPS same-origin and 2xx; zero non-ignorable console errors. Replaces Phase G G1 for this phase. | none |
+| I-Eval-2 | `phase-i-eval-2-deployed-workspaces.ts` | Migrated `xhs:test` shows `phoneNumber` post-Bucket-2 PATCH. Drives the create dialog → Settings PATCH → typed-confirm delete flow against deployed VPS. Verifies on-disk side effects via `docker exec ls /data/orchestrator/workspaces/`. | none |
+| I-Eval-3 | `phase-i-eval-3-deployed-teams.ts` | Drives Teams list → create dialog → add agent → edit prompt PUT → force-delete via Danger Zone. Verifies `social-media-engagement` survives + new team's dir on disk via `docker exec`. | none |
+| I-Eval-4 | `phase-i-eval-4-deployed-run-flow.ts` | Drives the New Run dialog (no phone field!), intercepts POST body, asserts `body.phone` absent + `body.workspace`/`body.team`/`body.userMessage` present. Then drives the canonical XHS run via SSE; full P5 false-pass guards (turnCount > 0, finalText non-empty, status=completed, expected v7 chunks, ≥1 phone_action with all 3 traces). | phone-4 + XHS |
+| I-Eval-5 | `phase-i-eval-5-f1-regression.ts` | Wraps `phase-f1-api-smoke.ts` (already updated to drop `phone` field). F1 still passes against deployed VPS post Phase I migration. Replaces Phase G G2 for this phase. | phone-4 (resolver only) |
+| I-Eval-6 | `phase-i-eval-6-f8-regression.ts` | Wraps `phase-f8-phone4-canonical.ts`. Confirms full agent + sharp + trace pipeline still works via workspace-resolved phone. Replaces Phase G G3 for this phase. | phone-4 + XHS |
+
+### Console error policy (I-Eval-1, I-Eval-2, I-Eval-3, I-Eval-4)
+
+Strict default: any `error`-level console message OR pageerror fails the test.
+Exclusions:
+- favicon-related 404s
+- React DevTools install prompts
+- vite HMR pings (production builds shouldn't emit any but kept for safety)
+
+### Override knobs (Phase I evaluator)
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `ORCHESTRATOR_API_URL` | `https://otacon-orchestrator.tail0437b8.ts.net` | Override the VPS API base URL (used by all 6 I-Eval scenarios). |
+| `ORCHESTRATOR_VPS_SSH` | `ubuntu@otacon-orchestrator.tail0437b8.ts.net` | Override SSH target for I-Eval-2 + I-Eval-3 disk checks. |
+| `OTACON_I_EVAL_4_PROMPT` | "open Xiaohongshu (com.xingin.xhs) and scroll the home feed once, then exit. Tell me what you saw in one sentence." | I-Eval-4 canonical prompt. |
+| `OTACON_I_EVAL_4_TIMEOUT_MS` | `1500000` (25 min) | I-Eval-4 hard timeout. |
+
 ## Sign-off rules
 
 - All scenarios pass + run output captured in TaskUpdate.

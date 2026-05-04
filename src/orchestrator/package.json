@@ -20,7 +20,8 @@
     "otacon-cli": "workspace:*",
     "sharp": "^0.33.0",
     "typebox": "^1.0.0",
-    "ulid": "^2.3.0"
+    "ulid": "^2.3.0",
+    "yaml": "^2.6.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
