@@ -7,7 +7,9 @@
     "colima@latest",
     "python312@latest",
     "uv@latest",
-    "opentofu@latest"
+    "opentofu@latest",
+    "nodejs@24",
+    "pnpm@10.32.1"
   ],
   "shell": {
     "init_hook": [

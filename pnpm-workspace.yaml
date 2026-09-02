@@ -4,4 +4,10 @@ packages:
   - src/orchestrator/web
 
 allowBuilds:
+  '@google/genai': false
+  '@mongodb-js/zstd': false
   esbuild: true
+  koffi: false
+  node-liblzma: false
+  protobufjs: false
+  sharp: true

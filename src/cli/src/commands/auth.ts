@@ -9,7 +9,8 @@ export function authCommands(): Command {
     .command("register")
     .description("Register with a registry (long-polls for admin approval)")
     .option("--registry <url>", "registry URL")
-    .action(async (opts: { registry?: string }) => {
+    .action(async (_opts: { registry?: string }, command: Command) => {
+      const opts = command.optsWithGlobals() as { registry?: string };
       const { registryUrl } = resolveConfig({ registry: opts.registry });
       if (!registryUrl) {
         console.error(

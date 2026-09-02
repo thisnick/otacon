@@ -13,8 +13,8 @@
   },
   "dependencies": {
     "@hono/node-server": "^2.0.1",
-    "@mariozechner/pi-agent-core": "latest",
-    "@mariozechner/pi-ai": "latest",
+    "@mariozechner/pi-agent-core": "0.73.1",
+    "@mariozechner/pi-ai": "0.73.1",
     "hono": "^4.12.16",
     "just-bash": "^2.14.0",
     "otacon-cli": "workspace:*",

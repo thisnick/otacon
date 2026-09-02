@@ -49,11 +49,11 @@ importers:
         specifier: ^2.0.1
         version: 2.0.1(hono@4.12.16)
       '@mariozechner/pi-agent-core':
-        specifier: latest
-        version: 0.72.0(ws@8.20.0)(zod@4.3.6)
+        specifier: 0.73.1
+        version: 0.73.1(ws@8.20.0)(zod@4.3.6)
       '@mariozechner/pi-ai':
-        specifier: latest
-        version: 0.72.0(ws@8.20.0)(zod@4.3.6)
+        specifier: 0.73.1
+        version: 0.73.1(ws@8.20.0)(zod@4.3.6)
       hono:
         specifier: ^4.12.16
         version: 4.12.16
@@ -95,8 +95,8 @@ importers:
         specifier: ^0.2.0
         version: 0.2.1(lit@3.3.2)(tailwindcss@4.2.4)
       '@mariozechner/pi-web-ui':
-        specifier: 0.72.0
-        version: 0.72.0(@mariozechner/mini-lit@0.2.1(lit@3.3.2)(tailwindcss@4.2.4))(lit@3.3.2)(zod@4.3.6)
+        specifier: 0.73.1
+        version: 0.73.1(@mariozechner/mini-lit@0.2.1(lit@3.3.2)(tailwindcss@4.2.4))(lit@3.3.2)(zod@4.3.6)
       '@radix-ui/react-slot':
         specifier: ^1.2.0
         version: 1.2.4(@types/react@19.2.14)(react@19.2.5)
@@ -1006,21 +1006,25 @@ packages:
     peerDependencies:
       lit: ^3.3.1
 
-  '@mariozechner/pi-agent-core@0.72.0':
-    resolution: {integrity: sha512-JQ5XClWNMAQDCnwWHF9H7UpRC9EYXlLC+k900pbqydq0sexydZ/qfZvrJR61jKx3E/gotUINsNNiZHuwahvNwA==}
+  '@mariozechner/pi-agent-core@0.73.1':
+    resolution: {integrity: sha512-Y/KVOhuKSgRQgYBlwmRtO2gPkUcoavOSqGF9bpQIINvNZvc19k6Z1H3bFDTce3Vp5ApMmTsfLH3+tNvOg75fAQ==}
     engines: {node: '>=20.0.0'}
+    deprecated: please use @earendil-works/pi-agent-core instead going forward
 
-  '@mariozechner/pi-ai@0.72.0':
-    resolution: {integrity: sha512-7YJJ2t4OlMVETFA7YGXcuQLJZi600iu6P/OPp9mWb+1U/uTcpEcSOlm/gAzrU0uJsDBsz7fyJRgIIwbGo2p59g==}
+  '@mariozechner/pi-ai@0.73.1':
+    resolution: {integrity: sha512-Jh4lXawZYuC83HzSIYuVum9NBqJD49i4JOt3H96cGW/924cwJMOyUs1Mv/e4QPzTXnzrqMoGviNQnvGgSu1LSg==}
     engines: {node: '>=20.0.0'}
+    deprecated: please use @earendil-works/pi-ai instead going forward
     hasBin: true
 
-  '@mariozechner/pi-tui@0.72.0':
-    resolution: {integrity: sha512-uwCU/+qYrbHvmgQmIJL9DCtj2Q2EgvgBaz/8IVpKqhTT15JjBlY6M9Kems+2QtY/Q/eermTjswrUhxj1s3HE1w==}
+  '@mariozechner/pi-tui@0.73.1':
+    resolution: {integrity: sha512-ybVsRnUbzQRtbocltJ2OXb2QogrO67N2BlUyKjZz9BHcZYiDJtNkcKQockxDjsVvDc0uBCLDX6iZJoBElBd8fw==}
     engines: {node: '>=20.0.0'}
+    deprecated: please use @earendil-works/pi-tui instead going forward
 
-  '@mariozechner/pi-web-ui@0.72.0':
-    resolution: {integrity: sha512-Cuk95DmTNPscFzMluHoGfNOtX1fPJQxBe9f3vQTGrgg+s5OfFic++DyrULP2fzkDCjDvONMh1oAUvCcxUec+ag==}
+  '@mariozechner/pi-web-ui@0.73.1':
+    resolution: {integrity: sha512-GF/5BzJxU0LgPvava5PAbPHupfFxHlAuORMSCKAUpp+9U8JTGoADo3qIS5+w9T/LH3JdcU2/xWKOiAyF//Wb0A==}
+    deprecated: please use @earendil-works/pi-web-ui instead going forward
     peerDependencies:
       '@mariozechner/mini-lit': ^0.2.0
       lit: ^3.3.1
@@ -2188,6 +2192,7 @@ packages:
   '@smithy/util-retry@4.3.6':
     resolution: {integrity: sha512-p6/FO1n2KxMeQyna067i0uJ6TSbb165ZhnRtCpWh4Foxqbfc6oW+XITaL8QkFJj3KFnDe2URt4gOhgU06EP9ew==}
     engines: {node: '>=18.0.0'}
+    deprecated: '@smithy/util-retry v4.3.6 contains a bug in Adaptive Retry, see https://github.com/smithy-lang/smithy-typescript/issues/1993. Upgrade to 4.3.7+'
 
   '@smithy/util-stream@4.5.25':
     resolution: {integrity: sha512-/PFpG4k8Ze8Ei+mMKj3oiPICYekthuzePZMgZbCqMiXIHHf4n2aZ4Ps0aSRShycFTGuj/J6XldmC0x0DwednIA==}
@@ -3821,7 +3826,7 @@ packages:
         optional: true
 
   xlsx@https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz:
-    resolution: {tarball: https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz}
+    resolution: {integrity: sha512-oLDq3jw7AcLqKWH2AhCpVTZl8mf6X2YReP+Neh0SJUzV/BdZYjth94tG5toiMB1PPrYtxOCfaoUCkvtuH+3AJA==, tarball: https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz}
     version: 0.20.3
     engines: {node: '>=0.8'}
     hasBin: true
@@ -4924,9 +4929,9 @@ snapshots:
     transitivePeerDependencies:
       - tailwindcss
 
-  '@mariozechner/pi-agent-core@0.72.0(ws@8.20.0)(zod@4.3.6)':
+  '@mariozechner/pi-agent-core@0.73.1(ws@8.20.0)(zod@4.3.6)':
     dependencies:
-      '@mariozechner/pi-ai': 0.72.0(ws@8.20.0)(zod@4.3.6)
+      '@mariozechner/pi-ai': 0.73.1(ws@8.20.0)(zod@4.3.6)
       typebox: 1.1.36
     transitivePeerDependencies:
       - '@modelcontextprotocol/sdk'
@@ -4937,7 +4942,7 @@ snapshots:
       - ws
       - zod
 
-  '@mariozechner/pi-ai@0.72.0(ws@8.20.0)(zod@4.3.6)':
+  '@mariozechner/pi-ai@0.73.1(ws@8.20.0)(zod@4.3.6)':
     dependencies:
       '@anthropic-ai/sdk': 0.91.1(zod@4.3.6)
       '@aws-sdk/client-bedrock-runtime': 3.1040.0
@@ -4959,7 +4964,7 @@ snapshots:
       - ws
       - zod
 
-  '@mariozechner/pi-tui@0.72.0':
+  '@mariozechner/pi-tui@0.73.1':
     dependencies:
       '@types/mime-types': 2.1.4
       chalk: 5.6.2
@@ -4969,12 +4974,12 @@ snapshots:
     optionalDependencies:
       koffi: 2.16.1
 
-  '@mariozechner/pi-web-ui@0.72.0(@mariozechner/mini-lit@0.2.1(lit@3.3.2)(tailwindcss@4.2.4))(lit@3.3.2)(zod@4.3.6)':
+  '@mariozechner/pi-web-ui@0.73.1(@mariozechner/mini-lit@0.2.1(lit@3.3.2)(tailwindcss@4.2.4))(lit@3.3.2)(zod@4.3.6)':
     dependencies:
       '@lmstudio/sdk': 1.5.0
       '@mariozechner/mini-lit': 0.2.1(lit@3.3.2)(tailwindcss@4.2.4)
-      '@mariozechner/pi-ai': 0.72.0(ws@8.20.0)(zod@4.3.6)
-      '@mariozechner/pi-tui': 0.72.0
+      '@mariozechner/pi-ai': 0.73.1(ws@8.20.0)(zod@4.3.6)
+      '@mariozechner/pi-tui': 0.73.1
       docx-preview: 0.3.7
       jszip: 3.10.1
       lit: 3.3.2
