@@ -41,6 +41,41 @@ make push              # Provision + build + push + pull + start
 make health            # Verify everything is running
 ```
 
+### Build on the remote ARM worker
+
+The builder role can share a VPS with the orchestrator or run on a separate
+machine. It exposes no Docker TCP port: the local Docker context connects to
+the host's Unix socket over SSH. Set `BUILDER_HOST` and `BUILDER_USER` in
+`.env`, then run:
+
+```bash
+make provision-builder       # Install or update the repeatable host role
+make builder-init            # Create the SSH context and BuildKit worker
+make builder-build           # Build and load both linux/arm64 images remotely
+make builder-push            # Build remotely and push both images to GHCR
+make builder-deploy          # Push remotely, then pull and start them on the Pi
+make builder-benchmark       # Time a normal cache-aware build
+make builder-benchmark-cold  # Time a true --no-cache build
+make builder-status          # Show worker and cache status
+```
+
+Before the first push, run `docker login ghcr.io` on the development machine.
+Buildx forwards those client-side registry credentials to the remote BuildKit
+session; credentials are not installed on the builder. The Pi must also be
+able to pull the images (`make setup-pi` performs its one-time GHCR login).
+
+`make builder-build` uses `--load`, leaving the images in the VPS Docker image
+store for inspection. `make builder-push` instead uses `--push`. The complete
+offloaded release path is `make builder-deploy`: it builds on the ARM VPS,
+pushes to GHCR, copies only an allowlisted set of Pi runtime variables from
+`.env`, pulls the images on the Pi, and runs `docker compose up -d`. The older
+`make push` workflow remains available and still builds locally before pushing
+and deploying.
+
+`make builder-remove` removes the BuildKit worker/cache, local context,
+builder configuration, and x86 emulation registration. It intentionally keeps
+the shared Docker Engine and any orchestrator containers running.
+
 ### Flash a new Pi from scratch
 
 ```bash
@@ -173,6 +208,18 @@ Build (local):
   make pigen            Build flashable Pi image
   make pigen-flash      Flash Pi image (DEVICE=/dev/sdX)
   make pigen-config     Write startup.conf to SD card boot partition (DEVICE=/Volumes/bootfs)
+
+Build (remote ARM worker):
+  make provision-builder       Apply the independent builder host role
+  make builder-init            Create the SSH Docker context and BuildKit worker
+  make builder-build           Build + load otacon and voice on the worker
+  make builder-push            Build on the worker and push both images to GHCR
+  make builder-deploy          Push remotely, then pull/start on the Pi
+  make builder-benchmark       Time a cache-aware remote build
+  make builder-benchmark-cold  Time a remote build with --no-cache
+  make builder-status          Show worker/cache status
+  make builder-prune           Remove cache entries older than 14 days
+  make builder-remove          Remove the builder role; retain orchestrator/Docker
 
 Phone:
   make phone-setup      Lock down connected phone

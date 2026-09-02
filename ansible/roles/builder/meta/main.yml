@@ -1,0 +1,4 @@
+---
+dependencies:
+  - role: docker_engine
+    docker_engine_user: "{{ builder_user }}"

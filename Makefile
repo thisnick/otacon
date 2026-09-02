@@ -8,13 +8,33 @@
        admin-logs admin-restart admin-token bootstrap-admin-token \
        orchestrator-build orchestrator-push orchestrator-deploy \
        orchestrator-logs orchestrator-restart \
-       orchestrator-tofu-init orchestrator-tofu-plan orchestrator-tofu-apply
+       orchestrator-tofu-init orchestrator-tofu-plan orchestrator-tofu-apply \
+       provision-builder provision-orchestrator provision-vps \
+       builder-context builder-init builder-status builder-build \
+       builder-build-otacon builder-build-voice builder-push builder-deploy \
+       builder-benchmark builder-prune builder-benchmark-cold builder-remove
 
 PI_HOST ?= otacon-pi
 PI_USER ?= nick
 REMOTE := $(PI_USER)@$(PI_HOST)
 REMOTE_DIR := ~/otacon
 SSH_CMD := ssh $(REMOTE)
+
+# OCI ARM build worker. Docker stays on its Unix socket and is reached
+# through SSH over Tailscale; no Docker TCP port is exposed.
+BUILDER_HOST ?= otacon-orchestrator.tail0437b8.ts.net
+BUILDER_USER ?= ubuntu
+BUILDER_CONTEXT ?= otacon-builder
+BUILDX_BUILDER ?= otacon-remote
+BUILDKIT_IMAGE ?= moby/buildkit:v0.30.0
+BUILDER_BUILD_FLAGS ?=
+BUILDER_OUTPUT ?= --load
+BUILDER_BENCHMARK_LABEL ?= Remote ARM build
+BUILDER_ENDPOINT := ssh://$(BUILDER_USER)@$(BUILDER_HOST)
+BUILDKIT_CONFIG := ansible/roles/builder/files/buildkitd.toml
+ANSIBLE_ENV := ANSIBLE_CONFIG=$(CURDIR)/ansible/ansible.cfg \
+	ANSIBLE_LOCAL_TEMP=$(CURDIR)/.local/ansible-tmp \
+	ANSIBLE_SSH_CONTROL_PATH_DIR=$(CURDIR)/.local/ansible-cp
 
 # Docker (build locally, manage on Pi)
 build:
@@ -208,3 +228,87 @@ orchestrator-tofu-plan:
 
 orchestrator-tofu-apply:
 	cd tofu && tofu apply plan.tfplan
+
+# VPS roles are independent. The same inventory host can belong to both
+# groups, or the groups can point at separate machines later.
+provision-builder:
+	$(ANSIBLE_ENV) devbox run -- ansible-playbook -i ansible/inventory/vps.yml ansible/vps.yml --tags builder
+
+provision-orchestrator:
+	$(ANSIBLE_ENV) devbox run -- ansible-playbook -i ansible/inventory/vps.yml ansible/vps.yml --tags orchestrator
+
+provision-vps:
+	$(ANSIBLE_ENV) devbox run -- ansible-playbook -i ansible/inventory/vps.yml ansible/vps.yml
+
+builder-context:
+	@if docker context inspect $(BUILDER_CONTEXT) >/dev/null 2>&1; then \
+		docker context update $(BUILDER_CONTEXT) --docker host=$(BUILDER_ENDPOINT) >/dev/null; \
+	else \
+		docker context create $(BUILDER_CONTEXT) --docker host=$(BUILDER_ENDPOINT); \
+	fi
+
+builder-init: builder-context
+	@if ! docker buildx inspect $(BUILDX_BUILDER) >/dev/null 2>&1; then \
+		docker buildx create \
+			--name $(BUILDX_BUILDER) \
+			--driver docker-container \
+			--driver-opt image=$(BUILDKIT_IMAGE) \
+			--buildkitd-config $(BUILDKIT_CONFIG) \
+			$(BUILDER_CONTEXT); \
+	fi
+	docker buildx inspect $(BUILDX_BUILDER) --bootstrap
+
+builder-status:
+	docker --context $(BUILDER_CONTEXT) info
+	docker buildx du --builder $(BUILDX_BUILDER)
+
+builder-build: builder-build-otacon builder-build-voice
+
+builder-build-otacon: builder-init
+	docker --context $(BUILDER_CONTEXT) buildx build \
+		--builder $(BUILDX_BUILDER) $(BUILDER_BUILD_FLAGS) \
+		--platform linux/arm64 \
+		-f Dockerfile.otacon \
+		-t ghcr.io/thisnick/$(OTACON_REPO)/otacon:latest \
+		$(BUILDER_OUTPUT) \
+		.
+
+builder-build-voice: builder-init
+	docker --context $(BUILDER_CONTEXT) buildx build \
+		--builder $(BUILDX_BUILDER) $(BUILDER_BUILD_FLAGS) \
+		--platform linux/arm64 \
+		-f Dockerfile.voice \
+		-t ghcr.io/thisnick/$(OTACON_REPO)/voice:latest \
+		$(BUILDER_OUTPUT) \
+		.
+
+# BuildKit uses the invoking machine's Docker credentials for registry
+# authentication even though compilation runs on the remote VPS.
+builder-push: BUILDER_OUTPUT := --push
+builder-push: builder-build
+
+# Push from the builder, then sync the Pi compose/env files, pull the
+# published images, and start them without rebuilding on this machine.
+builder-deploy: builder-push
+	./scripts/deploy.sh $(PI_HOST) pull
+
+builder-benchmark:
+	@set -e; started=$$(date +%s); \
+	$(MAKE) BUILDER_BUILD_FLAGS="$(BUILDER_BUILD_FLAGS)" builder-build; \
+	finished=$$(date +%s); \
+	echo "$(BUILDER_BENCHMARK_LABEL): $$((finished - started))s"
+
+builder-benchmark-cold: BUILDER_BUILD_FLAGS := --no-cache
+builder-benchmark-cold: BUILDER_BENCHMARK_LABEL := Remote ARM no-cache build
+builder-benchmark-cold: builder-benchmark
+
+builder-prune:
+	docker buildx prune --builder $(BUILDX_BUILDER) --force --filter until=336h
+
+# Removes the remote BuildKit container/cache and local Docker context,
+# then removes builder-only host configuration. Docker and the
+# orchestrator are intentionally retained.
+builder-remove:
+	-docker buildx rm $(BUILDX_BUILDER)
+	-docker context rm --force $(BUILDER_CONTEXT)
+	BUILDER_STATE=absent $(ANSIBLE_ENV) devbox run -- ansible-playbook -i ansible/inventory/vps.yml ansible/vps.yml --tags builder

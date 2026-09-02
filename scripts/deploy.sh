@@ -1,6 +1,6 @@
 #!/bin/bash
 # Deploy from dev machine (Mac/Linux) to Pi via SSH.
-# Usage: ./scripts/deploy.sh [pi-host] [ansible|docker|full]
+# Usage: ./scripts/deploy.sh [pi-host] [ansible|docker|pull|full]
 set -euo pipefail
 
 PI_HOST="${1:-${PI_HOST:-otacon-pi}}"
@@ -34,10 +34,9 @@ deploy_compose() {
     ssh "${REMOTE}" "mkdir -p ${REMOTE_DIR}/scripts"
     rsync -az docker-compose.yml "${REMOTE}:${REMOTE_DIR}/docker-compose.yml"
     rsync -az scripts/ "${REMOTE}:${REMOTE_DIR}/scripts/"
-    # Filter .env to Pi-relevant vars (exclude Mac-only and Tailscale vars)
-    grep -Ev '^(PI_HOST|PI_USER|TS_AUTH_KEY)=' .env \
-        | grep -Ev '^\s*#|^\s*$' \
-        > /tmp/otacon-pi-env
+    # Explicit allowlist: never copy builder, OCI, or registry-admin secrets.
+    awk -F= '$1 ~ /^(OTACON_REPO|DISPLAY_NUM|DISPLAY_RESOLUTION|SCRCPY_MAX_FPS|SCRCPY_BITRATE|SCRCPY_MAX_SIZE|VNC_PORT|VNC_PASSWORD|WIFI_AP_SSID|WIFI_AP_PASSWORD|AUDIO_PORT|ALSA_CAPTURE_DEVICE|ALSA_PLAYBACK_DEVICE|AUDIO_BACKEND|REGISTRY_URL|TS_HOSTNAME|WATCHTOWER_POLL_INTERVAL)$/' \
+        .env > /tmp/otacon-pi-env
     rsync -az /tmp/otacon-pi-env "${REMOTE}:${REMOTE_DIR}/.env"
     rm -f /tmp/otacon-pi-env
 }
@@ -46,8 +45,15 @@ transfer_images() {
     echo "Building and pushing Docker images..."
     docker compose build
     docker compose push
+}
+
+pull_images() {
     echo "Pulling images on Pi..."
     ssh "${REMOTE}" "cd ${REMOTE_DIR} && docker compose pull && docker image prune -f"
+}
+
+start_images() {
+    ssh "${REMOTE}" "cd ${REMOTE_DIR} && docker compose up -d"
 }
 
 case "${MODE}" in
@@ -57,16 +63,23 @@ case "${MODE}" in
     docker)
         deploy_compose
         transfer_images
-        ssh "${REMOTE}" "cd ${REMOTE_DIR} && docker compose up -d"
+        pull_images
+        start_images
+        ;;
+    pull)
+        deploy_compose
+        pull_images
+        start_images
         ;;
     full)
         provision
         deploy_compose
         transfer_images
-        ssh "${REMOTE}" "cd ${REMOTE_DIR} && docker compose up -d"
+        pull_images
+        start_images
         ;;
     *)
-        echo "Usage: $0 [pi-host] [ansible|docker|full]"
+        echo "Usage: $0 [pi-host] [ansible|docker|pull|full]"
         exit 1
         ;;
 esac

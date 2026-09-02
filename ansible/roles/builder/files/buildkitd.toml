@@ -1,0 +1,19 @@
+debug = false
+
+[worker.oci]
+  gc = true
+  max-parallelism = 2
+  reservedSpace = "8GB"
+  maxUsedSpace = "30GB"
+  minFreeSpace = "8GB"
+
+  [[worker.oci.gcpolicy]]
+    filters = ["type==source.local", "type==exec.cachemount", "type==source.git.checkout"]
+    keepDuration = "168h"
+    maxUsedSpace = "8GB"
+
+  [[worker.oci.gcpolicy]]
+    keepDuration = "336h"
+    reservedSpace = "8GB"
+    maxUsedSpace = "30GB"
+    minFreeSpace = "8GB"

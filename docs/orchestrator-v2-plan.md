@@ -972,16 +972,16 @@ volumes:
 
 Same Tailscale-sidecar + Watchtower pattern as the registry stack.
 
-### VPS provisioning via OpenTofu (repurposed from `openclaw-yingjiang/infra/`)
+### VPS provisioning via OpenTofu
 
-Provisioning lives at `tofu/` in this repo. Drop-in adapt of the existing OCI Free-Tier pattern: ARM Ampere (`VM.Standard.A1.Flex`), 2 OCPU / 12GB RAM / 50GB boot, Ubuntu 24.04, with cloud-init handling first-boot setup and Tailscale enrollment. State is encrypted in-repo (`pbkdf2` + `aes_gcm`) using `TF_VAR_encryption_passphrase`.
+Provisioning lives at `tofu/` in this repo. It uses the OCI Free-Tier ARM Ampere pattern (`VM.Standard.A1.Flex`), 2 OCPU / 12GB RAM / 50GB boot, Ubuntu 24.04, with cloud-init handling first-boot setup and Tailscale enrollment. State is encrypted (`pbkdf2` + `aes_gcm`) using `TF_VAR_encryption_passphrase`, stored locally under `tofu/`, and ignored by Git.
 
-Files (mirrors `../openclaw-yingjiang/infra/`):
+Files:
 - `tofu/main.tf` — OCI provider, VCN+IGW+route+SL (only Tailscale UDP/41641 ingress + all egress), subnet, compute instance with cloud-init metadata. Display name `otacon-orchestrator`.
 - `tofu/variables.tf` — `encryption_passphrase`, `tenancy_ocid`, `user_ocid`, `fingerprint`, `private_key`/`private_key_path`, `region`, `compartment_ocid`, `tailscale_auth_key`, `tailnet_domain` (default `tail0437b8.ts.net`), `extra_ssh_public_keys`.
 - `tofu/outputs.tf` — `instance_public_ip`, `ssh_private_key` (sensitive), `instance_id`.
 - `tofu/cloud-init.yaml` — first-boot script (see below).
-- `tofu/terraform.tfstate{,.backup}` — encrypted, committed to repo.
+- `tofu/terraform.tfstate{,.backup}` — encrypted local state, ignored by Git and backed up under `.secrets/state-backups/`.
 
 #### `tofu/cloud-init.yaml`
 
@@ -1032,29 +1032,29 @@ runcmd:
 
 The compose YAML is rendered by `templatefile()` from `docker-compose.orchestrator.yml`. The file uses **the existing `TS_AUTH_KEY_REGISTRY`** locally for both Terraform's Tailscale enrollment and the Tailscale sidecar inside docker-compose — same key, two consumers.
 
-#### Required `.env` for `tofu apply` (these come from `../openclaw-yingjiang/.env`)
+#### Required `.env` for `tofu apply`
 
-The OCI vars exist already in your openclaw `.env`. Same Oracle tenancy → same vars work here:
+The OCI variables live in the Otacon repository's root `.env`:
 
 ```
-TF_VAR_encryption_passphrase=...     # reuse the openclaw passphrase
+TF_VAR_encryption_passphrase=...     # dedicated state-encryption passphrase
 TF_VAR_tenancy_ocid=ocid1.tenancy.oc1...
 TF_VAR_user_ocid=ocid1.user.oc1...
 TF_VAR_fingerprint=...
 TF_VAR_region=us-sanjose-1
 TF_VAR_compartment_ocid=...
-TF_VAR_private_key_path=/Users/nick/code/openclaw-yingjiang/wiseyu@gmail.com-2026-03-13T20_28_29.238Z.pem
+TF_VAR_private_key_path=/home/nick/code/otacon/.secrets/oci-api-key.pem
 TF_VAR_tailscale_auth_key=$TS_AUTH_KEY_REGISTRY
 TF_VAR_tailnet_domain=tail0437b8.ts.net
 ```
 
-A small bootstrap step in the Makefile sources the openclaw `.env` to fill OCI fields and substitutes the local `TS_AUTH_KEY_REGISTRY`. This avoids duplicating credentials.
+The Tofu direnv configuration sources the repository root `.env` and maps the local Tailscale credential into `TF_VAR_tailscale_auth_key`.
 
 #### Apply path
 
-`tofu apply` runs **locally** for now — no GitHub Actions workflow. Whoever runs it commits the updated encrypted state files (`terraform.tfstate{,.backup}`) back to `main`. State is safe to commit because it's encrypted at rest with `TF_VAR_encryption_passphrase`.
+`tofu apply` runs **locally** for now — no GitHub Actions workflow. Encrypted state remains Git-ignored and must be copied to `.secrets/state-backups/` after a successful apply.
 
-If we ever want CI-driven applies later, mirror `../openclaw-yingjiang/.github/workflows/terraform.yml`.
+If CI-driven applies are added later, plans should run on pull requests and applies should require explicit approval.
 
 ### Makefile additions
 
@@ -1237,21 +1237,21 @@ Changes:
 5. **Verify nothing in UI requires CLI parity gaps**: run the same flow purely via browser (start a run via a "New run" button → browse → approve → see completion). Every action visible in UI is also doable via CLI (this is the `/teams` `POST /runs` API parity check).
 6. **Integration test runner**: `tests/orchestrator/e2e/phase4-ui.ts` uses Playwright (already a known-good agent automation tool here) to drive the browser through scenarios 2 and 3. Asserts DOM updates against the SSE stream.
 
-### Phase 5 — VPS deploy via OpenTofu (repurposed from `openclaw-yingjiang`)
+### Phase 5 — VPS deploy via OpenTofu
 
 **Goal**: production runs on an OCI Free Tier ARM VPS provisioned via OpenTofu, with first-boot setup handled entirely by cloud-init. Tailscale is the only ingress; Watchtower handles image rollouts.
 
 Changes:
 - **Add**: `Dockerfile.orchestrator` (multi-stage Node 22, port 9090, mount `/data/orchestrator`).
 - **Add**: `docker-compose.orchestrator.yml` (Tailscale sidecar + orchestrator + Watchtower; same pattern as registry).
-- **Add**: `tofu/` directory (drop-in adaptation of `../openclaw-yingjiang/infra/`):
+- **Add**: self-contained `tofu/` directory:
   - `tofu/main.tf`, `tofu/variables.tf`, `tofu/outputs.tf`, `tofu/cloud-init.yaml`
   - hostname `otacon-orchestrator`, OCI `VM.Standard.A1.Flex` 2 OCPU / 12GB / 50GB
   - cloud-init writes `/opt/orchestrator/.env` + `docker-compose.yml`, installs Docker + Tailscale, `docker compose up -d`
   - reuses `TS_AUTH_KEY_REGISTRY` from local `.env` as the Tailscale auth key
-- **Add**: `tofu/.envrc.example` — `direnv` template that re-exports `TF_VAR_*` from `../openclaw-yingjiang/.env` and the local otacon `.env`. No new credential storage.
+- **Add**: `tofu/.envrc.example` — `direnv` template that re-exports `TF_VAR_*` from the local Otacon `.env`. No new credential storage.
 - **Modify**: `Makefile` — `orchestrator-build`, `orchestrator-tofu-{init,plan,apply}`, `orchestrator-{push,logs,restart}`.
-- **Modify**: `.env.example` — `OTACON_TOKEN`, `AI_GATEWAY_API_KEY`, `GHCR_PULL_TOKEN` (note: OCI vars live in `../openclaw-yingjiang/.env`, sourced via direnv).
+- **Modify**: `.env.example` — `OTACON_TOKEN`, `AI_GATEWAY_API_KEY`, `GHCR_PULL_TOKEN`, and the OCI variables sourced via direnv.
 - **Modify**: `AGENTS.md` — orchestrator deployment note.
 
 **Verification (end-to-end against the deployed VPS + phone-3)**:
@@ -1429,8 +1429,8 @@ src/orchestrator/
 **Create:**
 - `Dockerfile.orchestrator`
 - `docker-compose.orchestrator.yml`
-- `tofu/{main.tf,variables.tf,outputs.tf,cloud-init.yaml,.envrc.example}` — drop-in adaptation of `../openclaw-yingjiang/infra/*`
-- `tofu/terraform.tfstate{,.backup}` — encrypted state, committed to repo (manual `tofu apply` locally, then `git commit && git push origin main`)
+- `tofu/{main.tf,variables.tf,outputs.tf,cloud-init.yaml,.envrc.example}` — self-contained OCI provisioning
+- `tofu/terraform.tfstate{,.backup}` — encrypted local state, Git-ignored and copied to `.secrets/state-backups/` after changes
 
 ## Critical reuse
 
@@ -1612,7 +1612,7 @@ This section captures decisions corrected in-flight that were either made by the
 - **Workflow SDK requires Nitro** (build pipeline for `"use workflow"` / `"use step"` directives via `@workflow/swc-plugin`). Plain tsx won't work. Decision made in P1.
 - **Production bundle MUST set `moduleSideEffects: true` for `.nitro/workflow/` paths** in Rollup config. Otherwise step registrations get tree-shaken and `start()` throws `StepNotRegisteredError` at runtime. Patch lives in `nitro.config.ts` `rollup:before` hook (commit `bfc4385`). DO NOT remove this hook.
 - **Local apply for `tofu`** — no GH Actions CI, no remote state. Encrypted state lives locally in `tofu/terraform.tfstate` (gitignored). Anyone with the OCI creds + encryption passphrase can re-apply.
-- **OCI tenant: `wiseyu`**, region SJC (`us-sanjose-1`). Free Tier ARM Ampere ceiling: 4 OCPU + 24GB RAM total. Currently allocated: openclaw (2/12) + otacon-orchestrator (2/12) = at ceiling.
+- **OCI tenant: `wiseyu`**, region SJC (`us-sanjose-1`). The retained `otacon-orchestrator` instance uses 2 OCPU + 12GB RAM.
 
 ## Token / auth
 

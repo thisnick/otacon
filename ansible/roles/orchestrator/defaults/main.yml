@@ -1,0 +1,10 @@
+---
+orchestrator_user: ubuntu
+orchestrator_dir: /opt/orchestrator
+orchestrator_image: "ghcr.io/thisnick/{{ lookup('env', 'OTACON_REPO') | default('otacon-dev', true) }}/orchestrator:latest"
+orchestrator_registry_url: "{{ lookup('env', 'REGISTRY_URL') | default('http://otacon-registry.tail0437b8.ts.net:9080', true) }}"
+orchestrator_token: "{{ lookup('env', 'OTACON_TOKEN') | default(lookup('env', 'REGISTRY_BOOTSTRAP_ADMIN_TOKEN'), true) }}"
+orchestrator_ai_gateway_api_key: "{{ lookup('env', 'AI_GATEWAY_API_KEY') }}"
+orchestrator_port: 9090
+orchestrator_watchtower_enabled: true
+orchestrator_manage_tailscale_serve: false

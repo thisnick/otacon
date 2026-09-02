@@ -1,0 +1,21 @@
+---
+- name: Validate requested builder state
+  ansible.builtin.assert:
+    that:
+      - builder_state in ["present", "absent"]
+    fail_msg: "builder_state must be present or absent."
+
+- name: Require a native ARM builder
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['architecture'] == "aarch64"
+    fail_msg: "Otacon's remote builder must be a native arm64 host."
+  when: builder_state == "present"
+
+- name: Install builder role
+  ansible.builtin.include_tasks: present.yml
+  when: builder_state == "present"
+
+- name: Remove builder role
+  ansible.builtin.include_tasks: absent.yml
+  when: builder_state == "absent"

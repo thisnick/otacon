@@ -1,0 +1,13 @@
+---
+builder_user: ubuntu
+builder_config_dir: /etc/otacon-builder
+builder_state: present
+builder_remove_support_packages: false
+builder_binfmt_service: otacon-builder-binfmt.service
+# Immutable multi-platform index for tonistiigi/binfmt:qemu-v10.2.3-68.
+builder_binfmt_image: >-
+  docker.io/tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+builder_packages:
+  - ca-certificates
+  - git
+  - jq

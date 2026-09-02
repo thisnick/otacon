@@ -1,0 +1,16 @@
+---
+- name: Configure Otacon builder role
+  hosts: builders
+  become: true
+  gather_facts: true
+  roles:
+    - role: builder
+      tags: [builder]
+
+- name: Configure Otacon orchestrator role
+  hosts: orchestrators
+  become: true
+  gather_facts: true
+  roles:
+    - role: orchestrator
+      tags: [orchestrator]

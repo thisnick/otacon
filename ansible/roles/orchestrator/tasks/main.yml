@@ -1,0 +1,49 @@
+---
+- name: Create orchestrator deployment directory
+  ansible.builtin.file:
+    path: "{{ orchestrator_dir }}"
+    state: directory
+    owner: root
+    group: docker
+    mode: "0750"
+
+- name: Write orchestrator environment
+  ansible.builtin.template:
+    src: env.j2
+    dest: "{{ orchestrator_dir }}/.env"
+    owner: root
+    group: docker
+    mode: "0640"
+  no_log: true
+
+- name: Write orchestrator Compose definition
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ orchestrator_dir }}/docker-compose.yml"
+    owner: root
+    group: docker
+    mode: "0640"
+
+- name: Pull orchestrator images
+  ansible.builtin.command: docker compose pull
+  args:
+    chdir: "{{ orchestrator_dir }}"
+  register: orchestrator_pull
+  changed_when: "'Pulled' in orchestrator_pull.stderr or 'Downloaded' in orchestrator_pull.stderr"
+
+- name: Start orchestrator services
+  ansible.builtin.command: docker compose up -d --remove-orphans
+  args:
+    chdir: "{{ orchestrator_dir }}"
+  register: orchestrator_up
+  changed_when: >-
+    'Created' in orchestrator_up.stderr or
+    'Started' in orchestrator_up.stderr or
+    'Recreated' in orchestrator_up.stderr
+
+- name: Configure private Tailscale HTTPS endpoint
+  ansible.builtin.command: >-
+    tailscale serve --bg --https=443
+    http://127.0.0.1:{{ orchestrator_port }}
+  when: orchestrator_manage_tailscale_serve
+  changed_when: false

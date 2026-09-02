@@ -38,10 +38,30 @@ COPY src/server/static/ ./static/
 RUN cargo build --release
 
 # Stage 3: Build device owner APK
-# Force linux/amd64 — Android build tools (AAPT2) are x86_64 only
-FROM --platform=linux/amd64 eclipse-temurin:23-jdk AS apk-builder
+# Keep Java, Gradle, and sdkmanager native to the build host. The APK and JAR
+# outputs are platform-independent. Android's AAPT2 binary is x86_64-only, so
+# an ARM build host also gets the minimal x86 runtime used through binfmt.
+FROM --platform=$BUILDPLATFORM eclipse-temurin:17-jdk-noble AS apk-builder
+ARG BUILDARCH
 ENV ANDROID_HOME=/opt/android-sdk
-RUN apt-get update && apt-get install -y --no-install-recommends wget unzip \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        wget \
+        unzip \
+    && case "${BUILDARCH}" in \
+        arm64) \
+            apt-get install -y --no-install-recommends \
+                libc6-amd64-cross \
+                libstdc++6-amd64-cross \
+            && ln -s /usr/x86_64-linux-gnu/lib64 /lib64 \
+            && ln -s /usr/x86_64-linux-gnu/lib /usr/lib/x86_64-linux-gnu \
+            ;; \
+        amd64) \
+            ;; \
+        *) \
+            echo "Unsupported APK build architecture: ${BUILDARCH}" >&2 \
+            && exit 1 \
+            ;; \
+       esac \
     && mkdir -p ${ANDROID_HOME}/cmdline-tools \
     && wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O /tmp/tools.zip \
     && unzip -q /tmp/tools.zip -d ${ANDROID_HOME}/cmdline-tools \

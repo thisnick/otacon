@@ -1,0 +1,16 @@
+[Unit]
+Description=Otacon builder x86_64 emulation registration
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Replace distro registrations instead of treating an older handler as ready.
+ExecStart=-/usr/bin/docker run --pull=never --privileged --rm {{ builder_binfmt_image }} --uninstall qemu-x86_64
+ExecStart=/usr/bin/docker run --pull=never --privileged --rm {{ builder_binfmt_image }} --install amd64
+ExecStop=/usr/bin/docker run --pull=never --privileged --rm {{ builder_binfmt_image }} --uninstall qemu-x86_64
+
+[Install]
+WantedBy=multi-user.target

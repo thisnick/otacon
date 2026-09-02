@@ -1,0 +1,17 @@
+---
+all:
+  hosts:
+    otacon_vps:
+      ansible_host: "{{ lookup('env', 'BUILDER_HOST') | default('otacon-orchestrator.tail0437b8.ts.net', true) }}"
+      ansible_user: "{{ lookup('env', 'BUILDER_USER') | default('ubuntu', true) }}"
+      ansible_python_interpreter: /usr/bin/python3
+      builder_user: "{{ lookup('env', 'BUILDER_USER') | default('ubuntu', true) }}"
+      builder_state: "{{ lookup('env', 'BUILDER_STATE') | default('present', true) }}"
+      orchestrator_user: "{{ lookup('env', 'ORCH_SSH_USER') | default('ubuntu', true) }}"
+  children:
+    builders:
+      hosts:
+        otacon_vps:
+    orchestrators:
+      hosts:
+        otacon_vps:

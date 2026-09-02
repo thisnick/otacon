@@ -1,0 +1,83 @@
+---
+- name: Install builder support packages
+  ansible.builtin.apt:
+    name: "{{ builder_packages }}"
+    state: present
+    update_cache: true
+    lock_timeout: 300
+
+- name: Check pinned binfmt installer image
+  ansible.builtin.command:
+    argv:
+      - docker
+      - image
+      - inspect
+      - "{{ builder_binfmt_image }}"
+  register: builder_binfmt_image_check
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Pull pinned binfmt installer image
+  ansible.builtin.command:
+    argv:
+      - docker
+      - pull
+      - "{{ builder_binfmt_image }}"
+  when: builder_binfmt_image_check.rc != 0
+  changed_when: true
+
+- name: Install persistent x86_64 emulation service
+  ansible.builtin.template:
+    src: otacon-builder-binfmt.service.j2
+    dest: "/etc/systemd/system/{{ builder_binfmt_service }}"
+    owner: root
+    group: root
+    mode: "0644"
+  register: builder_binfmt_unit
+
+- name: Start persistent x86_64 emulation service
+  ansible.builtin.systemd_service:
+    name: "{{ builder_binfmt_service }}"
+    enabled: true
+    daemon_reload: true
+    state: "{{ 'restarted' if builder_binfmt_unit.changed else 'started' }}"
+
+- name: Check x86_64 emulation registration
+  ansible.builtin.stat:
+    path: /proc/sys/fs/binfmt_misc/qemu-x86_64
+  register: builder_x86_binfmt
+
+- name: Require x86_64 emulation registration
+  ansible.builtin.assert:
+    that:
+      - ansible_check_mode or builder_x86_binfmt.stat.exists
+    fail_msg: "The builder's x86_64 binfmt handler was not registered."
+
+- name: Create builder configuration directory
+  ansible.builtin.file:
+    path: "{{ builder_config_dir }}"
+    state: directory
+    owner: root
+    group: docker
+    mode: "0750"
+
+- name: Install BuildKit cache policy
+  ansible.builtin.copy:
+    src: buildkitd.toml
+    dest: "{{ builder_config_dir }}/buildkitd.toml"
+    owner: root
+    group: docker
+    mode: "0640"
+
+- name: Check Docker Buildx
+  ansible.builtin.command: docker buildx version
+  register: builder_buildx_version
+  changed_when: false
+  check_mode: false
+
+- name: Report builder readiness
+  ansible.builtin.debug:
+    msg: >-
+      Native arm64 builder prerequisites and pinned x86_64 emulation are ready;
+      {{ builder_buildx_version.stdout }}.

@@ -1,0 +1,35 @@
+---
+- name: Read installed services
+  ansible.builtin.service_facts:
+
+- name: Stop and disable x86_64 emulation service
+  ansible.builtin.systemd_service:
+    name: "{{ builder_binfmt_service }}"
+    enabled: false
+    state: stopped
+  when: builder_binfmt_service in ansible_facts.services
+
+- name: Remove x86_64 emulation service
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ builder_binfmt_service }}"
+    state: absent
+  register: builder_binfmt_unit_removed
+
+- name: Reload systemd after removing x86_64 emulation service
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  when: builder_binfmt_unit_removed.changed
+
+- name: Remove builder configuration
+  ansible.builtin.file:
+    path: "{{ builder_config_dir }}"
+    state: absent
+
+- name: Remove builder-only support packages when requested
+  ansible.builtin.apt:
+    name:
+      - binfmt-support
+      - qemu-user-static
+    state: absent
+    lock_timeout: 300
+  when: builder_remove_support_packages | bool

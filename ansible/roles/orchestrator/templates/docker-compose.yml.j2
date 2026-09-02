@@ -1,0 +1,25 @@
+services:
+  otacon-orchestrator:
+    image: {{ orchestrator_image }}
+    container_name: otacon-orchestrator
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - .env
+    volumes:
+      - orchestrator-data:/data/orchestrator
+
+{% if orchestrator_watchtower_enabled %}
+  watchtower:
+    image: containrrr/watchtower:latest
+    restart: unless-stopped
+    environment:
+      DOCKER_API_VERSION: "1.40"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /root/.docker/config.json:/config.json:ro
+    command: --interval 60 --cleanup --include-restarting otacon-orchestrator
+{% endif %}
+
+volumes:
+  orchestrator-data:
