@@ -1,8 +1,9 @@
 name: otacon-voice plugin
 
-# Build and test the OpenClaw plugin on changes; publish it to npm on an
-# `openclaw-voice-v<version>` tag (the version must match package.json and
-# openclaw.plugin.json). Needs the NPM_TOKEN repository secret.
+# Build and test the OpenClaw plugin on changes; publish it to npm
+# (@otacon-fleet/openclaw-voice) on an `openclaw-voice-v<version>` tag. The
+# version must match package.json and openclaw.plugin.json. Publishing uses
+# npm trusted publishing (OIDC from this workflow), so no token is needed.
 on:
   pull_request:
     paths: ["src/openclaw-voice/**", ".github/workflows/openclaw-voice.yml"]
@@ -33,7 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write # npm provenance
+      id-token: write # npm trusted publishing + provenance
     defaults:
       run:
         working-directory: src/openclaw-voice
@@ -49,6 +50,6 @@ jobs:
           test "$(node -p "require('./package.json').version")" = "$v"
           test "$(node -p "require('./openclaw.plugin.json').version")" = "$v"
       - run: npm ci --ignore-scripts
+      # Trusted publishing needs npm 11.5.1 or later.
+      - run: npm install -g npm@^11.5.1
       - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
