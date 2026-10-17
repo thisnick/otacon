@@ -10,7 +10,7 @@
     "typecheck": "pnpm -r run typecheck",
     "ui-dev": "pnpm --filter orchestrator-web dev",
     "ui-build": "pnpm --filter orchestrator-web build",
-    "cli": "pnpm --filter otacon-cli exec node --no-warnings --import tsx/esm src/index.ts",
+    "cli": "pnpm --filter @otacon-fleet/otacon-cli exec node --no-warnings --import tsx/esm src/index.ts",
     "dev": "concurrently -k -n server,web \"pnpm dev:server\" \"pnpm dev:web\"",
     "dev:server": "pnpm --filter orchestrator dev",
     "dev:web": "pnpm --filter orchestrator-web dev",
@@ -51,7 +51,9 @@
     "test:e2e:phase-i:eval:5": "pnpm --filter orchestrator exec tsx ../../tests/orchestrator/e2e/phase-i-eval-5-f1-regression.ts",
     "test:e2e:phase-i:eval:6": "pnpm --filter orchestrator exec tsx ../../tests/orchestrator/e2e/phase-i-eval-6-f8-regression.ts",
     "changeset": "changeset",
-    "version": "changeset version"
+    "version": "changeset version",
+    "version-packages": "node scripts/version-packages.mjs",
+    "release": "node scripts/publish-packages.mjs"
   },
   "devDependencies": {
     "@changesets/cli": "^2.30.0",

@@ -26,22 +26,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
-RUN corepack enable && corepack prepare pnpm@9.12.3 --activate
+RUN corepack enable && corepack prepare pnpm@10.32.1 --activate
 
 WORKDIR /src
 
 # Copy lock + workspace manifests first for better layer caching.
-# Orchestrator depends on `otacon-cli` (workspace:*) which pulls
+# Orchestrator depends on `@otacon-fleet/otacon-cli` (workspace:*) which pulls
 # api-types, so all package.json files must be present before install.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY src/cli/package.json ./src/cli/
 COPY src/orchestrator/package.json ./src/orchestrator/
 COPY src/orchestrator/web/package.json ./src/orchestrator/web/
-RUN pnpm install --frozen-lockfile
+# The OpenClaw plugin is a workspace member too, but the orchestrator doesn't
+# use it: its manifest is copied only so the lockfile matches; it isn't installed.
+COPY src/openclaw-voice/package.json ./src/openclaw-voice/
+RUN pnpm install --frozen-lockfile --filter "orchestrator..." --filter "orchestrator-web..."
 
 # Now copy sources and build only the orchestrator package + web bundle.
 COPY src/cli/ ./src/cli/
 COPY src/orchestrator/ ./src/orchestrator/
+# The orchestrator imports the CLI's compiled types (dist/ isn't in the
+# build context), so build the CLI first.
+RUN pnpm --filter @otacon-fleet/otacon-cli build
 RUN pnpm --filter orchestrator build
 RUN pnpm --filter orchestrator-web build
 
@@ -52,7 +58,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-RUN corepack enable && corepack prepare pnpm@9.12.3 --activate
+RUN corepack enable && corepack prepare pnpm@10.32.1 --activate
 
 # Non-root user owning the data dir.
 RUN groupadd -r orchestrator && useradd -r -g orchestrator -d /data -m orchestrator \
@@ -66,8 +72,9 @@ COPY --from=builder /src/package.json /src/pnpm-lock.yaml /src/pnpm-workspace.ya
 COPY --from=builder /src/src/cli/package.json ./src/cli/
 COPY --from=builder /src/src/orchestrator/package.json ./src/orchestrator/
 COPY --from=builder /src/src/orchestrator/web/package.json ./src/orchestrator/web/
+COPY --from=builder /src/src/openclaw-voice/package.json ./src/openclaw-voice/
 
-# CLI sources — `otacon-cli` is consumed at runtime via `workspace:*`
+# CLI sources — `@otacon-fleet/otacon-cli` is consumed at runtime via `workspace:*`
 # from the orchestrator package. The CLI runs from source via tsx in
 # dev; here we ship sources so the workspace symlink resolves at
 # require-time.
@@ -93,7 +100,7 @@ COPY --from=builder /src/src/orchestrator/web/dist ./src/orchestrator/dist/web/d
 # Prod-only install. With sources + manifests in place, pnpm rebuilds
 # the workspace `node_modules` graph at this fresh location; only
 # production dependencies are linked (skips tsx, typescript, etc).
-RUN pnpm install --frozen-lockfile --prod \
+RUN pnpm install --frozen-lockfile --prod --filter "orchestrator..." --filter "orchestrator-web..." \
     && pnpm store prune
 
 ENV NODE_ENV=production

@@ -11,8 +11,8 @@
  */
 import * as path from 'node:path'
 import { Bash, defineCommand, ReadWriteFs } from 'just-bash'
-import { OtaconClient } from 'otacon-cli/client'
-import { otaconRegistry } from 'otacon-cli/commands/otacon'
+import { OtaconClient } from '@otacon-fleet/otacon-cli/client'
+import { otaconRegistry } from '@otacon-fleet/otacon-cli/commands/otacon'
 import { ulid } from 'ulid'
 import type { SessionBus } from '../runtime/session-bus.js'
 import type { OtaconEvent, PhoneActionPayload } from '../types.js'

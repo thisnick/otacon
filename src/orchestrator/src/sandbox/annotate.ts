@@ -20,7 +20,7 @@
  * `A11yNode.bounds` is `{x1, y1, x2, y2}` (top-left + bottom-right corners).
  */
 import sharp from 'sharp'
-import type { OtaconClient } from 'otacon-cli/client'
+import type { OtaconClient } from '@otacon-fleet/otacon-cli/client'
 
 export interface RefBounds {
   x1: number

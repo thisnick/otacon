@@ -21,7 +21,7 @@
  * Anything that isn't `otacon ...` returns false — shell utilities like
  * cat/echo/ls bypass approval entirely.
  */
-import { otaconRegistry } from 'otacon-cli/commands/otacon'
+import { otaconRegistry } from '@otacon-fleet/otacon-cli/commands/otacon'
 
 /** Verbs whose first arg decides whether this invocation mutates. */
 const SUBCOMMAND_MATRIX: Record<string, { mutating: ReadonlySet<string>; defaultSub?: string }> = {

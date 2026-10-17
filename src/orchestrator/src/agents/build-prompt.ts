@@ -11,7 +11,7 @@
  */
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
-import { otaconRegistry } from 'otacon-cli/commands/otacon'
+import { otaconRegistry } from '@otacon-fleet/otacon-cli/commands/otacon'
 import { workspaceEnvDir } from '../storage/paths.js'
 import { readTeam, readTeamPrompt } from '../storage/team.js'
 import type { Workspace } from '../types.js'

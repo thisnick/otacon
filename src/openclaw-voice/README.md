@@ -59,11 +59,10 @@ gateway (secrets resolve at start).
 ## Build and release
 
 ```sh
-npm install && npm test && npm pack       # local tarball: openclaw plugins install ./<tgz>
+pnpm install && pnpm --filter @otacon-fleet/openclaw-otacon-voice test && (cd src/openclaw-voice && npm pack)   # local tarball
 ```
 
-Releases are published to npm as `@otacon-fleet/openclaw-otacon-voice` by
-`.github/workflows/openclaw-otacon-voice.yml` when an
-`openclaw-otacon-voice-v<version>` tag is pushed (npm trusted publishing, no token); bump `version` in both
-`package.json` and `openclaw.plugin.json` first. End-to-end tests:
+Releases go to npm as `@otacon-fleet/openclaw-otacon-voice` through
+changesets (`pnpm changeset`, then the Version Packages PR); see
+`docs/releasing.md`. End-to-end tests:
 `tests/voice/README.md`.
