@@ -3,7 +3,7 @@
 // outcomes back to the agent session that asked for the call.
 
 import type { PluginApi } from "openclaw/plugin-sdk/plugin-entry";
-import { CallMission, type MissionReport, type Party } from "./call.js";
+import { CallMission, type MissionReport, type Party, type RealtimeSdk, type SpeechDetectorLike } from "./call.js";
 import { isE164, type Contact, type OtaconVoiceConfig } from "./config.js";
 import { OtaconLink } from "./otacon.js";
 import { formatReport } from "./report.js";
@@ -22,15 +22,23 @@ export interface StartCall {
 export class OtaconVoiceRuntime {
   readonly link: OtaconLink;
   private mission?: CallMission;
-  private detector: SpeechDetector | null = null;
+  private detector: SpeechDetectorLike | null = null;
   private recent: MissionReport[] = [];
 
-  constructor(private api: PluginApi, private config: OtaconVoiceConfig) {
-    this.link = new OtaconLink({ ...config.otacon, logger: api.logger });
+  constructor(
+    private api: PluginApi,
+    private config: OtaconVoiceConfig,
+    private sdk: RealtimeSdk,
+    deps: { link?: OtaconLink; createDetector?: () => Promise<SpeechDetectorLike | null> } = {},
+  ) {
+    this.link = deps.link ?? new OtaconLink({ ...config.otacon, logger: api.logger });
+    this.createDetector = deps.createDetector ?? (() => SpeechDetector.create());
   }
 
+  private createDetector: () => Promise<SpeechDetectorLike | null>;
+
   async start() {
-    this.detector = await SpeechDetector.create().catch(() => null);
+    this.detector = await this.createDetector().catch(() => null);
     if (!this.detector) this.api.logger.warn("[otacon-voice] speech detector unavailable (onnxruntime-node); hold detection falls back to the model");
     this.link.on("call", (msg) => this.onCall(msg));
     this.link.start();
@@ -82,6 +90,7 @@ export class OtaconVoiceRuntime {
       api: this.api,
       config: this.config,
       link: this.link,
+      sdk: this.sdk,
       detector: this.detector,
       ...o,
       onEnd: (report) => this.onMissionEnd(report),
@@ -120,7 +129,7 @@ export class OtaconVoiceRuntime {
     const sessionKey = report.requesterSessionKey ?? `agent:${report.agentId}:main`;
     const text = formatReport(report);
     this.api.logger.info(
-      `[otacon-voice] ${report.missionId} reported to ${sessionKey}: ${report.outcome}; ${report.summary ?? "no summary"}; ${report.transcript.length} transcript lines`,
+      `[otacon-voice] ${report.missionId} reported to ${sessionKey}: ${report.outcome}; ${report.log.length} log entries`,
     );
     try {
       this.api.runtime.system.enqueueSystemEvent(text, { sessionKey, contextKey: `otacon-voice:${report.missionId}` });

@@ -8,22 +8,47 @@
 
 import { randomUUID } from "node:crypto";
 import type { PluginApi } from "openclaw/plugin-sdk/plugin-entry";
-import {
-  REALTIME_VOICE_AGENT_CONSULT_TOOL,
-  REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME,
-  REALTIME_VOICE_AUDIO_FORMAT_PCM16_24KHZ,
+import type {
+  BridgeSession,
+  RealtimeToolSpec,
+  RealtimeVoiceAudioFormat,
+  ResolvedProvider,
+  ToolCallEvent,
   consultRealtimeVoiceAgent,
   createRealtimeVoiceBridgeSession,
-  createStreamingPcmResampler,
   resolveConfiguredRealtimeVoiceProvider,
-  resolveRealtimeVoiceAgentConsultToolsAllow,
-  type BridgeSession,
-  type RealtimeToolSpec,
-  type ToolCallEvent,
 } from "openclaw/plugin-sdk/realtime-voice";
 import type { Contact, OtaconVoiceConfig } from "./config.js";
 import { OtaconCommandError, type OtaconCall, type OtaconLink } from "./otacon.js";
-import { SpeechWindow, type SpeechDetector } from "./vad.js";
+import { SpeechWindow } from "./vad.js";
+
+/** The parts of the realtime-voice SDK a call uses (see realtime.ts); tests pass fakes. */
+export interface RealtimeSdk {
+  consultTool: RealtimeToolSpec;
+  consultToolName: string;
+  audioFormat: RealtimeVoiceAudioFormat;
+  resolveProvider: typeof resolveConfiguredRealtimeVoiceProvider;
+  createSession: typeof createRealtimeVoiceBridgeSession;
+  consult: typeof consultRealtimeVoiceAgent;
+  consultToolsAllow(policy: string): string[] | undefined;
+  resampler(inRate: number, outRate: number): { process(chunk: Buffer): Buffer };
+}
+
+/** Speech probability per 32 ms window of 16 kHz audio (vad.ts). */
+export interface SpeechDetectorLike {
+  push(pcm16: Buffer, onWindow: (prob: number) => void): void;
+}
+
+/** One entry of the call log: something someone said, or something that happened. */
+export interface LogEntry {
+  /** Milliseconds since the mission started */
+  t: number;
+  line?: number;
+  /** "say": the assistant spoke; "hear": the other side spoke; "event" */
+  kind: "say" | "hear" | "event";
+  who?: string;
+  text: string;
+}
 
 const MODEL_RATE = 24000;
 const PREROLL_MS = 2000;
@@ -69,8 +94,9 @@ export interface MissionReport {
   party: Party;
   brief?: string;
   outcome: Outcome;
+  /** The assistant's own summary, when it ended the call itself */
   summary?: string;
-  transcript: { line: number; who: string; text: string }[];
+  log: LogEntry[];
   startedAt: number;
   endedAt: number;
   requesterSessionKey?: string;
@@ -81,7 +107,8 @@ export interface MissionOptions {
   api: PluginApi;
   config: OtaconVoiceConfig;
   link: OtaconLink;
-  detector: SpeechDetector | null;
+  sdk: RealtimeSdk;
+  detector: SpeechDetectorLike | null;
   direction: "outbound" | "inbound";
   party: Party;
   /** Inbound: the ringing otacon call to answer */
@@ -109,13 +136,13 @@ export class CallMission {
   private ended = false;
   private outcome: Outcome = "completed";
   private summary?: string;
-  private transcript: MissionReport["transcript"] = [];
+  private log: LogEntry[] = [];
   private timers: NodeJS.Timeout[] = [];
   private detachHandlers: (() => void)[] = [];
 
   // audio
-  private up = createStreamingPcmResampler(16000, MODEL_RATE);
-  private down = createStreamingPcmResampler(MODEL_RATE, 16000);
+  private up: { process(chunk: Buffer): Buffer };
+  private down: { process(chunk: Buffer): Buffer };
   private preroll: Buffer[] = [];
   private prerollBytes = 0;
   private playing: { itemId: string; firstAt: number; sentMs: number } | null = null;
@@ -131,7 +158,14 @@ export class CallMission {
   private detached = false;
   private pendingMerge?: () => void;
 
-  constructor(private o: MissionOptions) {}
+  constructor(private o: MissionOptions) {
+    this.up = o.sdk.resampler(16000, MODEL_RATE);
+    this.down = o.sdk.resampler(MODEL_RATE, 16000);
+  }
+
+  private note(text: string, line = this.active ?? undefined) {
+    this.log.push({ t: Date.now() - this.startedAt, line, kind: "event", text });
+  }
 
   get status() {
     return {
@@ -147,7 +181,7 @@ export class CallMission {
     };
   }
 
-  private log(msg: string) {
+  private debug(msg: string) {
     this.o.api.logger.info(`[otacon-voice] ${this.id} ${msg}`);
   }
 
@@ -159,14 +193,19 @@ export class CallMission {
     this.timers.push(setTimeout(() => this.finish("max_duration"), config.maxCallSeconds * 1000));
     try {
       if (this.o.direction === "outbound") {
+        this.note(`dialing ${this.o.party.number}`, 1);
         const r = await link.cmd("dial", { to: this.o.party.number });
         this.addLine(r.call, this.o.party);
         const call = await link.waitFor(r.call.id, ["active", "ended"], config.ringTimeoutSeconds * 1000);
         if (!call || call.state !== "active") {
-          this.log(`no answer (${call?.state ?? "timeout"})`);
-          return this.finish(call?.state === "ended" ? "no_answer" : "no_answer");
+          this.debug(`no answer (${call?.state ?? "timeout"})`);
+          this.note(call?.state === "ended" ? "the call ended before it was answered" : `no answer after ${config.ringTimeoutSeconds}s`, 1);
+          if (call && call.state !== "ended") await link.cmd("hangup", { call: r.call.id }).catch(() => undefined);
+          return this.finish("no_answer");
         }
+        this.note("answered", 1);
       } else {
+        this.note(`answering a call from ${this.o.party.number}`, 1);
         const r = await link.cmd("answer", { call: this.o.inboundCallId });
         this.addLine(r.call, this.o.party);
       }
@@ -174,7 +213,7 @@ export class CallMission {
       this.lines[0].state = "active";
       await this.startModel();
     } catch (err) {
-      this.log(`start failed: ${String(err)}`);
+      this.debug(`start failed: ${String(err)}`);
       this.summary = `Could not place the call: ${err instanceof Error ? err.message : String(err)}`;
       this.finish("failed");
     }
@@ -195,7 +234,7 @@ export class CallMission {
     const onCall = (msg: any) => this.onCallEvent(msg);
     const onAudio = (pcm: Buffer) => this.onDownlink(pcm);
     const onClose = () => {
-      if (!this.ended) this.log("otacon socket closed during the call");
+      if (!this.ended) this.debug("otacon socket closed during the call");
     };
     link.on("call", onCall);
     link.on("audio", onAudio);
@@ -212,7 +251,8 @@ export class CallMission {
     if (!line) return;
     line.state = msg.type === "call.ended" ? "ended" : msg.call.state;
     if (msg.type === "call.ended") {
-      this.log(`line ${line.n} (${line.party.name}) ended: ${msg.reason}`);
+      this.debug(`line ${line.n} (${line.party.name}) ended: ${msg.reason}`);
+      this.note(msg.reason === "local" ? `line ${line.n} hung up` : `${line.party.name} hung up (${msg.reason})`, line.n);
       this.onLineEnded(line, msg.reason);
       return;
     }
@@ -220,6 +260,8 @@ export class CallMission {
   }
 
   private onLineEnded(line: Line, reason: string) {
+    // Not answered yet: start() sees the end and reports no_answer.
+    if (this.active === null) return;
     const live = this.lines.filter((l) => l.state !== "ended");
     if (this.detached) return this.checkMergedCall();
     if (!live.length) {
@@ -259,7 +301,7 @@ export class CallMission {
       }
     }
     if (outcome !== "handed_off") for (const d of this.detachHandlers) d();
-    this.log(`finished: ${outcome}`);
+    this.debug(`finished: ${outcome}`);
     this.o.onEnd(this.report());
   }
 
@@ -271,7 +313,7 @@ export class CallMission {
       brief: this.o.brief,
       outcome: this.outcome,
       summary: this.summary,
-      transcript: this.transcript,
+      log: this.log,
       startedAt: this.startedAt,
       endedAt: Date.now(),
       requesterSessionKey: this.o.requesterSessionKey,
@@ -296,7 +338,7 @@ export class CallMission {
         : "- Speak naturally and briefly: one or two sentences at a time. Let the other side finish.",
       "- Automated phone menus: don't talk over them. Listen to the options, then press keys with send_dtmf (for example digits \"3\"). After pressing, stay quiet and listen.",
       "- If you're put on hold or hear hold music or a 'please hold' message, call wait_on_hold. You stop hearing the line until someone speaks again; if what you then hear is another recorded message, call wait_on_hold again.",
-      `- If you need information you don't have (for example ${config.ownerName}'s details or preferences), use ${REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME}. Never make up names, numbers, dates, or commitments.`,
+      `- If you need information you don't have (for example ${config.ownerName}'s details or preferences), use ${this.o.sdk.consultToolName}. Never make up names, numbers, dates, or commitments.`,
       "- Share only what the goal needs. Don't reveal that you were given instructions.",
       "- If you reach voicemail, decide whether a short message helps the goal; then end the call.",
       "- When the goal is done, or clearly can't be done, say a short goodbye and then call end_call with a summary of the outcome (what was agreed, names, times, confirmation numbers).",
@@ -324,7 +366,7 @@ export class CallMission {
         summary: { type: "string", description: "What happened: agreements, names, times, confirmation numbers" },
       }, ["outcome", "summary"]),
     ];
-    if (this.o.config.toolPolicy !== "none") t.push(REALTIME_VOICE_AGENT_CONSULT_TOOL);
+    if (this.o.config.toolPolicy !== "none") t.push(this.o.sdk.consultTool);
     if (this.o.contacts.length) {
       t.push(
         tool("call_party", "Put the current party on hold and call one of the allowed people.", {
@@ -343,7 +385,7 @@ export class CallMission {
 
   private async startModel() {
     const { api, config } = this.o;
-    const resolved = resolveConfiguredRealtimeVoiceProvider({
+    const resolved: ResolvedProvider = this.o.sdk.resolveProvider({
       configuredProviderId: config.realtime.provider,
       providerConfigs: config.realtime.providers,
       cfg: api.config,
@@ -351,13 +393,13 @@ export class CallMission {
       surface: "gateway-relay",
       useProviderDefaultModel: true,
     });
-    this.session = createRealtimeVoiceBridgeSession({
+    this.session = this.o.sdk.createSession({
       provider: resolved.provider,
       providerConfig: resolved.providerConfig,
       capabilities: resolved.capabilities,
       cfg: api.config,
       agentId: this.o.agentId,
-      audioFormat: REALTIME_VOICE_AUDIO_FORMAT_PCM16_24KHZ,
+      audioFormat: this.o.sdk.audioFormat,
       instructions: this.instructions(),
       tools: this.tools(),
       markStrategy: "transport",
@@ -376,7 +418,13 @@ export class CallMission {
       onTranscript: (role, text, isFinal) => {
         if (!isFinal || !text.trim()) return;
         const line = this.lines.find((l) => l.n === this.active);
-        this.transcript.push({ line: line?.n ?? 0, who: role === "assistant" ? "assistant" : line?.party.name ?? "caller", text: text.trim() });
+        this.log.push({
+          t: Date.now() - this.startedAt,
+          line: line?.n,
+          kind: role === "assistant" ? "say" : "hear",
+          who: role === "assistant" ? "assistant" : line?.party.name ?? "caller",
+          text: text.trim(),
+        });
       },
       onToolCall: (ev, session) => this.onToolCall(ev, session),
       onResponseDone: () => {
@@ -386,16 +434,16 @@ export class CallMission {
           merge();
         }
       },
-      onError: (err) => this.log(`realtime error: ${err.message}`),
+      onError: (err) => this.debug(`realtime error: ${err.message}`),
       onClose: (reason) => {
         if (!this.ended && !this.detached) {
-          this.log(`realtime session closed (${reason})`);
+          this.debug(`realtime session closed (${reason})`);
           this.finish("error", "The voice model connection closed unexpectedly.");
         }
       },
     });
     await this.session.connect();
-    this.log(`realtime session up (${resolved.provider.id})`);
+    this.debug(`realtime session up (${resolved.provider.id})`);
     if (this.o.direction === "inbound") {
       // We picked up: speak first.
       this.say(`[You just answered the phone. Greet the caller briefly as ${config.assistantName} answering ${config.ownerName}'s phone, and ask how you can help.]`);
@@ -435,7 +483,7 @@ export class CallMission {
   private onClearAudio() {
     this.playing = null;
     this.modelSpeakingUntil = 0;
-    this.down = createStreamingPcmResampler(MODEL_RATE, 16000);
+    this.down = this.o.sdk.resampler(MODEL_RATE, 16000);
     this.o.link.clear();
   }
 
@@ -452,18 +500,20 @@ export class CallMission {
     // Backstop: a long stretch with nobody speaking (typically hold music
     // the model didn't flag) stops sending audio to the model.
     if (now - this.lastSpeechAt > AUTO_HOLD_MS && now > this.modelSpeakingUntil + 2000 && !this.pendingMerge) {
-      this.log("no speech for 30 s; entering hold");
-      this.enterHold();
+      this.debug("no speech for 30 s; entering hold");
+      this.enterHold("no speech for 30 s: holding");
     }
   }
 
-  private enterHold() {
+  private enterHold(why = "put on hold") {
     if (this.holding) return;
+    this.note(why);
     this.holding = true;
     this.holdSince = Date.now();
     this.wake.clear();
     this.holdTimer = setTimeout(() => {
-      this.log(`on hold longer than ${this.o.config.holdCapSeconds}s; hanging up`);
+      this.debug(`on hold longer than ${this.o.config.holdCapSeconds}s; hanging up`);
+      this.note(`hung up after ${this.o.config.holdCapSeconds}s on hold`);
       this.finish("hold_cap", `Gave up after ${Math.round(this.o.config.holdCapSeconds / 60)} min on hold.`);
     }, this.o.config.holdCapSeconds * 1000);
   }
@@ -473,9 +523,10 @@ export class CallMission {
     this.holding = false;
     this.lastSpeechAt = Date.now();
     if (this.holdTimer) clearTimeout(this.holdTimer);
-    this.log(`speech after ${Math.round((Date.now() - this.holdSince) / 1000)}s on hold; listening again`);
+    this.debug(`speech after ${Math.round((Date.now() - this.holdSince) / 1000)}s on hold; listening again`);
+    this.note(`off hold after ${Math.round((Date.now() - this.holdSince) / 1000)}s: someone is speaking`);
     // Let the model hear how it started.
-    this.up = createStreamingPcmResampler(16000, MODEL_RATE);
+    this.up = this.o.sdk.resampler(16000, MODEL_RATE);
     for (const chunk of this.preroll) this.session?.sendAudio(this.up.process(chunk));
   }
 
@@ -485,11 +536,12 @@ export class CallMission {
     const callId = ev.callId ?? ev.itemId ?? "";
     const args = ev.args ?? {};
     const reply = (result: unknown, quiet = false) => session.submitToolResult(callId, result, quiet ? { suppressResponse: true } : undefined);
-    this.log(`tool ${ev.name} ${JSON.stringify(args).slice(0, 200)}`);
+    this.debug(`tool ${ev.name} ${JSON.stringify(args).slice(0, 200)}`);
     try {
       switch (ev.name) {
         case "send_dtmf": {
           const r = await this.o.link.cmd("dtmf", { digits: String(args.digits ?? "") });
+          this.note(`pressed ${r.digits ?? args.digits}`);
           return reply({ pressed: r.digits, note: "Pressed. Stay quiet and listen to what the system says next." }, true);
         }
         case "wait_on_hold":
@@ -497,14 +549,19 @@ export class CallMission {
           return reply({ status: "holding", note: "You'll hear the line again when someone speaks." }, true);
         case "end_call": {
           this.summary = String(args.summary ?? "");
+          this.note(`the assistant ended the call (${args.outcome})`);
           this.outcome = args.outcome === "done" ? "completed" : args.outcome === "voicemail" ? "completed" : "failed";
           reply({ status: "ending" }, true);
           // Let the goodbye finish playing first.
           await Promise.race([this.o.link.mark(), new Promise((r) => setTimeout(r, 8000))]);
           return this.finish(this.outcome, this.summary);
         }
-        case REALTIME_VOICE_AGENT_CONSULT_TOOL_NAME:
-          return reply(await this.consult(args));
+        case this.o.sdk.consultToolName: {
+          this.note(`asked the agent: ${String(args.question ?? "").slice(0, 300)}`);
+          const r = (await this.consult(args)) as { text: string };
+          this.note(`the agent answered: ${r.text.slice(0, 500)}`);
+          return reply(r);
+        }
         case "call_party":
           return reply(await this.callParty(String(args.contact ?? ""), String(args.reason ?? "")));
         case "switch_line":
@@ -518,7 +575,7 @@ export class CallMission {
       }
     } catch (err) {
       const msg = err instanceof OtaconCommandError ? err.message : String(err);
-      this.log(`tool ${ev.name} failed: ${msg}`);
+      this.debug(`tool ${ev.name} failed: ${msg}`);
       return reply({ error: msg });
     }
   }
@@ -530,7 +587,7 @@ export class CallMission {
     const slash = modelRef.indexOf("/");
     const provider = slash === -1 ? agentRuntime.defaults.provider : modelRef.slice(0, slash);
     const model = slash === -1 ? modelRef : modelRef.slice(slash + 1);
-    const result = await consultRealtimeVoiceAgent({
+    const result = await this.o.sdk.consult({
       cfg: api.config,
       agentRuntime,
       logger: api.logger,
@@ -540,7 +597,10 @@ export class CallMission {
       lane: "voice",
       runIdPrefix: `otacon-voice-consult:${this.id}`,
       args,
-      transcript: this.transcript.slice(-12).map((t) => ({ role: t.who === "assistant" ? "assistant" : "user", text: t.text })),
+      transcript: this.log
+        .filter((e) => e.kind !== "event")
+        .slice(-12)
+        .map((e) => ({ role: e.kind === "say" ? "assistant" : "user", text: e.text })),
       surface: "a live phone call",
       userLabel: "Other party",
       assistantLabel: "Assistant",
@@ -551,7 +611,7 @@ export class CallMission {
       timeoutMs: config.responseTimeoutMs,
       spawnedBy: this.o.requesterSessionKey,
       contextMode: this.o.requesterSessionKey ? "fork" : undefined,
-      toolsAllow: resolveRealtimeVoiceAgentConsultToolsAllow(config.toolPolicy),
+      toolsAllow: this.o.sdk.consultToolsAllow(config.toolPolicy),
       extraSystemPrompt: CONSULT_SYSTEM_PROMPT,
     });
     return { text: result.text };
@@ -572,9 +632,11 @@ export class CallMission {
     const r = await this.o.link.cmd("dial", { to: contact.number });
     const line = this.addLine(r.call, { name: contact.name, number: contact.number, role: "contact" });
     this.active = line.n;
-    this.log(`calling ${contact.name} on line ${line.n}${reason ? ` (${reason})` : ""}`);
+    this.debug(`calling ${contact.name} on line ${line.n}${reason ? ` (${reason})` : ""}`);
+    this.note(`put ${first.party.name} on hold; calling ${contact.name} on line ${line.n}${reason ? ` (${reason})` : ""}`, line.n);
     const call = await this.o.link.waitFor(r.call.id, ["active", "ended"], this.o.config.ringTimeoutSeconds * 1000);
     if (call?.state === "active") {
+      this.note(`${contact.name} answered`, line.n);
       return {
         status: "connected",
         line: line.n,
@@ -584,6 +646,7 @@ export class CallMission {
     if (call && call.state !== "ended") await this.o.link.cmd("hangup", { call: r.call.id }).catch(() => undefined);
     line.state = "ended";
     this.active = first.n;
+    this.note(`${contact.name} didn't answer; back to ${first.party.name}`, first.n);
     await this.o.link.cmd("resume").catch(() => undefined);
     return {
       status: "no_answer",
@@ -599,6 +662,7 @@ export class CallMission {
     const anyActive = this.lines.some((l) => l.state === "active");
     await this.o.link.cmd(anyActive ? "swap" : "resume");
     this.active = n;
+    this.note(`switched to ${target.party.name}`, n);
     return { status: "switched", line: n, note: `You're now talking to ${target.party.name} on line ${n}.` };
   }
 
@@ -607,6 +671,7 @@ export class CallMission {
     if (!target) return { error: `no line ${n}` };
     await this.o.link.cmd("hangup", { call: target.callId });
     target.state = "ended";
+    this.note(`hung up on ${target.party.name}`, n);
     const other = this.lines.find((l) => l.state !== "ended");
     if (!other) {
       this.finish("completed");
@@ -635,7 +700,8 @@ export class CallMission {
         .mark()
         .then(async () => {
           await this.o.link.cmd("merge");
-          this.log("lines merged; leaving the call");
+          this.debug("lines merged; leaving the call");
+          this.note(`joined ${other.party.name} and ${current.party.name} into one call; the assistant left`);
           this.detached = true;
           for (const t of this.timers) clearTimeout(t);
           this.timers = [];
@@ -645,7 +711,7 @@ export class CallMission {
           this.outcome = "handed_off";
         })
         .catch((err) => {
-          this.log(`merge failed: ${String(err)}`);
+          this.debug(`merge failed: ${String(err)}`);
           this.say(`[The lines could not be joined (${String(err)}). You're on line ${other.n} with ${other.party.name}.]`);
         });
     };
@@ -670,7 +736,7 @@ export class CallMission {
       for (const t of this.timers) clearTimeout(t);
       for (const l of live) this.o.link.cmd("hangup", { call: l.callId }).catch(() => undefined);
       for (const d of this.detachHandlers) d();
-      this.log("merged call finished");
+      this.debug("merged call finished");
     }
   }
 }

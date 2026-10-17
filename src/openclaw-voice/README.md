@@ -4,8 +4,10 @@ Phone calls through an [otacon](../../README.md) phone, carried out by a
 realtime voice model, with the OpenClaw agent behind it.
 
 - **Agent tool `otacon_call`**: place a call with a goal (`brief`); it runs in
-  the background and the outcome comes back to the requesting session as a
-  system message when the call ends.
+  the background, and when it ends the whole call log (both sides,
+  timestamped, plus events such as keys pressed, hold, lines joined) is
+  delivered to the requesting session as a system message, for the agent to
+  summarize and act on.
 - **On the call** the voice model can press keys (`send_dtmf`, sent over
   Bluetooth HFP as `AT+VTS`), wait on hold (`wait_on_hold`), consult the
   agent (`openclaw_agent_consult`), end the call with a summary, and, when
