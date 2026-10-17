@@ -4,6 +4,7 @@
 #   tests/voice/e2e/run.sh ivr       # agent books a table through the Twilio test menu (hold included)
 #   tests/voice/e2e/run.sh handoff   # agent reschedules with a persona "business", brings in persona "Nick"
 #   tests/voice/e2e/run.sh inbound   # persona "Nick" calls phone-2; the plugin answers and consults the agent
+#   tests/voice/e2e/run.sh call-me   # the agent calls the owner (ownerNumber), a real person, to hear the voice
 #
 # Each run records phone-2's side (stereo WAV: L = other party, R = the voice
 # model) under $OTACON_VOICE_TEST_HOME/runs/.
@@ -55,7 +56,10 @@ case "$1" in
       --log "$RUN/personas.jsonl" > "$RUN/nick.log" 2>&1
     sleep 30
     ;;
-  *) echo "usage: $0 ivr|handoff|inbound" >&2; kill $REC; exit 2 ;;
+  call-me)
+    ask_agent "Please call me at $(fleet get ownerNumber). It's a test call so I can hear how your voice sounds on the phone: say hi, tell me in a few sentences what you can do on calls for me, ask whether I can hear you clearly, and chat until I say goodbye."
+    ;;
+  *) echo "usage: $0 ivr|handoff|inbound|call-me" >&2; kill $REC; exit 2 ;;
 esac
 kill $REC 2>/dev/null; wait $REC 2>/dev/null
 docker logs --since 20m ov-gateway 2>&1 | sed -E 's/\x1b\[[0-9;]*m//g' | grep "otacon-voice" > "$RUN/plugin.log"
