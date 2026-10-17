@@ -5,6 +5,7 @@
 //! call is past ringing, so the phone's Bluetooth audio device isn't held
 //! open between calls.
 
+use std::collections::VecDeque;
 use std::process::Stdio;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
@@ -16,9 +17,12 @@ use tokio::process::{Child, ChildStdin, Command};
 
 use super::VoiceState;
 
-/// Played audio waiting to be paired with captured audio for monitors. Kept
-/// short so the two sides stay close in time.
-const PLAYED_MAX_MS: usize = 100;
+/// How far monitors' played channel runs behind the pacer: about the time
+/// audio spends in aplay before the phone gets it, and room for the two
+/// sides' frames to arrive unevenly.
+const PLAYED_DELAY_MS: usize = 100;
+/// More buffered than this means capture fell behind; drop back to the delay.
+const PLAYED_MAX_MS: usize = 400;
 /// Silence written when playback starts, so a late tick doesn't underrun.
 const PREFILL_FRAMES: usize = 3;
 
@@ -120,14 +124,11 @@ impl VoiceState {
         if self.monitors.load(Ordering::Relaxed) == 0 {
             return;
         }
+        let right = self.played.lock().unwrap().take(mono.len());
         let mut stereo = Vec::with_capacity(mono.len() * 2);
-        let mut played = self.played.lock().unwrap();
-        for l in mono.chunks_exact(2) {
-            let r0 = played.pop_front().unwrap_or(0);
-            let r1 = played.pop_front().unwrap_or(0);
-            stereo.extend_from_slice(&[l[0], l[1], r0, r1]);
+        for (l, r) in mono.chunks_exact(2).zip(right.chunks_exact(2)) {
+            stereo.extend_from_slice(&[l[0], l[1], r[0], r[1]]);
         }
-        drop(played);
         let _ = self.monitor_tx.send(Arc::new(stereo));
     }
 
@@ -135,12 +136,7 @@ impl VoiceState {
         if self.monitors.load(Ordering::Relaxed) == 0 {
             return;
         }
-        let max = self.audio.sample_rate as usize * 2 * PLAYED_MAX_MS / 1000;
-        let mut played = self.played.lock().unwrap();
-        played.extend(pcm.iter().copied());
-        while played.len() > max {
-            played.pop_front();
-        }
+        self.played.lock().unwrap().push(pcm);
     }
 
     /// Play the uplink queue into the phone in 20 ms steps while socket
@@ -260,11 +256,118 @@ impl VoiceState {
     }
 }
 
+/// What the pacer played, waiting to be paired with captured frames for
+/// monitors. Played and captured frames come from separate clocks and don't
+/// arrive in step, so this is a small jitter buffer: pairing starts once
+/// `delay` is buffered, and after running dry it waits for `delay` again
+/// rather than splitting frames with silence.
+pub(super) struct PlayedBuffer {
+    pcm: VecDeque<u8>,
+    primed: bool,
+    delay: usize,
+    max: usize,
+}
+
+impl PlayedBuffer {
+    pub fn new(sample_rate: u32) -> Self {
+        let bytes = |ms: usize| sample_rate as usize * 2 * ms / 1000;
+        Self { pcm: VecDeque::new(), primed: false, delay: bytes(PLAYED_DELAY_MS), max: bytes(PLAYED_MAX_MS) }
+    }
+
+    pub fn clear(&mut self) {
+        self.pcm.clear();
+        self.primed = false;
+    }
+
+    pub fn push(&mut self, pcm: &[u8]) {
+        self.pcm.extend(pcm.iter().copied());
+        if self.pcm.len() > self.max {
+            let excess = self.pcm.len() - self.delay;
+            self.pcm.drain(..excess);
+        }
+    }
+
+    /// Played audio for the next `n` captured bytes (silence while priming).
+    pub fn take(&mut self, n: usize) -> Vec<u8> {
+        if !self.primed && self.pcm.len() >= self.delay {
+            self.primed = true;
+        }
+        if !self.primed || self.pcm.len() < n {
+            self.primed = false;
+            return vec![0; n];
+        }
+        self.pcm.drain(..n).collect()
+    }
+}
+
 /// Keep the pipe into aplay small, so audio isn't buffered far ahead of what
 /// is actually playing (marks would fire early otherwise).
 fn shrink_pipe(stdin: &ChildStdin) {
     use std::os::fd::AsRawFd;
     unsafe {
         libc::fcntl(stdin.as_raw_fd(), libc::F_SETPIPE_SZ, 4096);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // 1 kHz: 2 bytes per ms, so the delay is 200 bytes and the cap 800.
+    fn buf() -> PlayedBuffer {
+        PlayedBuffer::new(1000)
+    }
+
+    #[test]
+    fn waits_for_the_delay_then_pairs_in_order() {
+        let mut b = buf();
+        b.push(&[1; 100]);
+        assert_eq!(b.take(40), vec![0; 40]);
+        b.push(&[2; 100]);
+        assert_eq!(b.take(40), vec![1; 40]);
+    }
+
+    #[test]
+    fn bursty_capture_takes_whole_frames() {
+        // Played arrives a frame at a time, captured in bursts of six: once
+        // primed, every captured frame gets played audio, none split.
+        let mut b = buf();
+        for _ in 0..5 {
+            b.push(&[1; 40]);
+        }
+        let mut silent = 0;
+        for _ in 0..20 {
+            for _ in 0..6 {
+                b.push(&[1; 40]);
+            }
+            for _ in 0..6 {
+                if b.take(40) == vec![0; 40] {
+                    silent += 1;
+                }
+            }
+        }
+        assert_eq!(silent, 0);
+    }
+
+    #[test]
+    fn running_dry_waits_for_the_delay_again() {
+        let mut b = buf();
+        b.push(&[1; 200]);
+        assert_eq!(b.take(160), vec![1; 160]);
+        // 40 left: not a whole frame of 60, so silence until 200 again.
+        assert_eq!(b.take(60), vec![0; 60]);
+        b.push(&[2; 100]);
+        assert_eq!(b.take(60), vec![0; 60]);
+        b.push(&[2; 60]);
+        assert_eq!(b.take(60), [vec![1; 40], vec![2; 20]].concat());
+    }
+
+    #[test]
+    fn capture_falling_behind_drops_back_to_the_delay() {
+        let mut b = buf();
+        b.push(&[1; 800]);
+        b.push(&[2; 2]);
+        assert_eq!(b.pcm.len(), 200);
+        assert_eq!(b.take(2), vec![1; 2]);
     }
 }
