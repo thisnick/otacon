@@ -50,7 +50,7 @@ v5.1.2, MIT licensed (`assets/silero_vad.LICENSE`).
 ## Install
 
 ```sh
-openclaw plugins install @otacon-fleet/openclaw-voice --accept-capabilities
+openclaw plugins install @otacon-fleet/openclaw-otacon-voice --accept-capabilities
 ```
 
 then add `otacon-voice` to `plugins.allow`, set its config, and restart the
@@ -62,8 +62,8 @@ gateway (secrets resolve at start).
 npm install && npm test && npm pack       # local tarball: openclaw plugins install ./<tgz>
 ```
 
-Releases are published to npm as `@otacon-fleet/openclaw-voice` by
-`.github/workflows/openclaw-voice.yml` when an `openclaw-voice-v<version>` tag
-is pushed (npm trusted publishing, no token); bump `version` in both
+Releases are published to npm as `@otacon-fleet/openclaw-otacon-voice` by
+`.github/workflows/openclaw-otacon-voice.yml` when an
+`openclaw-otacon-voice-v<version>` tag is pushed (npm trusted publishing, no token); bump `version` in both
 `package.json` and `openclaw.plugin.json` first. End-to-end tests:
 `tests/voice/README.md`.

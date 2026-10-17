@@ -73,7 +73,7 @@ start() {
 
 install() {
   (cd "$REPO/src/openclaw-voice" && rm -f ./*.tgz && npm install --no-audit --no-fund >/dev/null && npx tsc -p tsconfig.json && npm pack >/dev/null 2>&1)
-  cp "$REPO"/src/openclaw-voice/otacon-fleet-openclaw-voice-*.tgz "$T/home/otacon-voice.tgz"
+  cp "$REPO"/src/openclaw-voice/otacon-fleet-openclaw-otacon-voice-*.tgz "$T/home/otacon-voice.tgz"
   stop
   # install needs the gateway's state lease, which lapses a few seconds after a stop.
   for attempt in $(seq 1 12); do
