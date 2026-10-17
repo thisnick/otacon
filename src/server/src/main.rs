@@ -59,6 +59,22 @@ fn alsa_cmd(tool: &str, device: &str, rate: u32, channels: u16) -> Vec<String> {
     ]
 }
 
+/// Call audio moves in 20 ms frames. Without explicit timing, arecord and
+/// aplay pick 125 ms periods in a 500 ms buffer: captured audio arrives in
+/// 125 ms bursts, and audio we play waits half a second in aplay, so marks
+/// fire early and cleared audio keeps playing.
+fn voice_cmd(tool: &str, device: &str, rate: u32, channels: u16, buffer_ms: u32) -> Vec<String> {
+    let mut cmd = alsa_cmd(tool, device, rate, channels);
+    cmd.push(format!("--period-time={}", voice::FRAME_MS * 1000));
+    cmd.push(format!("--buffer-time={}", buffer_ms * 1000));
+    cmd
+}
+
+/// Longest the reader may fall behind before capture overruns.
+const VOICE_CAPTURE_BUFFER_MS: u32 = 200;
+/// Played audio queued in aplay: room for a late pacer tick, little delay.
+const VOICE_PLAYBACK_BUFFER_MS: u32 = 120;
+
 impl AudioConfig {
     fn from_env() -> Self {
         let backend = env::var("AUDIO_BACKEND").unwrap_or_else(|_| "alsa".into());
@@ -93,9 +109,9 @@ impl AudioConfig {
                     channels,
                     a2dp_sample_rate,
                     a2dp_channels,
-                    capture_cmd: alsa_cmd("arecord", &device, sample_rate, channels),
+                    capture_cmd: voice_cmd("arecord", &device, sample_rate, channels, VOICE_CAPTURE_BUFFER_MS),
                     a2dp_capture_cmd: Some(alsa_cmd("arecord", &a2dp_device, a2dp_sample_rate, a2dp_channels)),
-                    playback_cmd: alsa_cmd("aplay", &device, sample_rate, channels),
+                    playback_cmd: voice_cmd("aplay", &device, sample_rate, channels, VOICE_PLAYBACK_BUFFER_MS),
                 }
             }
             _ => {
@@ -111,9 +127,9 @@ impl AudioConfig {
                     channels,
                     a2dp_sample_rate: 0,
                     a2dp_channels: 0,
-                    capture_cmd: alsa_cmd("arecord", &capture_device, sample_rate, channels),
+                    capture_cmd: voice_cmd("arecord", &capture_device, sample_rate, channels, VOICE_CAPTURE_BUFFER_MS),
                     a2dp_capture_cmd: None,
-                    playback_cmd: alsa_cmd("aplay", &playback_device, sample_rate, channels),
+                    playback_cmd: voice_cmd("aplay", &playback_device, sample_rate, channels, VOICE_PLAYBACK_BUFFER_MS),
                 }
             }
         }

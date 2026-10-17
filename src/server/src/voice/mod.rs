@@ -10,7 +10,7 @@ pub mod table;
 mod uplink;
 pub mod ws;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -94,7 +94,7 @@ pub struct VoiceState {
     /// Stereo frames for monitors: L remote, R what we play
     monitor_tx: broadcast::Sender<Arc<Vec<u8>>>,
     /// What the pacer played, waiting to be paired with captured frames
-    played: Mutex<VecDeque<u8>>,
+    played: Mutex<audio::PlayedBuffer>,
     uplink: Mutex<Uplink>,
     owner: Mutex<Option<Owner>>,
     next_socket_id: AtomicU64,
@@ -108,6 +108,7 @@ impl VoiceState {
         events_tx: broadcast::Sender<String>,
     ) -> Arc<Self> {
         let cap = audio.sample_rate as usize * 2 * UPLINK_CAP_SECS;
+        let played = audio::PlayedBuffer::new(audio.sample_rate);
         let (capture_tx, _) = broadcast::channel(50);
         let (monitor_tx, _) = broadcast::channel(50);
         let (audio_expected, _) = watch::channel(false);
@@ -134,7 +135,7 @@ impl VoiceState {
             clients_changed: Notify::new(),
             capture_tx,
             monitor_tx,
-            played: Mutex::new(VecDeque::new()),
+            played: Mutex::new(played),
             uplink: Mutex::new(Uplink::new(cap)),
             owner: Mutex::new(None),
             next_socket_id: AtomicU64::new(1),
