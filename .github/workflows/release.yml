@@ -1,22 +1,90 @@
 name: Release
 
-# changesets: changes merged to main with changesets open (or update) a
-# "Version Packages" PR. Merging that PR publishes the bumped packages to npm
-# (trusted publishing, no token), tags them and creates their GitHub
-# releases. See docs/releasing.md.
+# Everything in the repo shares one version (docs/releasing.md).
+#
+# Changes merged with changesets open (or update) a "Version Packages" PR.
+# Merging it bumps the version; a push to main whose version has no
+# v<version> tag yet is released:
+#   1. build: every image (pushed as <image>:<version>) and the kiosk APK
+#   2. publish: the npm packages (trusted publishing, no token), the
+#      v<version> tag and GitHub release with the APK, then each image's
+#      :latest moves to the new build, which Watchtower on the hosts deploys.
+# Every step is safe to re-run.
 on:
   push:
     branches: [main]
 
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
+permissions: {}
+
 jobs:
-  release:
+  version:
     runs-on: ubuntu-latest
     permissions:
       contents: write
       pull-requests: write
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      release: ${{ steps.check.outputs.release }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Before the changesets step, which leaves the version branch checked out.
+      - name: Is this version released yet?
+        id: check
+        run: |
+          node scripts/sync-versions.mjs --check
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null; then
+            echo "v$VERSION is already released"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "releasing v$VERSION"
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open or update the Version Packages PR
+        uses: changesets/action@v1
+        with:
+          title: Version Packages
+          commit: "chore: version packages"
+          version: pnpm run version-packages
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    needs: version
+    if: needs.version.outputs.release == 'true'
+    uses: ./.github/workflows/build.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+      push: true
+    permissions:
+      contents: read
+      packages: write
+
+  publish:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
       id-token: write # npm trusted publishing + provenance
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      IMAGES: ghcr.io/${{ github.repository }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
@@ -33,25 +101,34 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Create the Version Packages PR, or publish
-        id: changesets
-        uses: changesets/action@v1
-        with:
-          title: "Version Packages"
-          commit: "chore: version packages"
-          version: pnpm run version-packages
-          publish: pnpm run release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish the npm packages
+        run: pnpm run release
 
-      - name: Create the v<version> GitHub release on a root version bump
-        if: steps.changesets.outputs.published == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: kiosk-apk
+          path: apk
+
+      - name: Create the v${{ env.VERSION }} GitHub release
         run: |
-          VERSION=$(node -p "require('./package.json').version")
-          if gh release view "v${VERSION}" >/dev/null 2>&1; then
-            echo "v${VERSION} already released"
+          cp apk/otacon-kiosk.apk "otacon-kiosk-$VERSION.apk"
+          node scripts/release-notes.mjs "$VERSION" > notes.md
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            gh release upload "v$VERSION" "otacon-kiosk-$VERSION.apk" --clobber
           else
-            gh release create "v${VERSION}" --title "v${VERSION}" --generate-notes
+            gh release create "v$VERSION" --target "$GITHUB_SHA" --title "v$VERSION" \
+              --notes-file notes.md "otacon-kiosk-$VERSION.apk"
           fi
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Last, so the hosts only deploy a release that finished.
+      - name: Point each image's :latest at v${{ env.VERSION }}
+        run: |
+          for image in otacon voice registry orchestrator; do
+            docker buildx imagetools create -t "$IMAGES/$image:latest" "$IMAGES/$image:$VERSION"
+          done

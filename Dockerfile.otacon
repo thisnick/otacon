@@ -86,6 +86,11 @@ RUN mkdir -p /src/snapshot-server/build/classes \
         --output /src/snapshot-server/build \
     && cd /src/snapshot-server/build && jar cf snapshot-server.jar classes.dex
 
+# Just the kiosk APK, for release assets:
+#   docker buildx build -f Dockerfile.otacon --target apk --output type=local,dest=out .
+FROM scratch AS apk
+COPY --from=apk-builder /src/android/app/build/outputs/apk/release/app-release.apk /otacon-kiosk.apk
+
 # Stage 4: Runtime
 FROM debian:trixie-slim
 

@@ -1,5 +1,13 @@
 # @otacon-fleet/otacon-cli
 
+## 2.0.0
+
+### Major Changes
+
+- Everything in the repo now shares one version and is released together: the npm packages, the host server, the registry and the orchestrator (docs/releasing.md).
+- No CLI changes since 0.3.0.
+
+
 ## 0.3.0
 
 ### Minor Changes

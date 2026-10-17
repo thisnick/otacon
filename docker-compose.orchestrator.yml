@@ -13,9 +13,10 @@
 # sidecar — one Tailscale node per VM, one hostname (otacon-
 # orchestrator), no `-1` auto-suffix from a duplicate registration.
 #
-# Image is built + pushed to ghcr.io by `make orchestrator-build`
-# (uses `docker buildx --push --platform linux/arm64`). Watchtower on
-# the VPS picks it up within ~60s. NO `build:` block here — local
+# Releases build and push the image (ghcr.io/thisnick/otacon/orchestrator,
+# docs/releasing.md); `make orchestrator-build` pushes a dev build to
+# otacon-dev instead (set OTACON_REPO=otacon-dev to run it). Watchtower on
+# the VPS picks up a new :latest within ~60s. NO `build:` block here — local
 # `docker compose build` would only produce a host-arch image, which
 # wouldn't run on the ARM Ampere VPS.
 #
@@ -25,7 +26,7 @@
 # server (tsx --watch) + Vite UI (HMR on :5173) concurrently.
 services:
   otacon-orchestrator:
-    image: ghcr.io/thisnick/${OTACON_REPO:-otacon-dev}/orchestrator:latest
+    image: ghcr.io/thisnick/${OTACON_REPO:-otacon}/orchestrator:latest
     # Pin the container name so Watchtower's filter
     # (`--include-restarting otacon-orchestrator`) matches reliably,
     # independent of compose's default `<dir>-<service>-<n>` naming.

@@ -3,6 +3,8 @@ packages:
   - src/openclaw-voice
   - src/orchestrator
   - src/orchestrator/web
+  - src/server
+  - src/registry
 
 # Peers are not installed automatically: the OpenClaw plugin's `openclaw` peer
 # is the host gateway itself, never a dependency to fetch.

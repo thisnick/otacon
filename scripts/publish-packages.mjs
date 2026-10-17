@@ -1,8 +1,7 @@
 #!/usr/bin/env node
-// Publish every public workspace package whose version isn't on npm yet,
-// then tag the new versions with `changeset tag`. Its "New tag: name@version"
-// lines are what changesets/action reads to push tags and create GitHub
-// releases.
+// Publish every public workspace package whose version isn't on npm yet.
+// Safe to re-run: a version npm already has is skipped. The release workflow
+// tags and releases v<version> itself, once everything is built.
 //
 // In CI this runs with npm trusted publishing (OIDC; npm >= 11.5.1), so no
 // token is involved. `--dry-run` only reports what would be published.
@@ -29,7 +28,6 @@ function exists(name) {
 
 const ci = process.env.CI === "true";
 let failed = false;
-let publishedAny = false;
 for (const { dir, pkg } of packages) {
   const id = `${pkg.name}@${pkg.version}`;
   if (published(pkg.name, pkg.version)) {
@@ -55,15 +53,17 @@ for (const { dir, pkg } of packages) {
   }
   console.log(`publishing ${id}`);
   execFileSync("pnpm", ["--filter", pkg.name, "run", "build"], { cwd: root, stdio: "inherit" });
-  const r = spawnSync("npm", ["publish", "--provenance", "--access", "public"], { cwd: dir, stdio: "inherit" });
-  if (r.status !== 0) {
+  const r = spawnSync("npm", ["publish", "--provenance", "--access", "public"], { cwd: dir, encoding: "utf8" });
+  process.stdout.write(r.stdout);
+  process.stderr.write(r.stderr);
+  // `npm view` can miss a version published moments ago, so a re-run may try
+  // again; npm refuses with E409 (or E403 "previously published").
+  if (r.status !== 0 && /E409|cannot publish over|previously published/i.test(r.stderr)) {
+    console.log(`${id} was already published`);
+  } else if (r.status !== 0) {
     console.error(`publishing ${id} failed`);
     failed = true;
-  } else {
-    publishedAny = true;
   }
 }
 
-// Tag (and so release on GitHub) only when something was published.
-if (publishedAny) execFileSync("pnpm", ["changeset", "tag"], { cwd: root, stdio: "inherit" });
 process.exit(failed ? 1 : 0);

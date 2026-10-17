@@ -4,6 +4,9 @@
 set -euo pipefail
 
 PI_HOST="${1:?Usage: $0 <host>}"
+# A hand deploy is a dev build: it goes to otacon-dev, never to the release
+# images (ghcr.io/thisnick/otacon/registry) that releases publish.
+export OTACON_REPO="${OTACON_REPO:-otacon-dev}"
 PI_USER="${PI_USER:-nick}"
 REMOTE="${PI_USER}@${PI_HOST}"
 REMOTE_DIR="~/otacon-registry"
@@ -53,7 +56,7 @@ fi
 
 ssh "${REMOTE}" "cat > ${REMOTE_DIR}/.env" <<EOF
 TS_AUTH_KEY_REGISTRY=${TS_AUTH_KEY_REGISTRY}
-OTACON_REPO=${OTACON_REPO:-otacon-dev}
+OTACON_REPO=${OTACON_REPO}
 OTACON_ADMIN_USERS=${OTACON_ADMIN_USERS}
 REGISTRY_BOOTSTRAP_ADMIN_TOKEN=${REGISTRY_BOOTSTRAP_ADMIN_TOKEN}
 EOF
