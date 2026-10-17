@@ -7,6 +7,7 @@ if (process.env.OTACON_INSECURE_TLS === "1") process.env.NODE_TLS_REJECT_UNAUTHO
 import { Command, program } from "commander";
 import { getHostClient } from "./host-client.js";
 import { authCommands } from "./commands/auth.js";
+import { linkCommands } from "./commands/link.js";
 import { regCommands } from "./commands/reg.js";
 import { phoneCommands } from "./commands/phone.js";
 import { configCommands } from "./commands/config.js";
@@ -152,6 +153,7 @@ function printDeviceInfo(info: CliRecord): void {
 const getParentOpts = () => program.opts() as { host?: string; phone?: string; registry?: string };
 
 program.addCommand(authCommands());
+for (const c of linkCommands()) program.addCommand(c);
 program.addCommand(regCommands(getParentOpts));
 program.addCommand(configCommands(getParentOpts));
 program.addCommand(hostCommands(getParentOpts));

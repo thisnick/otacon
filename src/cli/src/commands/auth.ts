@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { resolveConfig } from "../config.js";
+import { loadConfig, resolveConfig } from "../config.js";
 import { registerClient, saveAuth, removeAuth, whoami } from "../auth.js";
 
 export function authCommands(): Command {
@@ -39,11 +39,12 @@ export function authCommands(): Command {
 
   auth
     .command("whoami")
-    .description("Show registry URL, token fingerprint, and active phone")
+    .description("Show registry URL, token fingerprint, active phone, and phone link")
     .action(() => {
       const info = whoami();
-      if (!info.registryUrl && !info.tokenPrefix) {
-        console.error("Not registered. Run `otacon auth register` first.");
+      const { link } = loadConfig();
+      if (!info.registryUrl && !info.tokenPrefix && !link) {
+        console.error("Not registered or linked. Run `otacon auth register`, or `otacon link <host> <phone>` for one phone.");
         process.exit(1);
       }
       console.log(
@@ -52,6 +53,7 @@ export function authCommands(): Command {
             registry_url: info.registryUrl ?? null,
             token: info.tokenPrefix ?? null,
             active_phone: info.activePhone ?? null,
+            link: link ?? null,
           },
           null,
           2
