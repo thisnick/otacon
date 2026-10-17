@@ -269,6 +269,53 @@ def reload_allowlist():
     _load_allowlist()
 
 
+def _register_with_bluez(bus) -> None:
+    """Register the agent object with bluetoothd as the default agent."""
+    agent_mgr = dbus.Interface(
+        bus.get_object(BUS_NAME, "/org/bluez"),
+        AGENT_MGR_IFACE,
+    )
+    agent_mgr.RegisterAgent(AGENT_PATH, "KeyboardDisplay")
+    agent_mgr.RequestDefaultAgent(AGENT_PATH)
+    log.info("Bluetooth auto-accept agent registered")
+
+
+def _watch_bluetoothd_restarts(bus):
+    """Re-register the agent each time bluetoothd comes back.
+
+    bluetoothd forgets every agent when it exits, and supervisord restarts
+    it after a crash.  Without re-registering, the new bluetoothd has no
+    agent and every pairing fails with AuthenticationCanceled.
+    """
+    state = {'owner': bus.get_name_owner(BUS_NAME), 'attempts': 0}
+
+    def retry_register():
+        state['attempts'] += 1
+        try:
+            _register_with_bluez(bus)
+        except dbus.exceptions.DBusException as e:
+            if state['attempts'] >= 15:
+                log.error(f'BlueZ agent re-registration failed after 15 attempts: {e}')
+                return False
+            log.warning(f'BlueZ agent re-registration attempt {state["attempts"]}/15: {e}')
+            return True  # GLib: run again
+        silence_all_adapters()
+        return False
+
+    def on_owner_changed(new_owner):
+        if not new_owner:
+            log.warning('bluetoothd left the system bus')
+            return
+        if new_owner == state['owner']:
+            return
+        state['owner'] = new_owner
+        state['attempts'] = 0
+        log.warning('bluetoothd restarted — re-registering pairing agent')
+        GLib.timeout_add_seconds(2, retry_register)
+
+    bus.watch_name_owner(BUS_NAME, on_owner_changed)
+
+
 def register_agent():
     """Register the BlueZ pairing agent and configure adapters.
 
@@ -290,13 +337,7 @@ def register_agent():
     # Retry BlueZ registration (bluetoothd may still be starting)
     for attempt in range(15):
         try:
-            agent_mgr = dbus.Interface(
-                bus.get_object(BUS_NAME, "/org/bluez"),
-                AGENT_MGR_IFACE,
-            )
-            agent_mgr.RegisterAgent(AGENT_PATH, "KeyboardDisplay")
-            agent_mgr.RequestDefaultAgent(AGENT_PATH)
-            log.info("Bluetooth auto-accept agent registered")
+            _register_with_bluez(bus)
             break
         except dbus.exceptions.DBusException as e:
             log.warning(f'BlueZ agent registration attempt {attempt+1}/15: {e}')
@@ -305,6 +346,7 @@ def register_agent():
         raise RuntimeError('BlueZ agent registration failed after 15 attempts')
 
     silence_all_adapters()
+    _watch_bluetoothd_restarts(bus)
 
     bus.add_signal_receiver(
         _on_properties_changed,

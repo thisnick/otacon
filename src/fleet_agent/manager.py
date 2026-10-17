@@ -12,7 +12,7 @@ import time
 from .util.adb import get_connected_serials
 from .util.ports import PortAllocator
 from .phone.agent import PhoneAgent
-from .bluetooth.dongle import enum_dongles, load_dongle_assignments
+from .bluetooth.dongle import enum_dongles, load_dongle_assignments, bring_up_down_adapters
 from .bluetooth.agent import register_agent
 from .bluetooth.reconnect import setup_reconnect_watcher
 from .loss_handler import LOSS_TIMEOUT_SECONDS, handle_phone_lost, handle_dongle_lost
@@ -38,6 +38,7 @@ class FleetAgent:
         self.dongle_last_seen: dict[str, float] = {}
         self._time_fn = time_fn or time.monotonic
         self._last_sweep: float = 0
+        self._last_dongle_report: list[dict] | None = None
 
     def _start_bluetooth_services(self):
         """Start BlueZ agent and reconnect watcher in a background thread."""
@@ -67,7 +68,12 @@ class FleetAgent:
             log.error('BlueZ agent not running — Bluetooth pairing will fail')
 
     def report_dongles(self):
-        """Report all BT dongles to the registry."""
+        """Report all BT dongles to the registry if anything changed since the last report.
+
+        Runs at startup and on every loss sweep.  The startup report goes out
+        before any phone agent exists, so without the repeats the registry
+        would show every dongle as spare until something else updated it.
+        """
         registry_url = os.environ.get('REGISTRY_URL')
         if not registry_url:
             return
@@ -83,13 +89,16 @@ class FleetAgent:
                 if assigned_mac and assigned_mac.upper() == mac:
                     with self._lock:
                         if serial in self.agents:
-                            phone_id = self.agents[serial][0].phone_id
+                            agent = self.agents[serial][0]
+                            phone_id = agent.registry_id or agent.phone_id
                     break
             dongle_list.append({
                 'bt_mac': mac,
                 'hci_device': hci,
                 'phone_id': phone_id,
             })
+        if dongle_list == self._last_dongle_report:
+            return
         from .registry.client import _http_post
         try:
             _http_post(f'{registry_url}/api/v1/hosts/dongles/register', {
@@ -97,7 +106,8 @@ class FleetAgent:
                 'dongles': dongle_list,
             })
         except Exception:
-            pass
+            return  # retried on the next sweep
+        self._last_dongle_report = dongle_list
         log.info(f'Reported {len(dongle_list)} dongles to registry')
 
     def _update_last_seen(self, current_serials: set[str]) -> None:
@@ -120,6 +130,9 @@ class FleetAgent:
         - Phone lost -> free its dongle to spare pool
         - Dongle lost -> reassign orphaned phone to a spare dongle
 
+        Each sweep first brings DOWN adapters back up and refreshes the
+        registry's dongle bindings.
+
         Note: We iterate phone_last_seen (not self.agents) because the agent
         is removed from self.agents after DISCONNECT_GRACE (~6s), well before
         the 5-min loss timeout elapses. phone_last_seen retains the stale
@@ -129,6 +142,10 @@ class FleetAgent:
         if now - self._last_sweep < LOSS_SWEEP_INTERVAL:
             return
         self._last_sweep = now
+
+        if os.environ.get('AUDIO_BACKEND') == 'bluetooth':
+            bring_up_down_adapters()
+        self.report_dongles()
 
         # Check for lost phones — iterate phone_last_seen, not self.agents
         lost_phones = []

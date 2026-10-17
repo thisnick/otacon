@@ -178,6 +178,8 @@ class PortAllocator:
         Sets adapter_mac to None for the phone entry in phones.json that
         was using this dongle. Does NOT delete the dongle or phone entry.
         """
+        from ..bluetooth.dongle import forget_dongle
+        forget_dongle(adapter_mac)
         with self._lock:
             try:
                 phones = []

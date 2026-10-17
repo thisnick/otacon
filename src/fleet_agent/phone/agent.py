@@ -107,7 +107,8 @@ class PhoneAgent:
         replaced_mac = None
         result = self._run_step('allocate_and_pair_bluetooth',
                                  allocate_and_pair_bluetooth,
-                                 self.serial, self.snapshot_url, self._report_error)
+                                 self.serial, self.snapshot_url, self._report_error,
+                                 skip_if_connected=True)
         if result:
             self.adapter_mac, self.adapter_hci, self.phone_bt_mac, replaced_mac = result
 

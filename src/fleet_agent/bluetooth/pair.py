@@ -170,8 +170,14 @@ def _dbus_discover_and_pair(adapter_hci: str, phone_bt_mac: str,
     try:
         adapter.StartDiscovery()
     except dbus.DBusException as e:
-        log.warning(f'[{serial}] D-Bus StartDiscovery error: {e}')
-        return False, False
+        if e.get_dbus_name() != 'org.bluez.Error.InProgress':
+            log.warning(f'[{serial}] D-Bus StartDiscovery error: {e}')
+            return False, False
+        # BlueZ allows one discovery session per D-Bus client, and this
+        # process shares one connection, so an earlier attempt's session is
+        # still ours.  Use it; the finally below stops it.  Bailing out here
+        # instead leaks the session forever and every later attempt fails.
+        log.info(f'[{serial}] BlueZ: discovery already running on {adapter_hci}, reusing it')
 
     try:
         for tick in range(discovery_timeout):
@@ -435,12 +441,18 @@ def _nuke_phone_bt_bonds(serial: str):
 
 
 def allocate_and_pair_bluetooth(serial: str, snapshot_url: str,
-                                 report_error=None) -> tuple[str | None, str | None, str | None, str | None]:
+                                 report_error=None, skip_if_connected: bool = False,
+                                 ) -> tuple[str | None, str | None, str | None, str | None]:
     """Allocate a BT dongle and pair the phone with it.
 
     Returns (adapter_mac, adapter_hci, phone_bt_mac, replaced_mac).
     replaced_mac is the old dongle MAC that was saved but missing at startup,
     or None if no reassignment occurred.
+
+    skip_if_connected keeps an existing bond that is already up on the
+    allocated adapter instead of wiping and re-pairing it.  Setup passes it
+    so a fleet-agent restart doesn't break working phones; heals don't,
+    because they run precisely when the bond is suspect.
     """
     if os.environ.get('AUDIO_BACKEND') != 'bluetooth':
         return (None, None, None, None)
@@ -475,6 +487,14 @@ def allocate_and_pair_bluetooth(serial: str, snapshot_url: str,
 
     log.info(f'[{serial}] Pairing with dongle {adapter_mac} ({adapter_hci}), phone BT: {phone_bt_mac}')
 
+    # The BlueZ agent accepts a pair on this adapter only from the phone
+    # recorded against it in phones.json, so record that before pairing.
+    # Recording it only after success deadlocks: a fresh or released
+    # assignment has no phone_bt_mac, so the agent rejects the very pair
+    # that would have written it.
+    if phone_bt_mac:
+        save_dongle_assignment(serial, adapter_mac, phone_bt_mac)
+
     # Clear stale phone-side bonds with OTHER dongles.
     # Also remove Pi-side bonds for the phone on wrong adapters.
     all_dongles = enum_dongles()
@@ -492,6 +512,13 @@ def allocate_and_pair_bluetooth(serial: str, snapshot_url: str,
                     has_wrong_bond = True
             except Exception:
                 pass
+
+    if skip_if_connected and phone_bt_mac and not has_wrong_bond:
+        from ..phone.health import check_bt_bonded, check_bt_connected
+        if (check_bt_bonded(adapter_mac, phone_bt_mac, serial=serial).ok
+                and check_bt_connected(adapter_mac, phone_bt_mac)):
+            log.info(f'[{serial}] Already bonded and connected on {adapter_mac}; keeping the bond')
+            return (adapter_mac, adapter_hci, phone_bt_mac, replaced_mac)
 
     # Clear phone-side bonds. On Samsung Android 16+, removeBond() via
     # reflection silently fails — the API returns true but the native BT
