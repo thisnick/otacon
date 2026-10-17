@@ -19,11 +19,18 @@ import java.util.concurrent.Executor;
 public class TelephonyMonitor {
     private static final String TAG = "TelephonyMonitor";
     private static final String EVENT_URL = "http://127.0.0.1:8081/api/internal/event";
+    private final String eventUrl;
     private static final String SMS_ID_FILE = "/data/local/tmp/otacon-last-sms-id";
 
     private String prevState = "idle";
     private String callNumber = null;
     private long lastSeenSmsId = 0;
+
+    public TelephonyMonitor(String serial) {
+        eventUrl = serial == null || serial.isEmpty()
+            ? EVENT_URL
+            : EVENT_URL + "?serial=" + serial;
+    }
 
     public void start(Looper looper) {
         try {
@@ -299,7 +306,7 @@ public class TelephonyMonitor {
                 payload.put("data", data);
 
                 HttpURLConnection conn = (HttpURLConnection)
-                    new URL(EVENT_URL).openConnection();
+                    new URL(eventUrl).openConnection();
                 conn.setRequestMethod("POST");
                 conn.setRequestProperty("Content-Type", "application/json");
                 conn.setDoOutput(true);

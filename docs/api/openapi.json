@@ -386,14 +386,76 @@
                 "tags": [
                     "Calls"
                 ],
+                "summary": "Answer the ringing call",
                 "operationId": "answerCall",
+                "requestBody": {
+                    "description": "Optional; an empty body is fine",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/CallTarget"
+                            }
+                        }
+                    },
+                    "required": true
+                },
                 "responses": {
                     "200": {
                         "description": "",
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "$ref": "#/components/schemas/OkResponse"
+                                    "$ref": "#/components/schemas/CommandResponse"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "invalid_state",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "unsupported",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "phone_error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "hfp_unavailable",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "504": {
+                        "description": "timeout",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
                                 }
                             }
                         }
@@ -423,7 +485,137 @@
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "$ref": "#/components/schemas/OkResponse"
+                                    "$ref": "#/components/schemas/CommandResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "bad_request",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "invalid_state",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "phone_error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "hfp_unavailable",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "504": {
+                        "description": "timeout",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/calls/dtmf": {
+            "post": {
+                "tags": [
+                    "Calls"
+                ],
+                "operationId": "sendDtmf",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/DtmfBody"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CommandResponse"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "bad_request",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "invalid_state",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "phone_error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "hfp_unavailable",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "504": {
+                        "description": "timeout",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
                                 }
                             }
                         }
@@ -436,14 +628,371 @@
                 "tags": [
                     "Calls"
                 ],
+                "summary": "End a call (default: the active call)",
                 "operationId": "hangupCall",
+                "requestBody": {
+                    "description": "Optional; an empty body is fine",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/CallTarget"
+                            }
+                        }
+                    },
+                    "required": true
+                },
                 "responses": {
                     "200": {
                         "description": "",
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "$ref": "#/components/schemas/OkResponse"
+                                    "$ref": "#/components/schemas/CommandResponse"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "invalid_state",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "unsupported",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "phone_error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "hfp_unavailable",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "504": {
+                        "description": "timeout",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/calls/hold": {
+            "post": {
+                "tags": [
+                    "Calls"
+                ],
+                "summary": "Put the active call on hold",
+                "operationId": "holdCall",
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CommandResponse"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "invalid_state",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "unsupported",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "phone_error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "hfp_unavailable",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "504": {
+                        "description": "timeout",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/calls/merge": {
+            "post": {
+                "tags": [
+                    "Calls"
+                ],
+                "summary": "Merge the active and held calls",
+                "operationId": "mergeCalls",
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CommandResponse"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "invalid_state",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "unsupported",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "phone_error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "hfp_unavailable",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "504": {
+                        "description": "timeout",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/calls/reject": {
+            "post": {
+                "tags": [
+                    "Calls"
+                ],
+                "summary": "Decline the ringing call",
+                "operationId": "rejectCall",
+                "requestBody": {
+                    "description": "Optional; an empty body is fine",
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/CallTarget"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CommandResponse"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "invalid_state",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "unsupported",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "phone_error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "hfp_unavailable",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "504": {
+                        "description": "timeout",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/calls/resume": {
+            "post": {
+                "tags": [
+                    "Calls"
+                ],
+                "summary": "Make the held call active",
+                "operationId": "resumeCall",
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CommandResponse"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "invalid_state",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "unsupported",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "phone_error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "hfp_unavailable",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "504": {
+                        "description": "timeout",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
                                 }
                             }
                         }
@@ -463,7 +1012,78 @@
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "$ref": "#/components/schemas/CallStatus"
+                                    "$ref": "#/components/schemas/CallsResponse"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/calls/swap": {
+            "post": {
+                "tags": [
+                    "Calls"
+                ],
+                "summary": "Swap the active and held calls",
+                "operationId": "swapCalls",
+                "responses": {
+                    "200": {
+                        "description": "",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CommandResponse"
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "invalid_state",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "unsupported",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "phone_error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "hfp_unavailable",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
+                                }
+                            }
+                        }
+                    },
+                    "504": {
+                        "description": "timeout",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/CallErrorResponse"
                                 }
                             }
                         }
@@ -1643,28 +2263,117 @@
                     }
                 }
             },
-            "CallStatus": {
+            "Call": {
                 "type": "object",
+                "description": "A call as clients see it.",
                 "required": [
-                    "state"
+                    "id",
+                    "direction",
+                    "state",
+                    "conference",
+                    "startedAt"
                 ],
                 "properties": {
-                    "duration": {
+                    "answeredAt": {
                         "type": [
                             "integer",
                             "null"
                         ],
                         "format": "int64",
-                        "minimum": 0
+                        "description": "Epoch milliseconds when the call first became active"
+                    },
+                    "conference": {
+                        "type": "boolean",
+                        "description": "True while the call is part of a merged call"
+                    },
+                    "direction": {
+                        "$ref": "#/components/schemas/Direction"
+                    },
+                    "id": {
+                        "type": "string",
+                        "description": "Assigned by otacon; stable for the life of the call"
                     },
                     "number": {
                         "type": [
                             "string",
                             "null"
+                        ],
+                        "description": "E.164 if known"
+                    },
+                    "numberSource": {
+                        "oneOf": [
+                            {
+                                "type": "null"
+                            },
+                            {
+                                "$ref": "#/components/schemas/NumberSource"
+                            }
                         ]
                     },
+                    "startedAt": {
+                        "type": "integer",
+                        "format": "int64",
+                        "description": "Epoch milliseconds"
+                    },
                     "state": {
+                        "$ref": "#/components/schemas/CallState"
+                    }
+                }
+            },
+            "CallErrorResponse": {
+                "type": "object",
+                "required": [
+                    "error",
+                    "message"
+                ],
+                "properties": {
+                    "error": {
+                        "type": "string",
+                        "description": "bad_request, invalid_state, unsupported, hfp_unavailable, phone_error or timeout"
+                    },
+                    "message": {
                         "type": "string"
+                    }
+                }
+            },
+            "CallState": {
+                "type": "string",
+                "enum": [
+                    "dialing",
+                    "alerting",
+                    "incoming",
+                    "active",
+                    "held",
+                    "ended"
+                ]
+            },
+            "CallTarget": {
+                "type": "object",
+                "properties": {
+                    "call": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "description": "Call id; defaults to the obvious call (see docs/voice-ws.md)"
+                    }
+                }
+            },
+            "CallsResponse": {
+                "type": "object",
+                "required": [
+                    "calls",
+                    "hfp"
+                ],
+                "properties": {
+                    "calls": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/Call"
+                        }
+                    },
+                    "hfp": {
+                        "$ref": "#/components/schemas/HfpInfo"
                     }
                 }
             },
@@ -1678,6 +2387,53 @@
                             "null"
                         ],
                         "description": "Current clipboard text (null if empty)"
+                    }
+                }
+            },
+            "CommandResponse": {
+                "type": "object",
+                "description": "Result of a call command (the socket's `ack.result`, plus `ok`).",
+                "required": [
+                    "ok"
+                ],
+                "properties": {
+                    "call": {
+                        "oneOf": [
+                            {
+                                "type": "null"
+                            },
+                            {
+                                "$ref": "#/components/schemas/Call",
+                                "description": "The new or answered call (dial, answer)"
+                            }
+                        ]
+                    },
+                    "calls": {
+                        "type": [
+                            "array",
+                            "null"
+                        ],
+                        "items": {
+                            "$ref": "#/components/schemas/Call"
+                        },
+                        "description": "All calls after the command (hold, resume, swap, merge)"
+                    },
+                    "digits": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "description": "Digits sent (dtmf)"
+                    },
+                    "fallback": {
+                        "type": [
+                            "string",
+                            "null"
+                        ],
+                        "description": "Set to `adb` when the Bluetooth control link was down and the command\nwas done with ADB instead (dial, answer, hangup only)"
+                    },
+                    "ok": {
+                        "type": "boolean"
                     }
                 }
             },
@@ -1835,11 +2591,31 @@
             "DialBody": {
                 "type": "object",
                 "required": [
-                    "number"
+                    "to"
                 ],
                 "properties": {
-                    "number": {
-                        "type": "string"
+                    "to": {
+                        "type": "string",
+                        "description": "Number to call, E.164 (e.g. +15551234567)"
+                    }
+                }
+            },
+            "Direction": {
+                "type": "string",
+                "enum": [
+                    "outgoing",
+                    "incoming"
+                ]
+            },
+            "DtmfBody": {
+                "type": "object",
+                "required": [
+                    "digits"
+                ],
+                "properties": {
+                    "digits": {
+                        "type": "string",
+                        "description": "Keypad digits: 0-9 * # A-D; `w` waits 500 ms"
                     }
                 }
             },
@@ -1943,6 +2719,26 @@
                     }
                 }
             },
+            "HfpInfo": {
+                "type": "object",
+                "required": [
+                    "connected",
+                    "chld"
+                ],
+                "properties": {
+                    "chld": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "The phone's AT+CHLD options (which of hold/swap/merge it supports)"
+                    },
+                    "connected": {
+                        "type": "boolean",
+                        "description": "The phone's Bluetooth control link is up"
+                    }
+                }
+            },
             "InstallBody": {
                 "type": "object",
                 "required": [
@@ -2040,6 +2836,13 @@
                         "type": "string"
                     }
                 }
+            },
+            "NumberSource": {
+                "type": "string",
+                "enum": [
+                    "hfp",
+                    "kiosk"
+                ]
             },
             "OkResponse": {
                 "type": "object",
@@ -2376,7 +3179,7 @@
                     "pause_ms": {
                         "type": "integer",
                         "format": "int32",
-                        "description": "Pause in ms at end position before releasing (default 0). Non-zero enables drag mode via sendevent which prevents fling/momentum — useful for spinners and pickers.",
+                        "description": "Pause in ms at end position before releasing (default 0).\nNon-zero enables drag mode via sendevent which prevents\nfling/momentum \u2014 useful for spinners and pickers.",
                         "minimum": 0
                     },
                     "x1": {

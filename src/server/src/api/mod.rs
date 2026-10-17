@@ -114,7 +114,13 @@ impl IntoResponse for ApiError {
         record::status_handler,
         calls::dial_handler,
         calls::answer_handler,
+        calls::reject_handler,
         calls::hangup_handler,
+        calls::hold_handler,
+        calls::resume_handler,
+        calls::swap_handler,
+        calls::merge_handler,
+        calls::dtmf_handler,
         calls::status_handler,
     ),
     components(schemas(
@@ -132,7 +138,10 @@ impl IntoResponse for ApiError {
         contacts::Contact,
         open::OpenBody,
         record::StartRecordBody, record::RecordStatus,
-        calls::DialBody, calls::CallStatus,
+        calls::DialBody, calls::CallTarget, calls::DtmfBody, calls::CommandResponse,
+        calls::CallsResponse, calls::HfpInfo, calls::CallErrorResponse,
+        crate::voice::table::Call, crate::voice::table::CallState,
+        crate::voice::table::Direction, crate::voice::table::NumberSource,
         OkResponse, ErrorResponse,
     ))
 )]
@@ -170,7 +179,13 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/phones/{id}/api/sms/messages", post(phone_sms_send))
         .route("/phones/{id}/api/calls/dial", post(phone_calls_dial))
         .route("/phones/{id}/api/calls/answer", post(phone_calls_answer))
+        .route("/phones/{id}/api/calls/reject", post(phone_calls_reject))
         .route("/phones/{id}/api/calls/hangup", post(phone_calls_hangup))
+        .route("/phones/{id}/api/calls/hold", post(phone_calls_hold))
+        .route("/phones/{id}/api/calls/resume", post(phone_calls_resume))
+        .route("/phones/{id}/api/calls/swap", post(phone_calls_swap))
+        .route("/phones/{id}/api/calls/merge", post(phone_calls_merge))
+        .route("/phones/{id}/api/calls/dtmf", post(phone_calls_dtmf))
         .route("/phones/{id}/api/calls/status", get(phone_calls_status))
         .route("/phones/{id}/api/contacts", get(phone_contacts))
         .route("/phones/{id}/api/apps", get(phone_apps_list))
@@ -198,12 +213,15 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/phones/{id}/api/test/call/end", post(phone_test_end))
         .route("/phones/{id}/api/test/sms/receive", post(phone_test_sms))
         .route("/phones/{id}/api/internal/event", post(phone_internal_event))
+        // The kiosk's call/SMS watcher: every phone reaches the host's 8081
+        // over adb reverse, so it names itself by ADB serial.
+        .route("/api/internal/event", post(serial_internal_event))
         // Per-phone WebSocket endpoints
-        .route("/phones/{id}/ws/audio/call", get(phone_ws_call))
-        .route("/phones/{id}/ws/audio/media", get(phone_ws_media))
+        .route("/phones/{id}/ws/voice/control", get(phone_ws_voice_control))
+        .route("/phones/{id}/ws/voice/monitor", get(phone_ws_voice_monitor))
+        .route("/phones/{id}/ws/media", get(phone_ws_media))
         .route("/phones/{id}/ws/events", get(phone_ws_events))
         .route("/phones/{id}/ws/record", get(phone_ws_record))
-        .route("/phones/{id}/audio", get(phone_mp3))
         // System-level
         .route("/ws/system/events", get(system_events_ws))
         // OpenAPI spec
@@ -321,31 +339,49 @@ async fn phone_sms_send(
 async fn phone_calls_dial(
     State(state): State<Arc<AppState>>, Path(id): Path<String>,
     body: Json<calls::DialBody>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+) -> Result<Response, ApiError> {
     let ps = extract_phone(State(state), Path(id)).await?;
-    calls::dial_handler(ps, body).await
+    Ok(calls::dial_handler(ps, body).await.into_response())
 }
 
-async fn phone_calls_answer(
+async fn phone_calls_dtmf(
     State(state): State<Arc<AppState>>, Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
+    body: Json<calls::DtmfBody>,
+) -> Result<Response, ApiError> {
     let ps = extract_phone(State(state), Path(id)).await?;
-    calls::answer_handler(ps).await
+    Ok(calls::dtmf_handler(ps, body).await.into_response())
 }
 
-async fn phone_calls_hangup(
-    State(state): State<Arc<AppState>>, Path(id): Path<String>,
-) -> Result<Json<serde_json::Value>, ApiError> {
-    let ps = extract_phone(State(state), Path(id)).await?;
-    calls::hangup_handler(ps).await
+macro_rules! call_target_route {
+    ($name:ident, $handler:path) => {
+        async fn $name(
+            State(state): State<Arc<AppState>>, Path(id): Path<String>,
+            body: Option<Json<calls::CallTarget>>,
+        ) -> Result<Response, ApiError> {
+            let ps = extract_phone(State(state), Path(id)).await?;
+            Ok($handler(ps, body).await.into_response())
+        }
+    };
 }
+call_target_route!(phone_calls_answer, calls::answer_handler);
+call_target_route!(phone_calls_reject, calls::reject_handler);
+call_target_route!(phone_calls_hangup, calls::hangup_handler);
 
-async fn phone_calls_status(
-    State(state): State<Arc<AppState>>, Path(id): Path<String>,
-) -> Result<Json<calls::CallStatus>, ApiError> {
-    let ps = extract_phone(State(state), Path(id)).await?;
-    calls::status_handler(ps).await
+macro_rules! call_route {
+    ($name:ident, $handler:path) => {
+        async fn $name(
+            State(state): State<Arc<AppState>>, Path(id): Path<String>,
+        ) -> Result<Response, ApiError> {
+            let ps = extract_phone(State(state), Path(id)).await?;
+            Ok($handler(ps).await.into_response())
+        }
+    };
 }
+call_route!(phone_calls_hold, calls::hold_handler);
+call_route!(phone_calls_resume, calls::resume_handler);
+call_route!(phone_calls_swap, calls::swap_handler);
+call_route!(phone_calls_merge, calls::merge_handler);
+call_route!(phone_calls_status, calls::status_handler);
 
 async fn phone_contacts(
     State(state): State<Arc<AppState>>, Path(id): Path<String>,
@@ -600,14 +636,43 @@ async fn phone_internal_event(
     Ok(internal::event_handler(ps, body).await)
 }
 
+async fn serial_internal_event(
+    State(state): State<Arc<AppState>>,
+    query: axum::extract::Query<std::collections::HashMap<String, String>>,
+    body: Json<internal::DeviceEvent>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let ps = {
+        let phones = state.phones.read().await;
+        match query.0.get("serial") {
+            Some(serial) => phones.values().find(|p| &p.config.adb_serial == serial).cloned(),
+            // Older kiosk builds don't send their serial; that only works
+            // with one phone.
+            None if phones.len() == 1 => phones.values().next().cloned(),
+            None => None,
+        }
+    }
+    .ok_or_else(|| ApiError::NotFound("no phone for this event (pass ?serial=<adb serial>)".into()))?;
+    Ok(internal::event_handler(ps, body).await)
+}
+
 // --- Per-phone WebSocket handlers ---
 
-async fn phone_ws_call(
+async fn phone_ws_voice_control(
+    State(state): State<Arc<AppState>>, Path(id): Path<String>,
+    ws: axum::extract::ws::WebSocketUpgrade,
+    query: axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Result<Response, ApiError> {
+    let ps = extract_phone(State(state), Path(id)).await?;
+    let takeover = query.0.get("takeover").map(|v| v == "1" || v == "true").unwrap_or(false);
+    Ok(crate::voice::ws::control_upgrade(ws, ps, takeover))
+}
+
+async fn phone_ws_voice_monitor(
     State(state): State<Arc<AppState>>, Path(id): Path<String>,
     ws: axum::extract::ws::WebSocketUpgrade,
 ) -> Result<Response, ApiError> {
     let ps = extract_phone(State(state), Path(id)).await?;
-    Ok(crate::ws_handler(ws, ps).await)
+    Ok(crate::voice::ws::monitor_upgrade(ws, ps))
 }
 
 async fn phone_ws_media(
@@ -637,13 +702,6 @@ async fn phone_ws_record(
         .unwrap_or(30)
         .min(180);
     Ok(ws.on_upgrade(move |socket| crate::handle_ws_record(socket, ps, max_duration)))
-}
-
-async fn phone_mp3(
-    State(state): State<Arc<AppState>>, Path(id): Path<String>,
-) -> Result<Response, ApiError> {
-    let ps = extract_phone(State(state), Path(id)).await?;
-    Ok(crate::mp3_stream_handler(ps.audio_config.mp3_cmd.clone()).await)
 }
 
 // --- System-level WebSocket ---

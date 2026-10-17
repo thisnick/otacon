@@ -5,11 +5,11 @@ pub mod local_config;
 pub mod outbox;
 pub mod phone;
 pub mod reconciler;
+pub mod voice;
 
 use axum::{
-    Router,
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
-    response::{IntoResponse, Response},
+    response::Response,
 };
 use futures::{SinkExt, StreamExt};
 use std::{
@@ -20,7 +20,7 @@ use std::{
     sync::Arc,
 };
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::AsyncReadExt,
     process::Command,
     sync::{broadcast, Mutex},
 };
@@ -46,7 +46,6 @@ pub struct AudioConfig {
     capture_cmd: Vec<String>,
     a2dp_capture_cmd: Option<Vec<String>>,
     playback_cmd: Vec<String>,
-    mp3_cmd: String,
 }
 
 fn alsa_cmd(tool: &str, device: &str, rate: u32, channels: u16) -> Vec<String> {
@@ -97,9 +96,6 @@ impl AudioConfig {
                     capture_cmd: alsa_cmd("arecord", &device, sample_rate, channels),
                     a2dp_capture_cmd: Some(alsa_cmd("arecord", &a2dp_device, a2dp_sample_rate, a2dp_channels)),
                     playback_cmd: alsa_cmd("aplay", &device, sample_rate, channels),
-                    mp3_cmd: format!(
-                        "arecord -D {device} -f S16_LE -r {sample_rate} -c {channels} -t raw | lame -r -s 16 -m m --bitrate 32 - -"
-                    ),
                 }
             }
             _ => {
@@ -118,9 +114,6 @@ impl AudioConfig {
                     capture_cmd: alsa_cmd("arecord", &capture_device, sample_rate, channels),
                     a2dp_capture_cmd: None,
                     playback_cmd: alsa_cmd("aplay", &playback_device, sample_rate, channels),
-                    mp3_cmd: format!(
-                        "arecord -D {capture_device} -f S16_LE -r {sample_rate} -c {channels} -t raw | lame -r -s 44.1 -m m --bitrate 128 - -"
-                    ),
                 }
             }
         }
@@ -155,9 +148,20 @@ fn create_phone_state(config: phone::PhoneConfig, audio_config: &AudioConfig) ->
     } else {
         audio_config
     };
-    let (capture_tx, _) = broadcast::channel::<Vec<u8>>(64);
-    let (events_tx, _) = broadcast::channel::<String>(256);
-    let active_sinks = Arc::new(Mutex::new(HashMap::new()));
+    let bluetooth = matches!(audio_config.backend, AudioBackend::Bluetooth);
+    let voice = voice::for_phone(
+        &config.id,
+        &config.adb_serial,
+        config.phone_bt_mac.as_deref(),
+        voice::AudioParams {
+            sample_rate: audio_config.sample_rate,
+            capture_cmd: audio_config.capture_cmd.clone(),
+            playback_cmd: audio_config.playback_cmd.clone(),
+        },
+        bluetooth,
+    );
+    let events_tx = voice.events_tx.clone();
+    let active_sinks = voice.active_sinks.clone();
 
     let a2dp_tx = if audio_config.a2dp_capture_cmd.is_some() {
         let (tx, _) = broadcast::channel::<Vec<u8>>(64);
@@ -172,30 +176,19 @@ fn create_phone_state(config: phone::PhoneConfig, audio_config: &AudioConfig) ->
     ));
     api::bridge::spawn_health_checker(bridge.clone());
 
-    // Audio capture is now lazy — started when first WebSocket client connects
-    // D-Bus monitor for BlueALSA sink state is still always-on (lightweight)
-    if matches!(audio_config.backend, AudioBackend::Bluetooth) {
-        dbus_monitor::spawn_monitor(events_tx.clone(), active_sinks.clone());
-    }
-
     Arc::new(phone::PhoneState {
         config,
-        capture_tx,
         a2dp_tx,
-        playback_owner: Mutex::new(None),
+        voice,
         audio_config: audio_config.clone(),
         snapshot_cache: Mutex::new(Some(api::snapshot::SnapshotCache::default())),
         bridge,
         events_tx,
         active_sinks,
         recording: Arc::new(Mutex::new(None)),
-        sim_call: Mutex::new(api::test_sim::SimCallState::default()),
-        call_audio_occupied: std::sync::atomic::AtomicBool::new(false),
         display: Mutex::new(phone::DisplayResources::default()),
         vnc_clients: std::sync::atomic::AtomicU32::new(0),
-        capture_clients: std::sync::atomic::AtomicU32::new(0),
         media_clients: std::sync::atomic::AtomicU32::new(0),
-        capture_running: std::sync::atomic::AtomicBool::new(false),
         a2dp_capture_running: std::sync::atomic::AtomicBool::new(false),
         monitor_status: Mutex::new(None),
         phone_number_cache: Mutex::new(None),
@@ -430,20 +423,6 @@ async fn capture_audio_lazy(
     }
 }
 
-/// Start audio capture for a phone if not already running.
-fn ensure_capture(state: &Arc<phone::PhoneState>) {
-    use std::sync::atomic::Ordering;
-    if state.capture_running.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_ok() {
-        let cmd = state.audio_config.capture_cmd.clone();
-        let tx = state.capture_tx.clone();
-        let state = state.clone();
-        tokio::spawn(async move {
-            capture_audio_lazy(cmd, tx, &state.capture_running, &state.capture_clients).await;
-            state.capture_running.store(false, Ordering::Release);
-        });
-    }
-}
-
 /// Start A2DP capture for a phone if not already running.
 fn ensure_a2dp_capture(state: &Arc<phone::PhoneState>) {
     use std::sync::atomic::Ordering;
@@ -544,209 +523,6 @@ fn spawn_vnc_proxy(state: Arc<phone::PhoneState>) {
     });
 }
 
-/// WebSocket handler: bidirectional PCM audio (single-consumer: 409 if occupied)
-async fn ws_handler(ws: WebSocketUpgrade, state: Arc<phone::PhoneState>) -> Response {
-    use std::sync::atomic::Ordering;
-    if state.call_audio_occupied.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_err() {
-        return (
-            axum::http::StatusCode::CONFLICT,
-            axum::Json(serde_json::json!({"error": "call audio WebSocket already in use"})),
-        ).into_response();
-    }
-    ws.on_upgrade(move |socket| handle_ws(socket, state))
-}
-
-/// Guard that decrements capture_clients and clears call_audio_occupied on drop,
-/// ensuring cleanup even if the WebSocket handler is cancelled or panics.
-struct CaptureClientGuard {
-    state: Arc<phone::PhoneState>,
-    id: u64,
-}
-
-impl Drop for CaptureClientGuard {
-    fn drop(&mut self) {
-        self.state.capture_clients.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
-        self.state.call_audio_occupied.store(false, std::sync::atomic::Ordering::Release);
-        eprintln!("WebSocket client {} disconnected (guard drop)", self.id);
-    }
-}
-
-async fn handle_ws(socket: WebSocket, state: Arc<phone::PhoneState>) {
-    static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let client_id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    eprintln!("WebSocket client {client_id} connected");
-
-    // Lazily start audio capture — guard ensures decrement on all exit paths
-    state.capture_clients.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let _guard = CaptureClientGuard { state: state.clone(), id: client_id };
-    ensure_capture(&state);
-
-    let (mut ws_tx, mut ws_rx) = socket.split();
-    let mut capture_rx = state.capture_tx.subscribe();
-
-    // Send config message so the client knows the sample rate
-    let config_msg = format!(
-        r#"{{"type":"config","sampleRate":{},"channels":{}}}"#,
-        state.audio_config.sample_rate, state.audio_config.channels
-    );
-    let _ = ws_tx.send(Message::Text(config_msg.into())).await;
-
-    // Task: send captured audio to this client
-    let mut send_task = tokio::spawn(async move {
-        while let Ok(data) = capture_rx.recv().await {
-            if ws_tx.send(Message::Binary(data.into())).await.is_err() {
-                break;
-            }
-        }
-    });
-
-    // Task: receive audio from WebSocket client → playback via aplay.
-    // Uses a mixing loop: a 100ms ticker always writes to aplay (silence or
-    // real audio). This prevents BlueALSA/aplay from going idle during gaps,
-    // which causes stutter when audio resumes.
-    let playback_cmd = state.audio_config.playback_cmd.clone();
-    let state_clone = state.clone();
-    let mut recv_task = tokio::spawn(async move {
-        let mut player: Option<tokio::process::Child> = None;
-        let mut is_owner = false;
-
-        // Audio buffer: WebSocket pushes chunks here, ticker drains them
-        let audio_buf: Arc<tokio::sync::Mutex<Vec<u8>>> =
-            Arc::new(tokio::sync::Mutex::new(Vec::new()));
-        let flush_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
-
-        // 100ms of silence at 16kHz mono S16_LE = 3200 bytes
-        let chunk_bytes: usize = 3200;
-
-        // Spawn aplay immediately so it's ready
-        fn start_aplay(cmd: &[String]) -> Option<tokio::process::Child> {
-            match Command::new(&cmd[0])
-                .args(&cmd[1..])
-                .stdin(Stdio::piped())
-                .stderr(Stdio::null())
-                .spawn()
-            {
-                Ok(child) => Some(child),
-                Err(e) => {
-                    eprintln!("Failed to start aplay: {e}");
-                    None
-                }
-            }
-        }
-
-        // Process WebSocket messages — push audio to buffer, handle flush
-        let buf_for_ws = audio_buf.clone();
-        let flush_for_ws = flush_flag.clone();
-
-        while let Some(Ok(msg)) = ws_rx.next().await {
-            // Text: control commands
-            if let Message::Text(text) = &msg {
-                if text.contains("flush") {
-                    // Clear the buffer — next tick writes silence
-                    buf_for_ws.lock().await.clear();
-                    flush_for_ws.store(true, std::sync::atomic::Ordering::Relaxed);
-                    eprintln!("Client {client_id} flushed audio buffer");
-                    continue;
-                }
-            }
-
-            if let Message::Binary(data) = msg {
-                // Claim playback ownership on first audio
-                if !is_owner {
-                    let mut owner = state_clone.playback_owner.lock().await;
-                    if owner.is_none() {
-                        *owner = Some(client_id);
-                        is_owner = true;
-                        eprintln!("Client {client_id} claimed playback");
-
-                        // Spawn aplay and start the mixing ticker
-                        player = start_aplay(&playback_cmd);
-                        if player.is_some() {
-                            eprintln!("Client {client_id} spawned aplay");
-                        }
-
-                        // Start the mixing ticker in a separate task
-                        let buf_for_tick = audio_buf.clone();
-                        let flush_for_tick = flush_flag.clone();
-                        let tick_stdin = player.as_mut()
-                            .and_then(|c| c.stdin.take());
-
-                        if let Some(mut stdin) = tick_stdin {
-                            tokio::spawn(async move {
-                                let silence = vec![0u8; chunk_bytes];
-                                let mut interval = tokio::time::interval(
-                                    std::time::Duration::from_millis(100)
-                                );
-                                loop {
-                                    interval.tick().await;
-
-                                    // Check flush — kill and respawn
-                                    if flush_for_tick.swap(false, std::sync::atomic::Ordering::Relaxed) {
-                                        // Just clear — silence will play until new audio arrives
-                                    }
-
-                                    // Drain up to one chunk from buffer, or write silence
-                                    let mut buf = buf_for_tick.lock().await;
-                                    if buf.len() >= chunk_bytes {
-                                        let chunk: Vec<u8> = buf.drain(..chunk_bytes).collect();
-                                        drop(buf);
-                                        if stdin.write_all(&chunk).await.is_err() {
-                                            break;
-                                        }
-                                    } else if !buf.is_empty() {
-                                        // Partial chunk — pad with silence
-                                        let mut chunk: Vec<u8> = buf.drain(..).collect();
-                                        chunk.resize(chunk_bytes, 0);
-                                        drop(buf);
-                                        if stdin.write_all(&chunk).await.is_err() {
-                                            break;
-                                        }
-                                    } else {
-                                        drop(buf);
-                                        if stdin.write_all(&silence).await.is_err() {
-                                            break;
-                                        }
-                                    }
-                                }
-                                eprintln!("Mixing ticker stopped");
-                            });
-                        }
-                    } else {
-                        continue;
-                    }
-                }
-
-                // Push audio data to the buffer
-                buf_for_ws.lock().await.extend_from_slice(&data);
-            }
-        }
-
-        // Cleanup: release playback ownership
-        if is_owner {
-            let mut owner = state_clone.playback_owner.lock().await;
-            if *owner == Some(client_id) {
-                *owner = None;
-                eprintln!("Client {client_id} released playback");
-            }
-        }
-
-        if let Some(mut child) = player {
-            let _ = child.kill().await;
-        }
-    });
-
-    tokio::select! {
-        _ = &mut send_task => {
-            recv_task.abort();
-        },
-        _ = &mut recv_task => {
-            send_task.abort();
-        },
-    }
-
-    // _guard handles capture_clients decrement and call_audio_occupied reset on drop
-}
-
 /// WebSocket handler: A2DP media audio (subscribe-only)
 async fn ws_media_handler(ws: WebSocketUpgrade, state: Arc<phone::PhoneState>) -> Response {
     ws.on_upgrade(move |socket| handle_ws_media(socket, state))
@@ -806,10 +582,13 @@ async fn handle_ws_events(socket: WebSocket, state: Arc<phone::PhoneState>) {
     {
         let sinks = state.active_sinks.lock().await;
         for (_path, event_data) in sinks.iter() {
-            let msg = serde_json::json!({
-                "event": "audio.sink.active",
-                "data": event_data,
+            let mut msg = serde_json::json!({
+                "type": "audio.sink.active",
+                "ts": chrono::Utc::now().timestamp_millis(),
             });
+            if let (Some(o), Some(d)) = (msg.as_object_mut(), event_data.as_object()) {
+                o.extend(d.clone());
+            }
             if ws_tx.send(Message::Text(msg.to_string().into())).await.is_err() {
                 return;
             }
@@ -938,46 +717,4 @@ async fn handle_ws_record(socket: WebSocket, state: Arc<phone::PhoneState>, max_
             }
         }
     }
-}
-
-/// Stream MP3 audio via HTTP (for VLC/ffplay)
-async fn mp3_stream_handler(mp3_cmd: String) -> Response {
-    let stream = async_stream::stream! {
-        let mut child = match Command::new("bash")
-            .args(["-c", &mp3_cmd])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-        {
-            Ok(c) => c,
-            Err(e) => {
-                yield Err(std::io::Error::new(std::io::ErrorKind::Other, e));
-                return;
-            }
-        };
-
-        let mut stdout = child.stdout.take().unwrap();
-        let mut buf = vec![0u8; 4096];
-
-        loop {
-            match stdout.read(&mut buf).await {
-                Ok(0) => break,
-                Ok(n) => yield Ok(buf[..n].to_vec()),
-                Err(e) => {
-                    yield Err(e);
-                    break;
-                }
-            }
-        }
-
-        let _ = child.kill().await;
-    };
-
-    let body = axum::body::Body::from_stream(stream);
-    Response::builder()
-        .header("Content-Type", "audio/mpeg")
-        .header("Cache-Control", "no-cache")
-        .header("Transfer-Encoding", "chunked")
-        .body(body)
-        .unwrap()
 }

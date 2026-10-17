@@ -92,7 +92,13 @@ public class SnapshotServer {
 
             // Start telephony monitor (call state push events)
             System.out.println("Step 9: starting telephony monitor");
-            TelephonyMonitor telephonyMonitor = new TelephonyMonitor();
+            // The host routes pushed events by ADB serial (all phones share
+            // the host's 8081 via adb reverse), so fleet-agent passes it in.
+            String serial = null;
+            for (int i = 0; i + 1 < args.length; i++) {
+                if ("--serial".equals(args[i])) serial = args[i + 1];
+            }
+            TelephonyMonitor telephonyMonitor = new TelephonyMonitor(serial);
             telephonyMonitor.start(handlerThread.getLooper());
 
             System.out.println("Step 10: starting server on port " + PORT);

@@ -1,25 +1,207 @@
+//! REST call control. Same controller and checks as `ws/voice/control`
+//! (docs/voice-ws.md); state changes show up on the voice sockets and
+//! /ws/events.
+
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::sync::Arc;
 use utoipa::ToSchema;
 
 use super::adb::adb_shell;
-use super::{ApiError, OkResponse};
 use crate::phone::PhoneState;
+use crate::voice::table::Call;
+use crate::voice::{CmdError, Command};
 
 #[derive(Deserialize, Serialize, ToSchema)]
 pub struct DialBody {
-    pub number: String,
+    /// Number to call, E.164 (e.g. +15551234567)
+    #[serde(alias = "number")]
+    pub to: String,
+}
+
+#[derive(Deserialize, Serialize, ToSchema, Default)]
+pub struct CallTarget {
+    /// Call id; defaults to the obvious call (see docs/voice-ws.md)
+    pub call: Option<String>,
+}
+
+#[derive(Deserialize, Serialize, ToSchema)]
+pub struct DtmfBody {
+    /// Keypad digits: 0-9 * # A-D; `w` waits 500 ms
+    pub digits: String,
+}
+
+/// Result of a call command (the socket's `ack.result`, plus `ok`).
+#[derive(Serialize, ToSchema)]
+pub struct CommandResponse {
+    pub ok: bool,
+    /// The new or answered call (dial, answer)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub call: Option<Call>,
+    /// All calls after the command (hold, resume, swap, merge)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub calls: Option<Vec<Call>>,
+    /// Digits sent (dtmf)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub digits: Option<String>,
+    /// Set to `adb` when the Bluetooth control link was down and the command
+    /// was done with ADB instead (dial, answer, hangup only)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fallback: Option<String>,
 }
 
 #[derive(Serialize, ToSchema)]
-pub struct CallStatus {
-    pub state: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub number: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub duration: Option<u64>,
+pub struct HfpInfo {
+    /// The phone's Bluetooth control link is up
+    pub connected: bool,
+    /// The phone's AT+CHLD options (which of hold/swap/merge it supports)
+    pub chld: Vec<String>,
 }
+
+#[derive(Serialize, ToSchema)]
+pub struct CallsResponse {
+    pub calls: Vec<Call>,
+    pub hfp: HfpInfo,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct CallErrorResponse {
+    /// bad_request, invalid_state, unsupported, hfp_unavailable, phone_error or timeout
+    pub error: String,
+    pub message: String,
+}
+
+pub struct CallError(CmdError);
+
+impl IntoResponse for CallError {
+    fn into_response(self) -> Response {
+        let status = match self.0.code {
+            "bad_request" => StatusCode::BAD_REQUEST,
+            "invalid_state" => StatusCode::CONFLICT,
+            "unsupported" => StatusCode::UNPROCESSABLE_ENTITY,
+            "hfp_unavailable" => StatusCode::SERVICE_UNAVAILABLE,
+            "phone_error" => StatusCode::BAD_GATEWAY,
+            "timeout" => StatusCode::GATEWAY_TIMEOUT,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        (status, Json(json!({"error": self.0.code, "message": self.0.message}))).into_response()
+    }
+}
+
+type CallResult = Result<Json<CommandResponse>, CallError>;
+
+async fn run(state: &PhoneState, cmd: Command) -> Result<CommandResponse, CmdError> {
+    match state.voice.execute(cmd.clone()).await {
+        Ok(v) => Ok(CommandResponse {
+            ok: true,
+            call: v.get("call").and_then(|c| serde_json::from_value(c.clone()).ok()),
+            calls: v.get("calls").and_then(|c| serde_json::from_value(c.clone()).ok()),
+            digits: v.get("digits").and_then(|d| d.as_str()).map(String::from),
+            fallback: None,
+        }),
+        Err(e)
+            if e.code == "hfp_unavailable"
+                && matches!(cmd, Command::Dial { .. } | Command::Answer { .. } | Command::Hangup { .. }) =>
+        {
+            adb_fallback(state, &cmd).await
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Today's ADB behaviour, for when the phone's Bluetooth control link is down.
+async fn adb_fallback(state: &PhoneState, cmd: &Command) -> Result<CommandResponse, CmdError> {
+    let serial = &state.config.adb_serial;
+    let shell = match cmd {
+        Command::Dial { to } => {
+            let to: String = to.chars().filter(|c| !matches!(c, ' ' | '-' | '(' | ')' | '.')).collect();
+            if to.is_empty() || !to.chars().all(|c| c.is_ascii_digit() || c == '+' || c == '*' || c == '#') {
+                return Err(CmdError::new("bad_request", "`to` must be a phone number"));
+            }
+            format!("am start -a android.intent.action.CALL -d 'tel:{}'", to.replace('#', "%23"))
+        }
+        Command::Answer { .. } => "input keyevent KEYCODE_CALL".to_string(),
+        Command::Hangup { .. } => "input keyevent KEYCODE_ENDCALL".to_string(),
+        _ => unreachable!(),
+    };
+    adb_shell(serial, &shell)
+        .await
+        .map_err(|e| CmdError::new("phone_error", format!("adb: {e:?}")))?;
+    Ok(CommandResponse { ok: true, call: None, calls: None, digits: None, fallback: Some("adb".into()) })
+}
+
+macro_rules! command_handler {
+    ($fn:ident, $path:literal, $op:literal, $doc:literal) => {
+        #[doc = $doc]
+        #[utoipa::path(
+            post,
+            path = $path,
+            tag = "Calls",
+            operation_id = $op,
+            responses(
+                (status = 200, body = CommandResponse),
+                (status = 409, body = CallErrorResponse, description = "invalid_state"),
+                (status = 422, body = CallErrorResponse, description = "unsupported"),
+                (status = 502, body = CallErrorResponse, description = "phone_error"),
+                (status = 503, body = CallErrorResponse, description = "hfp_unavailable"),
+                (status = 504, body = CallErrorResponse, description = "timeout"),
+            )
+        )]
+        pub async fn $fn(state: Arc<PhoneState>) -> CallResult {
+            run(&state, command_for($op, None)).await.map(Json).map_err(CallError)
+        }
+    };
+}
+
+fn command_for(op: &str, call: Option<String>) -> Command {
+    match op {
+        "holdCall" => Command::Hold,
+        "resumeCall" => Command::Resume,
+        "swapCalls" => Command::Swap,
+        "mergeCalls" => Command::Merge,
+        "answerCall" => Command::Answer { call },
+        "rejectCall" => Command::Reject { call },
+        "hangupCall" => Command::Hangup { call },
+        _ => unreachable!(),
+    }
+}
+
+command_handler!(hold_handler, "/api/calls/hold", "holdCall", "Put the active call on hold");
+command_handler!(resume_handler, "/api/calls/resume", "resumeCall", "Make the held call active");
+command_handler!(swap_handler, "/api/calls/swap", "swapCalls", "Swap the active and held calls");
+command_handler!(merge_handler, "/api/calls/merge", "mergeCalls", "Merge the active and held calls");
+
+macro_rules! target_handler {
+    ($fn:ident, $path:literal, $op:literal, $doc:literal) => {
+        #[doc = $doc]
+        #[utoipa::path(
+            post,
+            path = $path,
+            tag = "Calls",
+            operation_id = $op,
+            request_body(content = CallTarget, description = "Optional; an empty body is fine"),
+            responses(
+                (status = 200, body = CommandResponse),
+                (status = 409, body = CallErrorResponse, description = "invalid_state"),
+                (status = 422, body = CallErrorResponse, description = "unsupported"),
+                (status = 502, body = CallErrorResponse, description = "phone_error"),
+                (status = 503, body = CallErrorResponse, description = "hfp_unavailable"),
+                (status = 504, body = CallErrorResponse, description = "timeout"),
+            )
+        )]
+        pub async fn $fn(state: Arc<PhoneState>, body: Option<Json<CallTarget>>) -> CallResult {
+            let call = body.and_then(|b| b.0.call);
+            run(&state, command_for($op, call)).await.map(Json).map_err(CallError)
+        }
+    };
+}
+
+target_handler!(answer_handler, "/api/calls/answer", "answerCall", "Answer the ringing call");
+target_handler!(reject_handler, "/api/calls/reject", "rejectCall", "Decline the ringing call");
+target_handler!(hangup_handler, "/api/calls/hangup", "hangupCall", "End a call (default: the active call)");
 
 #[utoipa::path(
     post,
@@ -27,59 +209,36 @@ pub struct CallStatus {
     tag = "Calls",
     operation_id = "dialCall",
     request_body = DialBody,
-    responses((status = 200, body = OkResponse))
+    responses(
+        (status = 200, body = CommandResponse),
+        (status = 400, body = CallErrorResponse, description = "bad_request"),
+        (status = 409, body = CallErrorResponse, description = "invalid_state"),
+        (status = 502, body = CallErrorResponse, description = "phone_error"),
+        (status = 503, body = CallErrorResponse, description = "hfp_unavailable"),
+        (status = 504, body = CallErrorResponse, description = "timeout"),
+    )
 )]
-pub async fn dial_handler(state: Arc<PhoneState>, Json(body): Json<DialBody>) -> Result<Json<serde_json::Value>, ApiError> {
-    let serial = &state.config.adb_serial;
-    // ADB for actions — device owner app handles event detection
-    adb_shell(serial, &format!(
-        "am start -a android.intent.action.CALL -d tel:{}",
-        body.number.replace(' ', "")
-    )).await?;
-
-    let event = serde_json::json!({
-        "event": "call.dialing",
-        "data": { "number": body.number }
-    });
-    let _ = state.events_tx.send(event.to_string());
-
-    Ok(Json(serde_json::json!({ "ok": true, "number": body.number })))
+pub async fn dial_handler(state: Arc<PhoneState>, Json(body): Json<DialBody>) -> CallResult {
+    run(&state, Command::Dial { to: body.to }).await.map(Json).map_err(CallError)
 }
 
 #[utoipa::path(
     post,
-    path = "/api/calls/answer",
+    path = "/api/calls/dtmf",
     tag = "Calls",
-    operation_id = "answerCall",
-    responses((status = 200, body = OkResponse))
+    operation_id = "sendDtmf",
+    request_body = DtmfBody,
+    responses(
+        (status = 200, body = CommandResponse),
+        (status = 400, body = CallErrorResponse, description = "bad_request"),
+        (status = 409, body = CallErrorResponse, description = "invalid_state"),
+        (status = 502, body = CallErrorResponse, description = "phone_error"),
+        (status = 503, body = CallErrorResponse, description = "hfp_unavailable"),
+        (status = 504, body = CallErrorResponse, description = "timeout"),
+    )
 )]
-pub async fn answer_handler(state: Arc<PhoneState>) -> Result<Json<serde_json::Value>, ApiError> {
-    let serial = &state.config.adb_serial;
-    adb_shell(serial, "input keyevent KEYCODE_CALL").await?;
-    Ok(Json(serde_json::json!({ "ok": true })))
-}
-
-#[utoipa::path(
-    post,
-    path = "/api/calls/hangup",
-    tag = "Calls",
-    operation_id = "hangupCall",
-    responses((status = 200, body = OkResponse))
-)]
-pub async fn hangup_handler(state: Arc<PhoneState>) -> Result<Json<serde_json::Value>, ApiError> {
-    let serial = &state.config.adb_serial;
-    adb_shell(serial, "input keyevent KEYCODE_ENDCALL").await?;
-    // Reset state locally — device owner app will also push call.ended
-    // but we don't wait for it
-    {
-        let mut sim = state.sim_call.lock().await;
-        sim.state = "idle".to_string();
-        sim.number = None;
-        sim.connected_at = None;
-    }
-    let event = serde_json::json!({"event": "call.ended", "data": {"reason": "hangup"}});
-    let _ = state.events_tx.send(event.to_string());
-    Ok(Json(serde_json::json!({ "ok": true })))
+pub async fn dtmf_handler(state: Arc<PhoneState>, Json(body): Json<DtmfBody>) -> CallResult {
+    run(&state, Command::Dtmf { digits: body.digits }).await.map(Json).map_err(CallError)
 }
 
 #[utoipa::path(
@@ -87,66 +246,18 @@ pub async fn hangup_handler(state: Arc<PhoneState>) -> Result<Json<serde_json::V
     path = "/api/calls/status",
     tag = "Calls",
     operation_id = "getCallStatus",
-    responses((status = 200, body = CallStatus))
+    responses((status = 200, body = CallsResponse))
 )]
-pub async fn status_handler(state: Arc<PhoneState>) -> Result<Json<CallStatus>, ApiError> {
-    let serial = &state.config.adb_serial;
-    // Check push-event state first (updated by internal.rs and test_sim.rs)
-    {
-        let sim = state.sim_call.lock().await;
-        if !sim.state.is_empty() && sim.state != "idle" {
-            let duration = sim.connected_at.map(|t| t.elapsed().as_secs());
-            return Ok(Json(CallStatus {
-                state: sim.state.clone(),
-                number: sim.number.clone(),
-                duration,
-            }));
-        }
-    }
-
-    // Fall back to ADB query (works even without push events)
-    if let Ok(status) = query_call_state_adb(serial).await {
-        return Ok(Json(status));
-    }
-
-    Ok(Json(CallStatus {
-        state: "idle".to_string(),
-        number: None,
-        duration: None,
+pub async fn status_handler(state: Arc<PhoneState>) -> Result<Json<CallsResponse>, CallError> {
+    // Re-read from the phone when HFP is up; otherwise the last known calls
+    // (from the kiosk's call watcher).
+    state.voice.execute(Command::Status).await.map_err(CallError)?;
+    let hfp = state.voice.hfp_json();
+    Ok(Json(CallsResponse {
+        calls: state.voice.calls(),
+        hfp: HfpInfo {
+            connected: hfp["connected"].as_bool().unwrap_or(false),
+            chld: serde_json::from_value(hfp["chld"].clone()).unwrap_or_default(),
+        },
     }))
 }
-
-/// Query call state via `adb shell dumpsys telephony.registry`
-async fn query_call_state_adb(serial: &str) -> Result<CallStatus, ApiError> {
-    let out = adb_shell(serial, "dumpsys telephony.registry | grep -E 'mCallState|mCallIncomingNumber'").await?;
-
-    let mut call_state = 0i32;
-    let mut number: Option<String> = None;
-
-    for line in out.lines() {
-        let trimmed = line.trim();
-        if let Some(val) = trimmed.strip_prefix("mCallState=") {
-            call_state = val.trim().parse().unwrap_or(0);
-        }
-        if let Some(val) = trimmed.strip_prefix("mCallIncomingNumber=") {
-            let n = val.trim().to_string();
-            if !n.is_empty() {
-                number = Some(n);
-            }
-        }
-    }
-
-    let state = match call_state {
-        0 => "idle",
-        1 => "ringing",
-        2 => "active",
-        _ => "idle",
-    };
-
-    Ok(CallStatus {
-        state: state.to_string(),
-        number,
-        duration: None,
-    })
-}
-

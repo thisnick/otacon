@@ -2,10 +2,30 @@ asyncapi: 3.0.0
 info:
   title: Otacon WebSocket API
   description: |
-    WebSocket endpoints for real-time audio streaming and events.
-    Audio is raw PCM — the server dictates the format via an initial
-    config message, and the client must match it.
-  version: 1.0.0
+    Per-phone WebSocket endpoints: call control and call audio
+    (`ws/voice/control`, `ws/voice/monitor`), media audio (`ws/media`) and
+    the phone event feed (`ws/events`).
+
+    The voice sockets are specified in full in
+    [docs/voice-ws.md](../voice-ws.md) (protocol v1); this file describes the
+    same messages as schemas. Operations are written from the client's side:
+    `receive` is server → client, `send` is client → server.
+
+    Common rules for the voice sockets:
+
+    - Text frames are JSON objects with a `type` field. Binary frames are raw
+      PCM audio (`pcm_s16le`), no header.
+    - Text and binary frames go out on one socket in timeline order. Every
+      server message carries `ts` (server time, epoch ms) and `audioPos` (how
+      many audio samples per channel the server sent on this socket before the
+      message).
+    - Every command except `mark` carries a client-chosen `id` (1–64 chars) and
+      gets exactly one reply: `ack` or `error` with that `id`.
+    - Calls outlive the socket: closing it never hangs up a call.
+
+    `{id}` is the host-local phone id (e.g. `phone-r5ct60sd`), not the
+    registry id. Access is tailnet-only; there is no token.
+  version: 2.0.0
   license:
     name: MIT
 
@@ -16,70 +36,257 @@ servers:
     description: Default Tailscale address
 
 channels:
-  audioCall:
-    address: /ws/audio/call
-    title: Call Audio (HFP)
+  voiceControl:
+    address: /phones/{id}/ws/voice/control
+    title: Voice control (one owner)
     description: |
-      Bidirectional PCM audio for phone calls.
-      Server sends captured call audio (phone mic → Pi).
-      Client sends mic audio (Pi → phone speaker).
-      Only one client can send audio at a time (playback ownership).
-    messages:
-      audioConfig:
-        $ref: '#/components/messages/AudioConfig'
-      audioFrame:
-        $ref: '#/components/messages/AudioFrame'
+      Interactive call control plus full-duplex call audio, for one owner per
+      phone. A second connection is refused with HTTP 409
+      (`{"error": "voice_control_in_use", ...}`); with `?takeover=1` the
+      server closes the existing socket with close code 4001 and accepts the
+      new one.
 
-  audioMedia:
-    address: /ws/audio/media
+      - Server → client binary: what the phone hears (the other party),
+        `pcm_s16le` mono at `hello.audio.sampleRate` (16000 on the Bluetooth
+        backend), 20 ms per frame.
+      - Client → server binary: what the other party should hear, same
+        format, any length. Queued (up to 60 s) and played at real time.
+
+      Audio frames only flow while the Bluetooth audio link is up
+      (`audio.link`). Call-control commands run one at a time, in order;
+      `mark` and `clear` act on the uplink audio queue at once.
+    parameters:
+      id:
+        $ref: '#/components/parameters/phoneId'
+    bindings:
+      ws:
+        query:
+          type: object
+          properties:
+            takeover:
+              type: string
+              enum: ['1', 'true']
+              description: Replace the current owner instead of failing with 409.
+        bindingVersion: 0.1.0
+    messages:
+      hello:
+        $ref: '#/components/messages/Hello'
+      callIncoming:
+        $ref: '#/components/messages/CallIncoming'
+      callState:
+        $ref: '#/components/messages/CallState'
+      callEnded:
+        $ref: '#/components/messages/CallEnded'
+      audioLink:
+        $ref: '#/components/messages/AudioLink'
+      hfp:
+        $ref: '#/components/messages/Hfp'
+      mark:
+        $ref: '#/components/messages/Mark'
+      ack:
+        $ref: '#/components/messages/Ack'
+      error:
+        $ref: '#/components/messages/Error'
+      downlinkAudio:
+        $ref: '#/components/messages/CallAudioDownlink'
+      dial:
+        $ref: '#/components/messages/DialCommand'
+      answer:
+        $ref: '#/components/messages/AnswerCommand'
+      reject:
+        $ref: '#/components/messages/RejectCommand'
+      hangup:
+        $ref: '#/components/messages/HangupCommand'
+      hold:
+        $ref: '#/components/messages/HoldCommand'
+      resume:
+        $ref: '#/components/messages/ResumeCommand'
+      swap:
+        $ref: '#/components/messages/SwapCommand'
+      merge:
+        $ref: '#/components/messages/MergeCommand'
+      dtmf:
+        $ref: '#/components/messages/DtmfCommand'
+      markCommand:
+        $ref: '#/components/messages/MarkCommand'
+      clear:
+        $ref: '#/components/messages/ClearCommand'
+      status:
+        $ref: '#/components/messages/StatusCommand'
+      uplinkAudio:
+        $ref: '#/components/messages/CallAudioUplink'
+
+  voiceMonitor:
+    address: /phones/{id}/ws/voice/monitor
+    title: Voice monitor (read-only)
+    description: |
+      Read-only call events and both sides of the call, for any number of
+      listeners (web page Listen, `otacon call listen`, recorders,
+      transcribers). Never takes control from the `ws/voice/control` owner
+      and shares its capture.
+
+      - Events: `hello` (without `hfp`), `call.incoming`, `call.state`,
+        `call.ended`, `audio.link`, `hfp`. No `ack` or `mark`: those belong to
+        the controlling client.
+      - Audio: stereo `pcm_s16le` at `hello.audio.sampleRate` (16 kHz on the
+        Bluetooth backend), interleaved L/R, 20 ms per frame (1280 bytes at
+        16 kHz). Left is the other party, right is exactly what otacon
+        plays into the call (the control owner's uplink, including silence;
+        audio dropped by `clear` never appears). Sample-aligned.
+      - Any text frame sent by the client is answered with `error`,
+        `code: bad_request`.
+    parameters:
+      id:
+        $ref: '#/components/parameters/phoneId'
+    messages:
+      hello:
+        $ref: '#/components/messages/MonitorHello'
+      callIncoming:
+        $ref: '#/components/messages/CallIncoming'
+      callState:
+        $ref: '#/components/messages/CallState'
+      callEnded:
+        $ref: '#/components/messages/CallEnded'
+      audioLink:
+        $ref: '#/components/messages/AudioLink'
+      hfp:
+        $ref: '#/components/messages/Hfp'
+      error:
+        $ref: '#/components/messages/Error'
+      audio:
+        $ref: '#/components/messages/MonitorAudioFrame'
+
+  media:
+    address: /phones/{id}/ws/media
     title: Media Audio (A2DP)
     description: |
-      Subscribe-only PCM audio from phone media playback.
-      Music, videos, or any media routed through Bluetooth A2DP.
-      Client cannot send audio on this channel.
+      Subscribe-only PCM audio from phone media playback (music, videos,
+      anything the phone routes over Bluetooth A2DP), phone → Pi only.
+      Separate from call audio: a different Bluetooth link and format (A2DP
+      44.1 kHz stereo vs HFP 16 kHz mono). No call audio, ringback or hold
+      music ever travels here. Client cannot send audio on this channel.
+      Formerly `/ws/audio/media`.
+    parameters:
+      id:
+        $ref: '#/components/parameters/phoneId'
     messages:
       audioConfig:
         $ref: '#/components/messages/AudioConfig'
       audioFrame:
-        $ref: '#/components/messages/AudioFrame'
+        $ref: '#/components/messages/MediaAudioFrame'
 
   events:
-    address: /ws/events
-    title: Real-time Events
+    address: /phones/{id}/ws/events
+    title: Phone events
     description: |
-      Subscribe-only event stream for audio sink state, notifications,
-      calls, and app state changes. On connect, the server sends the
-      current state of all active audio sinks.
+      Subscribe-only feed of every phone event, for any number of listeners.
+      Lets the CLI, the web page and other watchers follow calls without
+      taking control from the `ws/voice/control` owner or receiving its
+      audio.
+
+      Every message is `{"type": ..., "ts": ..., ...fields}` (the old
+      `{"event": ..., "data": ...}` envelope is gone; its `data` fields are at
+      the top level). The call events are identical to the voice sockets'
+      ones, without `audioPos`. On connect, the server first sends
+      `audio.sink.active` for every currently active sink.
+    parameters:
+      id:
+        $ref: '#/components/parameters/phoneId'
     messages:
       event:
-        $ref: '#/components/messages/Event'
+        $ref: '#/components/messages/PhoneEvent'
 
 operations:
-  receiveCallAudio:
+  receiveVoiceControlEvents:
     action: receive
     channel:
-      $ref: '#/channels/audioCall'
-    summary: Receive call audio from phone
+      $ref: '#/channels/voiceControl'
+    summary: Receive call events and command replies
     description: |
-      On connect, server sends an AudioConfig text message with the
-      required format (16kHz mono S16_LE for HFP). Then streams
-      AudioFrame binary messages continuously.
+      `hello` once on connect (current calls, audio format, HFP status), then
+      call events, `mark` events, and one `ack` or `error` per command. Every
+      `call.state` caused by a command is sent before its `ack`.
+    messages:
+      - $ref: '#/channels/voiceControl/messages/hello'
+      - $ref: '#/channels/voiceControl/messages/callIncoming'
+      - $ref: '#/channels/voiceControl/messages/callState'
+      - $ref: '#/channels/voiceControl/messages/callEnded'
+      - $ref: '#/channels/voiceControl/messages/audioLink'
+      - $ref: '#/channels/voiceControl/messages/hfp'
+      - $ref: '#/channels/voiceControl/messages/mark'
+      - $ref: '#/channels/voiceControl/messages/ack'
+      - $ref: '#/channels/voiceControl/messages/error'
 
-  sendCallAudio:
+  receiveVoiceControlAudio:
+    action: receive
+    channel:
+      $ref: '#/channels/voiceControl'
+    summary: Receive what the phone hears
+    description: |
+      Mono 20 ms frames while the audio link is up. A client that reads too
+      slowly loses the oldest frames, never the socket.
+    messages:
+      - $ref: '#/channels/voiceControl/messages/downlinkAudio'
+
+  sendVoiceCommands:
     action: send
     channel:
-      $ref: '#/channels/audioCall'
-    summary: Send mic audio to phone call
+      $ref: '#/channels/voiceControl'
+    summary: Send call-control and audio-queue commands
     description: |
-      Client sends AudioFrame binary messages matching the format
-      from AudioConfig. Only one client can send at a time —
-      first sender claims playback ownership.
-      Frames are dropped if the phone isn't in a call (no buffering).
+      The server checks each command against the current calls first (e.g.
+      `merge` without one active and one held call fails with
+      `invalid_state` before reaching the phone). An `ack` means the phone
+      carried the command out and the resulting state is visible.
+    messages:
+      - $ref: '#/channels/voiceControl/messages/dial'
+      - $ref: '#/channels/voiceControl/messages/answer'
+      - $ref: '#/channels/voiceControl/messages/reject'
+      - $ref: '#/channels/voiceControl/messages/hangup'
+      - $ref: '#/channels/voiceControl/messages/hold'
+      - $ref: '#/channels/voiceControl/messages/resume'
+      - $ref: '#/channels/voiceControl/messages/swap'
+      - $ref: '#/channels/voiceControl/messages/merge'
+      - $ref: '#/channels/voiceControl/messages/dtmf'
+      - $ref: '#/channels/voiceControl/messages/markCommand'
+      - $ref: '#/channels/voiceControl/messages/clear'
+      - $ref: '#/channels/voiceControl/messages/status'
+
+  sendVoiceAudio:
+    action: send
+    channel:
+      $ref: '#/channels/voiceControl'
+    summary: Send what the other party should hear
+    description: |
+      Queued and played in 20 ms steps, padded with silence when the queue is
+      empty. May be sent faster than real time, up to 60 s queued; beyond
+      that the excess is dropped and an `error` with `code: buffer_full`
+      (`id: null`) is sent. Only reaches the active call.
+    messages:
+      - $ref: '#/channels/voiceControl/messages/uplinkAudio'
+
+  receiveVoiceMonitor:
+    action: receive
+    channel:
+      $ref: '#/channels/voiceMonitor'
+    summary: Listen to calls (read-only)
+    description: |
+      `hello` once on connect, then call events and stereo audio in timeline
+      order. `error` only ever answers a text frame the client sent.
+    messages:
+      - $ref: '#/channels/voiceMonitor/messages/hello'
+      - $ref: '#/channels/voiceMonitor/messages/callIncoming'
+      - $ref: '#/channels/voiceMonitor/messages/callState'
+      - $ref: '#/channels/voiceMonitor/messages/callEnded'
+      - $ref: '#/channels/voiceMonitor/messages/audioLink'
+      - $ref: '#/channels/voiceMonitor/messages/hfp'
+      - $ref: '#/channels/voiceMonitor/messages/error'
+      - $ref: '#/channels/voiceMonitor/messages/audio'
 
   receiveMediaAudio:
     action: receive
     channel:
-      $ref: '#/channels/audioMedia'
+      $ref: '#/channels/media'
     summary: Receive media audio from phone
     description: |
       On connect, server sends AudioConfig (44.1kHz stereo S16_LE
@@ -90,14 +297,446 @@ operations:
     action: receive
     channel:
       $ref: '#/channels/events'
-    summary: Receive real-time events
+    summary: Receive phone events
     description: |
       Subscribe-only JSON text messages. On connect, the server sends
-      audio.sink.active events for any currently active sinks. Then
-      streams events as they occur.
+      `audio.sink.active` for any currently active sinks, then streams events
+      as they occur. Anything the client sends is ignored.
 
 components:
+  parameters:
+    phoneId:
+      description: Host-local phone id (e.g. `phone-r5ct60sd`), not the registry id
+      examples:
+        - phone-r5ct60sd
+
   messages:
+    # ---- voice sockets: server → client ----
+
+    Hello:
+      name: hello
+      title: Hello
+      summary: Sent once on connect to ws/voice/control
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/HelloEvent'
+      examples:
+        - name: idle
+          payload:
+            type: hello
+            protocol: 1
+            phoneId: phone-r5ct60sd
+            number: '+15550100000'
+            audio:
+              format: pcm_s16le
+              sampleRate: 16000
+              channels: 1
+              frameMs: 20
+            audioLink: false
+            hfp:
+              connected: true
+              chld: ['0', '1', '1x', '2', '2x', '3']
+            calls: []
+            ts: 1792204700000
+            audioPos: 0
+
+    MonitorHello:
+      name: hello
+      title: Hello (monitor)
+      summary: Sent once on connect to ws/voice/monitor
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/MonitorHelloEvent'
+      examples:
+        - name: in call
+          payload:
+            type: hello
+            protocol: 1
+            phoneId: phone-r5ct60sd
+            number: '+15550100000'
+            audio:
+              format: pcm_s16le
+              sampleRate: 16000
+              channels: 2
+              frameMs: 20
+              channelMap: [remote, local]
+            audioLink: true
+            calls:
+              - id: call_7f3a9c
+                number: '+15550001111'
+                numberSource: hfp
+                direction: outgoing
+                state: active
+                conference: false
+                startedAt: 1792204710222
+                answeredAt: 1792204728674
+            ts: 1792204730000
+            audioPos: 0
+
+    CallIncoming:
+      name: call.incoming
+      title: Call incoming
+      summary: A call started ringing on the phone
+      description: |
+        Sent once the caller's number is known (from HFP, or the kiosk's call
+        watcher as fallback), or after 2 s with `number: null` if neither
+        source has it. A number that arrives later comes as `call.state`.
+      contentType: application/json
+      payload:
+        allOf:
+          - $ref: '#/components/schemas/CallIncomingEvent'
+          - $ref: '#/components/schemas/AudioPosition'
+
+    CallState:
+      name: call.state
+      title: Call state
+      summary: Any change to one call (state, number, conference flag)
+      contentType: application/json
+      payload:
+        allOf:
+          - $ref: '#/components/schemas/CallStateEvent'
+          - $ref: '#/components/schemas/AudioPosition'
+      examples:
+        - name: answered
+          payload:
+            type: call.state
+            call:
+              id: call_7f3a9c
+              number: '+15550001111'
+              numberSource: hfp
+              direction: outgoing
+              state: active
+              conference: false
+              startedAt: 1792204710222
+              answeredAt: 1792204728674
+            ts: 1792204728700
+            audioPos: 48000
+
+    CallEnded:
+      name: call.ended
+      title: Call ended
+      summary: A call is gone
+      contentType: application/json
+      payload:
+        allOf:
+          - $ref: '#/components/schemas/CallEndedEvent'
+          - $ref: '#/components/schemas/AudioPosition'
+
+    AudioLink:
+      name: audio.link
+      title: Audio link
+      summary: The Bluetooth audio link opened or closed
+      description: Audio frames only flow while it is up.
+      contentType: application/json
+      payload:
+        allOf:
+          - $ref: '#/components/schemas/AudioLinkEvent'
+          - $ref: '#/components/schemas/AudioPosition'
+
+    Hfp:
+      name: hfp
+      title: HFP control link
+      summary: The phone's Bluetooth control link went up or down
+      contentType: application/json
+      payload:
+        allOf:
+          - $ref: '#/components/schemas/HfpEvent'
+          - $ref: '#/components/schemas/AudioPosition'
+
+    Mark:
+      name: mark
+      title: Mark reached
+      summary: Uplink playback reached a mark, or `clear` discarded it
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/MarkEvent'
+      examples:
+        - name: played
+          payload:
+            type: mark
+            name: hold-msg
+            cleared: false
+            ts: 1792204740000
+            audioPos: 480000
+
+    Ack:
+      name: ack
+      title: Command acknowledged
+      summary: A command was carried out and its resulting state is visible
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/AckEvent'
+      examples:
+        - name: clear
+          payload:
+            type: ack
+            id: '7'
+            result:
+              droppedMs: 1840
+            ts: 1792204741000
+            audioPos: 496000
+
+    Error:
+      name: error
+      title: Error
+      summary: A command failed, or a protocol error
+      contentType: application/json
+      payload:
+        $ref: '#/components/schemas/ErrorEvent'
+      examples:
+        - name: merge with one call
+          payload:
+            type: error
+            id: '5'
+            code: invalid_state
+            message: merge needs one active and one held call
+            ts: 1792204742000
+            audioPos: 512000
+
+    CallAudioDownlink:
+      name: audio
+      title: Call audio (downlink)
+      summary: What the phone hears (the other party)
+      contentType: application/octet-stream
+      payload:
+        type: string
+        format: binary
+        description: |
+          Raw PCM, `pcm_s16le`, mono, at `hello.audio.sampleRate`
+          (16000 Hz on the Bluetooth backend), 20 ms per frame
+          (640 bytes at 16 kHz). No header.
+
+    CallAudioUplink:
+      name: audio
+      title: Call audio (uplink)
+      summary: What the other party should hear
+      contentType: application/octet-stream
+      payload:
+        type: string
+        format: binary
+        description: |
+          Raw PCM, `pcm_s16le`, mono, at `hello.audio.sampleRate`. Any
+          length; the server queues it and plays it at real time. otacon does
+          no mixing: one queue, one owner.
+
+    MonitorAudioFrame:
+      name: audio
+      title: Call audio (monitor)
+      summary: Both sides of the call, stereo
+      contentType: application/octet-stream
+      payload:
+        type: string
+        format: binary
+        description: |
+          Raw PCM, `pcm_s16le`, 2 channels interleaved (L, R, L, R, …), at
+          `hello.audio.sampleRate` (16000 Hz on the Bluetooth backend), 20 ms
+          per frame (1280 bytes at 16 kHz). Left (`remote`): the other party.
+          Right (`local`): exactly what otacon plays into the call.
+
+    # ---- voice control: client → server ----
+
+    DialCommand:
+      name: dial
+      title: Dial
+      summary: Place a call (`ATD<to>;`)
+      description: |
+        If a call is active, the phone puts it on hold first.
+        `ack.result.call` is the new call.
+      contentType: application/json
+      payload:
+        type: object
+        required: [type, id, to]
+        properties:
+          type:
+            type: string
+            const: dial
+          id:
+            $ref: '#/components/schemas/CommandId'
+          to:
+            type: string
+            description: Number to call, E.164
+            examples: ['+15550001111']
+      examples:
+        - name: dial
+          payload:
+            type: dial
+            id: '3'
+            to: '+15550001111'
+
+    AnswerCommand:
+      name: answer
+      title: Answer
+      summary: Answer the ringing call (`ATA`; call waiting `AT+CHLD=2`)
+      description: |
+        A call waiting behind an active call is answered by putting the
+        active call on hold. `ack.result.call` is the answered call.
+      contentType: application/json
+      payload:
+        allOf:
+          - $ref: '#/components/schemas/CallTargetCommand'
+          - properties:
+              type:
+                const: answer
+
+    RejectCommand:
+      name: reject
+      title: Reject
+      summary: Decline the ringing call (`AT+CHUP`; call waiting `AT+CHLD=0`)
+      description: The caller usually lands in voicemail. `ack.result` is `{}`.
+      contentType: application/json
+      payload:
+        allOf:
+          - $ref: '#/components/schemas/CallTargetCommand'
+          - properties:
+              type:
+                const: reject
+
+    HangupCommand:
+      name: hangup
+      title: Hang up
+      summary: End one call; defaults to the active call
+      description: |
+        Ending a call that is part of a merged call ends the whole merged
+        call. Active or ringing out: `AT+CHUP`; held: `AT+CHLD=0`.
+        `ack.result` is `{}`.
+      contentType: application/json
+      payload:
+        allOf:
+          - $ref: '#/components/schemas/CallTargetCommand'
+          - properties:
+              type:
+                const: hangup
+
+    HoldCommand:
+      name: hold
+      title: Hold
+      summary: Put the active call on hold (`AT+CHLD=2`)
+      description: '`ack.result.calls` is every call afterwards.'
+      contentType: application/json
+      payload:
+        allOf:
+          - $ref: '#/components/schemas/BareCommand'
+          - properties:
+              type:
+                const: hold
+
+    ResumeCommand:
+      name: resume
+      title: Resume
+      summary: Make the held call active, only when nothing is active (`AT+CHLD=2`)
+      description: '`ack.result.calls` is every call afterwards.'
+      contentType: application/json
+      payload:
+        allOf:
+          - $ref: '#/components/schemas/BareCommand'
+          - properties:
+              type:
+                const: resume
+
+    SwapCommand:
+      name: swap
+      title: Swap
+      summary: Swap one active and one held call (`AT+CHLD=2`)
+      description: '`ack.result.calls` is every call afterwards.'
+      contentType: application/json
+      payload:
+        allOf:
+          - $ref: '#/components/schemas/BareCommand'
+          - properties:
+              type:
+                const: swap
+
+    MergeCommand:
+      name: merge
+      title: Merge
+      summary: Join the active and held calls into one merged call (`AT+CHLD=3`)
+      description: |
+        Fails with `unsupported` when `hello.hfp.chld` has no `3`.
+        `ack.result.calls` is every call afterwards.
+      contentType: application/json
+      payload:
+        allOf:
+          - $ref: '#/components/schemas/BareCommand'
+          - properties:
+              type:
+                const: merge
+
+    DtmfCommand:
+      name: dtmf
+      title: DTMF
+      summary: Send keypad digits on the active call (`AT+VTS=<d>` per digit)
+      description: Acked after the last digit, with `ack.result.digits`.
+      contentType: application/json
+      payload:
+        type: object
+        required: [type, id, digits]
+        properties:
+          type:
+            type: string
+            const: dtmf
+          id:
+            $ref: '#/components/schemas/CommandId'
+          digits:
+            type: string
+            description: '`0-9 * # A-D`; `w` waits 500 ms. Up to 100 characters.'
+            pattern: '^[0-9*#A-Da-dWw]{1,100}$'
+            examples: ['1w234#']
+
+    MarkCommand:
+      name: mark
+      title: Mark
+      summary: Insert a mark into the uplink audio queue
+      description: |
+        Takes no `id`. Its reply is the `mark` event with the same `name`,
+        sent when playback reaches it (or with `cleared: true` if `clear`
+        dropped it).
+      contentType: application/json
+      payload:
+        type: object
+        required: [type, name]
+        properties:
+          type:
+            type: string
+            const: mark
+          name:
+            type: string
+      examples:
+        - name: after a reply
+          payload:
+            type: mark
+            name: hold-msg
+
+    ClearCommand:
+      name: clear
+      title: Clear
+      summary: Drop all queued uplink audio (barge-in)
+      description: |
+        Acts at once, never stuck behind a slow call command.
+        `ack.result.droppedMs` is how much queued audio was discarded; pending
+        marks are reported with `cleared: true`.
+      contentType: application/json
+      payload:
+        allOf:
+          - $ref: '#/components/schemas/BareCommand'
+          - properties:
+              type:
+                const: clear
+
+    StatusCommand:
+      name: status
+      title: Status
+      summary: Re-read the calls from the phone (`AT+CLCC`)
+      description: '`ack.result.calls` is a fresh snapshot.'
+      contentType: application/json
+      payload:
+        allOf:
+          - $ref: '#/components/schemas/BareCommand'
+          - properties:
+              type:
+                const: status
+
+    # ---- ws/media ----
+
     AudioConfig:
       name: AudioConfig
       title: Audio Configuration
@@ -113,13 +752,13 @@ components:
           sampleRate:
             type: integer
             description: Sample rate in Hz
-            examples: [16000, 44100]
+            examples: [44100]
           channels:
             type: integer
             description: Number of audio channels
-            examples: [1, 2]
+            examples: [2]
 
-    AudioFrame:
+    MediaAudioFrame:
       name: AudioFrame
       title: Audio Frame
       summary: Raw PCM audio data
@@ -128,125 +767,474 @@ components:
         type: string
         format: binary
         description: |
-          4096 bytes of raw PCM audio, signed 16-bit little-endian (S16_LE).
-
-          Mono (HFP call): 2048 samples per frame.
-          Stereo (A2DP media): 1024 sample pairs per frame, interleaved L/R.
+          4096 bytes of raw PCM audio, signed 16-bit little-endian (S16_LE),
+          stereo: 1024 sample pairs per frame, interleaved L/R.
 
           No framing header — the entire binary message is audio data.
 
-    Event:
-      name: Event
-      title: Real-time Event
-      summary: Audio sink state, notification, call, or app state change
+    # ---- ws/events ----
+
+    PhoneEvent:
+      name: PhoneEvent
+      title: Phone event
+      summary: Call, SMS, Bluetooth audio sink or HFP link change
       contentType: application/json
       payload:
         oneOf:
+          - $ref: '#/components/schemas/CallIncomingEvent'
+          - $ref: '#/components/schemas/CallStateEvent'
+          - $ref: '#/components/schemas/CallEndedEvent'
+          - $ref: '#/components/schemas/SmsReceivedEvent'
           - $ref: '#/components/schemas/AudioSinkActiveEvent'
           - $ref: '#/components/schemas/AudioSinkInactiveEvent'
-          - $ref: '#/components/schemas/NotificationReceivedEvent'
-          - $ref: '#/components/schemas/NotificationRemovedEvent'
-          - $ref: '#/components/schemas/CallIncomingEvent'
-          - $ref: '#/components/schemas/AppForegroundEvent'
-        discriminator: event
+          - $ref: '#/components/schemas/HfpEvent'
+          - $ref: '#/components/schemas/AudioLinkEvent'
+        discriminator: type
+      examples:
+        - name: sms
+          payload:
+            type: sms.received
+            ts: 1792204800000
+            from: '+15550001111'
+            body: Your code is 123456
+        - name: sink
+          payload:
+            type: audio.sink.active
+            ts: 1792204800000
+            profile: hfp
+            codec: mSBC
+            sampleRate: 16000
+            channels: 1
 
   schemas:
-    AudioSinkActiveEvent:
-      type: object
-      required: [event, data]
-      properties:
-        event:
-          type: string
-          const: audio.sink.active
-        data:
-          type: object
-          required: [profile]
-          properties:
-            profile:
-              type: string
-              enum: [hfp, a2dp]
-              description: Bluetooth audio profile
-            codec:
-              type: string
-              description: Audio codec (e.g., mSBC, SBC, AAC)
-            sampleRate:
-              type: integer
-              description: Sample rate in Hz
-              examples: [16000, 44100]
-            channels:
-              type: integer
-              description: Number of audio channels
-              examples: [1, 2]
+    # ---- shared ----
 
-    AudioSinkInactiveEvent:
-      type: object
-      required: [event, data]
-      properties:
-        event:
-          type: string
-          const: audio.sink.inactive
-        data:
-          type: object
-          required: [profile]
-          properties:
-            profile:
-              type: string
-              enum: [hfp, a2dp]
+    Timestamp:
+      type: integer
+      format: int64
+      description: Server time, epoch milliseconds
 
-    NotificationReceivedEvent:
+    AudioPosition:
       type: object
-      required: [event, data]
+      required: [audioPos]
       properties:
-        event:
-          type: string
-          const: notification.received
-        data:
-          type: object
-          properties:
-            key:
-              type: string
-            package:
-              type: string
-            title:
-              type: string
-            text:
-              type: string
+        audioPos:
+          type: integer
+          format: int64
+          minimum: 0
+          description: |
+            Audio samples (per channel) the server has sent on this socket
+            before this message. Only on the voice sockets.
 
-    NotificationRemovedEvent:
+    CommandId:
+      type: string
+      minLength: 1
+      maxLength: 64
+      description: |
+        Chosen by the client. Unique among this connection's commands still in
+        flight; reusing an id after its reply is fine.
+
+    Call:
       type: object
-      required: [event, data]
+      required: [id, number, direction, state, conference, startedAt]
       properties:
-        event:
+        id:
           type: string
-          const: notification.removed
-        data:
-          type: object
-          properties:
-            key:
-              type: string
+          description: |
+            Assigned by otacon when it first sees the call; never reused, stable
+            for the life of the call, including across a merge. After a server
+            restart a call is rediscovered with a new id.
+          examples: [call_7f3a9c]
+        number:
+          type: [string, 'null']
+          description: E.164 if known, else null
+        numberSource:
+          type: string
+          enum: [hfp, kiosk]
+          description: Where `number` came from. Absent while `number` is null.
+        direction:
+          type: string
+          enum: [outgoing, incoming]
+        state:
+          $ref: '#/components/schemas/CallStateName'
+        conference:
+          type: boolean
+          description: True while the call is part of a merged call
+        startedAt:
+          type: integer
+          format: int64
+          description: Epoch milliseconds
+        answeredAt:
+          type: integer
+          format: int64
+          description: |
+            Epoch milliseconds when the call first became active (for outgoing
+            calls, the real remote answer). Absent until then.
+
+    CallStateName:
+      type: string
+      enum: [dialing, alerting, incoming, active, held, ended]
+      description: |
+        `dialing` → `alerting` (remote is ringing) → `active`; or
+        `incoming` → `active`; `active` ⇄ `held`; finally `ended`.
+
+    HfpStatus:
+      type: object
+      required: [connected, chld]
+      properties:
+        connected:
+          type: boolean
+          description: The phone's Bluetooth control link is up
+        chld:
+          type: array
+          items:
+            type: string
+          description: The phone's supported `AT+CHLD` options
+          examples:
+            - ['0', '1', '1x', '2', '2x', '3']
+
+    ErrorCode:
+      type: string
+      enum:
+        - bad_request
+        - duplicate_id
+        - invalid_state
+        - unsupported
+        - hfp_unavailable
+        - phone_error
+        - timeout
+        - buffer_full
+      description: |
+        - `bad_request`: unknown `type`, missing or invalid field (including a
+          missing or invalid `id`)
+        - `duplicate_id`: the `id` is in use by a command still in flight
+        - `invalid_state`: the command doesn't fit the current calls
+        - `unsupported`: the phone doesn't support it
+        - `hfp_unavailable`: the phone's Bluetooth control link is down
+        - `phone_error`: the phone answered `ERROR`
+        - `timeout`: the phone didn't answer, or the expected state change
+          didn't happen in time
+        - `buffer_full`: more than 60 s of uplink audio queued; the excess was
+          dropped
+
+    # ---- events shared by the voice sockets and ws/events ----
 
     CallIncomingEvent:
       type: object
-      required: [event, data]
+      required: [type, ts, call]
       properties:
-        event:
+        type:
           type: string
           const: call.incoming
-        data:
-          type: object
-          properties:
-            number:
-              type: string
+        ts:
+          $ref: '#/components/schemas/Timestamp'
+        call:
+          $ref: '#/components/schemas/Call'
 
-    AppForegroundEvent:
+    CallStateEvent:
       type: object
-      required: [event, data]
+      required: [type, ts, call]
       properties:
-        event:
+        type:
           type: string
-          const: app.foreground
-        data:
-          type: object
-          properties:
-            package:
-              type: string
+          const: call.state
+        ts:
+          $ref: '#/components/schemas/Timestamp'
+        call:
+          $ref: '#/components/schemas/Call'
+
+    CallEndedEvent:
+      type: object
+      required: [type, ts, call, reason]
+      properties:
+        type:
+          type: string
+          const: call.ended
+        ts:
+          $ref: '#/components/schemas/Timestamp'
+        call:
+          $ref: '#/components/schemas/Call'
+        reason:
+          type: string
+          enum: [local, rejected, remote, failed, unknown]
+          description: |
+            - `local`: otacon ended it (`hangup`)
+            - `rejected`: otacon declined it (`reject`)
+            - `remote`: the other side or the network ended an answered call,
+              or an incoming caller gave up
+            - `failed`: an outgoing call ended before it was answered (busy,
+              declined, unreachable, no answer)
+            - `unknown`
+        cause:
+          type: string
+          description: |
+            Android's disconnect cause when ADB can read it (e.g. `BUSY`).
+            Best effort; not yet implemented.
+
+    AudioLinkEvent:
+      type: object
+      required: [type, ts, up]
+      properties:
+        type:
+          type: string
+          const: audio.link
+        ts:
+          $ref: '#/components/schemas/Timestamp'
+        up:
+          type: boolean
+
+    HfpEvent:
+      type: object
+      required: [type, ts, connected]
+      properties:
+        type:
+          type: string
+          const: hfp
+        ts:
+          $ref: '#/components/schemas/Timestamp'
+        connected:
+          type: boolean
+
+    # ---- voice sockets only ----
+
+    VoiceAudioFormat:
+      type: object
+      required: [format, sampleRate, channels, frameMs]
+      properties:
+        format:
+          type: string
+          const: pcm_s16le
+        sampleRate:
+          type: integer
+          examples: [16000]
+        channels:
+          type: integer
+          description: 1 on ws/voice/control, 2 on ws/voice/monitor
+          enum: [1, 2]
+        frameMs:
+          type: integer
+          const: 20
+        channelMap:
+          type: array
+          items:
+            type: string
+          description: Monitor only
+          examples:
+            - [remote, local]
+
+    HelloEvent:
+      type: object
+      required: [type, protocol, phoneId, number, audio, audioLink, hfp, calls, ts, audioPos]
+      properties:
+        type:
+          type: string
+          const: hello
+        protocol:
+          type: integer
+          const: 1
+        phoneId:
+          type: string
+        number:
+          type: [string, 'null']
+          description: The phone's own number, if known
+        audio:
+          $ref: '#/components/schemas/VoiceAudioFormat'
+        audioLink:
+          type: boolean
+          description: Whether the Bluetooth audio link is up
+        hfp:
+          $ref: '#/components/schemas/HfpStatus'
+        calls:
+          type: array
+          items:
+            $ref: '#/components/schemas/Call'
+        ts:
+          $ref: '#/components/schemas/Timestamp'
+        audioPos:
+          type: integer
+          const: 0
+
+    MonitorHelloEvent:
+      type: object
+      description: Same as `HelloEvent` without `hfp`; `audio` is stereo with `channelMap`.
+      required: [type, protocol, phoneId, number, audio, audioLink, calls, ts, audioPos]
+      properties:
+        type:
+          type: string
+          const: hello
+        protocol:
+          type: integer
+          const: 1
+        phoneId:
+          type: string
+        number:
+          type: [string, 'null']
+        audio:
+          $ref: '#/components/schemas/VoiceAudioFormat'
+        audioLink:
+          type: boolean
+        calls:
+          type: array
+          items:
+            $ref: '#/components/schemas/Call'
+        ts:
+          $ref: '#/components/schemas/Timestamp'
+        audioPos:
+          type: integer
+          const: 0
+
+    MarkEvent:
+      type: object
+      required: [type, name, cleared, ts, audioPos]
+      properties:
+        type:
+          type: string
+          const: mark
+        name:
+          type: string
+        cleared:
+          type: boolean
+          description: True when `clear` discarded the mark before it was played
+        ts:
+          $ref: '#/components/schemas/Timestamp'
+        audioPos:
+          type: integer
+          format: int64
+
+    AckEvent:
+      type: object
+      required: [type, id, ts, audioPos]
+      properties:
+        type:
+          type: string
+          const: ack
+        id:
+          $ref: '#/components/schemas/CommandId'
+        result:
+          $ref: '#/components/schemas/CommandResult'
+        ts:
+          $ref: '#/components/schemas/Timestamp'
+        audioPos:
+          type: integer
+          format: int64
+
+    CommandResult:
+      type: object
+      description: |
+        Depends on the command: `dial`, `answer` → `call`; `hold`, `resume`,
+        `swap`, `merge`, `status` → `calls`; `dtmf` → `digits`; `clear` →
+        `droppedMs`; `reject`, `hangup` → `{}`.
+      properties:
+        call:
+          $ref: '#/components/schemas/Call'
+        calls:
+          type: array
+          items:
+            $ref: '#/components/schemas/Call'
+        digits:
+          type: string
+        droppedMs:
+          type: integer
+          description: Length of queued uplink audio that was never played
+
+    ErrorEvent:
+      type: object
+      required: [type, id, code, message, ts, audioPos]
+      properties:
+        type:
+          type: string
+          const: error
+        id:
+          type: [string, 'null']
+          description: The command's id; null when the message had no usable id
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        message:
+          type: string
+        ts:
+          $ref: '#/components/schemas/Timestamp'
+        audioPos:
+          type: integer
+          format: int64
+
+    CallTargetCommand:
+      type: object
+      description: '`answer`, `reject` or `hangup`'
+      required: [type, id]
+      properties:
+        type:
+          type: string
+          enum: [answer, reject, hangup]
+        id:
+          $ref: '#/components/schemas/CommandId'
+        call:
+          type: string
+          description: |
+            Call id. Optional: `answer`/`reject` default to the only ringing
+            call, `hangup` to the active call.
+
+    BareCommand:
+      type: object
+      description: '`hold`, `resume`, `swap`, `merge`, `clear` or `status`'
+      required: [type, id]
+      properties:
+        type:
+          type: string
+          enum: [hold, resume, swap, merge, clear, status]
+        id:
+          $ref: '#/components/schemas/CommandId'
+
+    # ---- ws/events only ----
+
+    SmsReceivedEvent:
+      type: object
+      required: [type, ts, from, body]
+      properties:
+        type:
+          type: string
+          const: sms.received
+        ts:
+          $ref: '#/components/schemas/Timestamp'
+        from:
+          type: string
+          description: Sender address as the phone reports it
+        body:
+          type: string
+
+    AudioSinkActiveEvent:
+      type: object
+      required: [type, ts, profile]
+      properties:
+        type:
+          type: string
+          const: audio.sink.active
+        ts:
+          $ref: '#/components/schemas/Timestamp'
+        profile:
+          type: string
+          enum: [hfp, a2dp]
+          description: Bluetooth audio profile
+        codec:
+          type: string
+          description: Audio codec (e.g., mSBC, SBC, AAC)
+        sampleRate:
+          type: integer
+          description: Sample rate in Hz
+          examples: [16000, 44100]
+        channels:
+          type: integer
+          description: Number of audio channels
+          examples: [1, 2]
+
+    AudioSinkInactiveEvent:
+      type: object
+      required: [type, ts, profile]
+      properties:
+        type:
+          type: string
+          const: audio.sink.inactive
+        ts:
+          $ref: '#/components/schemas/Timestamp'
+        profile:
+          type: string
+          enum: [hfp, a2dp]

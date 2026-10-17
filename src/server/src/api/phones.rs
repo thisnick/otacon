@@ -276,6 +276,9 @@ pub async fn remove(
     //    already handled by removing the entry above; the dongle's adapter_mac
     //    is no longer associated with any phone)
 
+    // Stop the phone's HFP link and call tracking.
+    crate::voice::forget(&config.adb_serial);
+
     // 5. Notify registry (best-effort) — use fleet client's registry_ids mapping
     if let Some(ref fleet) = state.fleet_client {
         fleet.delete_phone(&id).await;
