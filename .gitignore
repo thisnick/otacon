@@ -55,3 +55,6 @@ tofu/*.tfplan
 tofu/*.tfstate
 tofu/*.tfstate.backup
 tofu/.envrc
+
+# Real phone numbers and fleet details for live tests (see fleet.example.json)
+fleet.local.json

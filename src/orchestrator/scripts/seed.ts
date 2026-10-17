@@ -51,7 +51,7 @@ async function main() {
   process.stdout.write(`workspaces are user-created via the UI or:\n`)
   process.stdout.write(`  curl -X POST http://localhost:9090/api/v1/workspaces \\\n`)
   process.stdout.write(`    -H 'content-type: application/json' \\\n`)
-  process.stdout.write(`    -d '{"id":"xhs:test","displayName":"XHS test","kind":"social","phoneNumber":"+13412137456"}'\n`)
+  process.stdout.write(`    -d '{"id":"xhs:test","displayName":"XHS test","kind":"social","phoneNumber":"+15555550104"}'\n`)
 }
 
 main().catch(err => {

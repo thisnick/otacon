@@ -1,0 +1,42 @@
+{
+  "_comment": "Copy to fleet.local.json (git-ignored) and fill in real values. Live tests and scripts read real phone numbers from there, so none are committed.",
+  "otaconHost": "otacon-pi.<tailnet>.ts.net:8080",
+  "ownerNumber": "+15555550100",
+  "phones": {
+    "phone-2": {
+      "hostId": "phone-xxxxxxxx",
+      "number": "+15555550101"
+    },
+    "phone-3": {
+      "hostId": "phone-xxxxxxxx",
+      "number": "+15555550102"
+    },
+    "phone-pixel4": {
+      "hostId": "phone-xxxxxxxx",
+      "number": "+15555550103"
+    }
+  },
+  "xhsAccountPhone": "+15555550104",
+  "twilioIvr": {
+    "number": "+15555550105",
+    "flowSid": "FWxxxxxxxx",
+    "numberSid": "PNxxxxxxxx"
+  },
+  "secrets": {
+    "_comment": "Optional: where live tests get API keys when they aren't in the environment (1Password notes with KEY=value lines, read with the op CLI).",
+    "opEnvFile": "~/path/to/.env with OP_SERVICE_ACCOUNT_TOKEN",
+    "opVault": "<vault id>",
+    "OPENAI_API_KEY": {
+      "item": "<item id>",
+      "key": "OPENAI_API_KEY"
+    },
+    "TWILIO_ACCOUNT_SID": {
+      "item": "<item id>",
+      "key": "TWILIO_ACCOUNT_SID"
+    },
+    "TWILIO_AUTH_TOKEN": {
+      "item": "<item id>",
+      "key": "TWILIO_AUTH_TOKEN"
+    }
+  }
+}

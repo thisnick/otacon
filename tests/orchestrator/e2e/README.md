@@ -31,7 +31,7 @@ main-merge.
 3. **SSH access** — `ssh ubuntu@otacon-orchestrator.tail0437b8.ts.net` works
    without prompting (Tailscale ACL + key); needed for F7/F8's `docker logs`
    grep + sudo passwordless on the VPS.
-4. **Phone-4 + XHS** — registered in the registry under `+13412137456`, XHS
+4. **Phone-4 + XHS** — registered in the registry under `+15555550104`, XHS
    app installed. `$OTACON_TOKEN` and `$OTACON_REGISTRY_URL` (or
    `~/.otacon/config.toml`) populated for the resolver.
    `$AI_GATEWAY_API_KEY` for the model.
@@ -158,7 +158,7 @@ implementer's local-server I-UI suite.
    ```bash
    curl -X PATCH https://otacon-orchestrator.tail0437b8.ts.net/api/v1/workspaces/xhs%3Atest \
      -H 'Content-Type: application/json' \
-     -d '{"phoneNumber":"+13412137456"}'
+     -d '{"phoneNumber":"+15555550104"}'
    ```
 3. **Playwright** — `npx playwright install chromium`.
 4. **SSH access** — `ssh ubuntu@otacon-orchestrator.tail0437b8.ts.net`

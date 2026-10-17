@@ -13,6 +13,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { xhsAccountPhone } from './local-fleet.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -21,7 +22,7 @@ export const REPO_ROOT = path.resolve(__dirname, '../../../..')
 export const ORCHESTRATOR_DIR = path.resolve(REPO_ROOT, 'src/orchestrator')
 
 export const ACCOUNT_ID = 'xhs:test'
-export const ACCOUNT_PHONE = process.env.OTACON_SPIKE_WORKSPACE_PHONE ?? '+13412137456'
+export const ACCOUNT_PHONE = xhsAccountPhone()
 export const TEAM_NAME = 'social-media-engagement'
 
 export const SPIKE_TIMEOUT_MS = Number(process.env.OTACON_SPIKE_TIMEOUT_MS ?? 25 * 60_000)

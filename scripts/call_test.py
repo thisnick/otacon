@@ -2,9 +2,20 @@
 """Test voice call: dial, play tone, record incoming audio."""
 import serial, time, subprocess, os, struct, math, sys
 
+
+def _owner_number():
+    """The number to call: from the command line, else fleet.local.json's
+    ownerNumber (git-ignored; see fleet.example.json)."""
+    import json, pathlib
+    local = pathlib.Path(__file__).resolve().parent.parent / "fleet.local.json"
+    if local.exists():
+        return json.loads(local.read_text()).get("ownerNumber")
+    sys.exit("pass the number to call, or set ownerNumber in fleet.local.json")
+
+
 PORT = sys.argv[1] if len(sys.argv) > 1 else "/dev/ttyUSB6"
 AUDIO_DEV = sys.argv[2] if len(sys.argv) > 2 else "hw:4"
-NUMBER = sys.argv[3] if len(sys.argv) > 3 else "+16164259884"
+NUMBER = sys.argv[3] if len(sys.argv) > 3 else _owner_number()
 
 s = serial.Serial(PORT, 115200, timeout=3)
 

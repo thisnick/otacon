@@ -18,6 +18,7 @@ import { chromium, type Browser, type ConsoleMessage, type Page } from 'playwrig
 
 import { VPS_API_BASE, api, ssh } from './helpers/phase-f.js'
 import {
+import { xhsAccountPhone } from './helpers/local-fleet.js'
   assert,
   exitFromCounters,
   info,
@@ -31,7 +32,7 @@ interface RailIO {
 }
 const rail: RailIO = { browser: null }
 const NEW_WS_ID = 'social:i-eval-2'
-const NEW_WS_PHONE = '+13412137456'
+const NEW_WS_PHONE = xhsAccountPhone()
 
 async function teardown(): Promise<void> {
   try { if (rail.browser) await rail.browser.close() } catch { /* ignore */ }

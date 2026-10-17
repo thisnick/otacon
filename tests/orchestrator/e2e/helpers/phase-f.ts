@@ -11,6 +11,7 @@
  */
 import { spawnSync } from 'node:child_process'
 import * as path from 'node:path'
+import { xhsAccountPhone } from './local-fleet.js'
 
 import { ACCOUNT_ID, TEAM_NAME } from './spike.js'
 
@@ -63,7 +64,7 @@ export async function api<T = unknown>(
 /** Resolve phone-4's host base URL via the orchestrator's internal resolver. */
 let cachedPhoneBaseUrl: string | null = null
 export async function resolvePhoneBaseUrlPhaseF(
-  phoneNumber: string = process.env.OTACON_SPIKE_WORKSPACE_PHONE ?? '+13412137456',
+  phoneNumber: string = xhsAccountPhone(),
 ): Promise<string> {
   if (cachedPhoneBaseUrl) return cachedPhoneBaseUrl
   const repoRoot = path.resolve(new URL(import.meta.url).pathname, '../../../../..')
