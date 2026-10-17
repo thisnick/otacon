@@ -123,12 +123,14 @@ All services are accessible over your Tailscale network:
 | Admin UI | `http://otacon-registry.<tailnet>.ts.net:9080/?token=<otc_admin_*>` |
 | Per-Pi web UI | `https://otacon-pi.<tailnet>.ts.net:8080/` |
 | VNC (phone screen) | `vnc://otacon-pi.<tailnet>.ts.net:5900` (port varies per phone — see `otacon info`) |
-| Audio stream (VLC/ffplay) | `https://otacon-pi.<tailnet>.ts.net:8080/phones/<id>/audio` |
-| Audio WebSocket | `wss://otacon-pi.<tailnet>.ts.net:8080/phones/<id>/ws/audio/call` |
+| Call control + call audio WebSocket (one owner) | `wss://otacon-pi.<tailnet>.ts.net:8080/phones/<id>/ws/voice/control` |
+| Call listening WebSocket (read-only, stereo) | `wss://otacon-pi.<tailnet>.ts.net:8080/phones/<id>/ws/voice/monitor` |
+| Media audio WebSocket (A2DP) | `wss://otacon-pi.<tailnet>.ts.net:8080/phones/<id>/ws/media` |
+| Phone events WebSocket | `wss://otacon-pi.<tailnet>.ts.net:8080/phones/<id>/ws/events` |
 
 Multiple phones on a single Pi each get their own VNC port (5900, 5901, ...) — `otacon info` returns the right `vnc_port` for the active phone.
 
-The per-Pi web UI provides Listen (hear phone audio) and Mic (send your mic to the phone) controls. Mic requires HTTPS, which is why the Tailscale FQDN is used.
+The per-Pi web UI can Listen to calls (both sides, read-only, over `ws/voice/monitor`) and to phone media (`ws/media`). From a terminal, `otacon call listen` plays a call or saves it as a stereo WAV. The call protocol is in [docs/voice-ws.md](docs/voice-ws.md); all endpoints are in [docs/api/README.md](docs/api/README.md).
 
 Find your tailnet name: `tailscale status --self --json | grep DNSName`
 

@@ -1,5 +1,10 @@
+//! Watches BlueALSA's PCMs for one phone over D-Bus.
+//!
+//! Each running/stopped change becomes `audio.sink.active` /
+//! `audio.sink.inactive` on the phone's event feed. (The voice sockets'
+//! `audio.link` comes from call audio actually flowing; see voice/audio.rs.)
+
 use std::{collections::HashMap, sync::Arc, time::Duration};
-use tokio::sync::{broadcast, Mutex, RwLock};
 use zbus::{
     fdo::{ObjectManagerProxy, PropertiesProxy},
     message::Body,
@@ -7,86 +12,67 @@ use zbus::{
     zvariant::OwnedValue,
 };
 
-use crate::phone::PhoneState;
+use crate::voice::VoiceState;
 
-/// Phone map type: phone_id → PhoneState
-type PhoneMap = RwLock<HashMap<String, Arc<PhoneState>>>;
-
-/// Spawn the BlueALSA D-Bus monitor as a background task.
-/// Routes events to the correct phone based on the HCI adapter in the D-Bus path.
-pub fn spawn_multi_monitor(phones: Arc<PhoneMap>) {
-    tokio::spawn(multi_monitor_loop(phones));
-}
-
-/// Legacy single-phone spawn (still used when only one phone exists).
-pub fn spawn_monitor(
-    events_tx: broadcast::Sender<String>,
-    active_sinks: Arc<Mutex<HashMap<String, serde_json::Value>>>,
-) {
-    tokio::spawn(monitor_loop(events_tx, active_sinks));
-}
-
-async fn multi_monitor_loop(phones: Arc<PhoneMap>) {
+/// Run until the phone's VoiceState shuts down.
+pub async fn monitor_phone(voice: Arc<VoiceState>) {
     loop {
-        match run_multi_monitor(&phones).await {
-            Ok(()) => eprintln!("[dbus] BlueALSA monitor ended, reconnecting..."),
-            Err(e) => eprintln!("[dbus] BlueALSA monitor error: {e}, reconnecting in 5s..."),
+        match run_monitor(&voice).await {
+            Ok(()) => eprintln!("[dbus] [{}] BlueALSA monitor ended, reconnecting...", voice.phone_id),
+            Err(e) => eprintln!("[dbus] [{}] BlueALSA monitor error: {e}, reconnecting in 5s...", voice.phone_id),
         }
-        // Clear all phone active_sinks on reconnect
-        let map = phones.read().await;
-        for ps in map.values() {
-            ps.active_sinks.lock().await.clear();
-        }
-        drop(map);
+        voice.active_sinks.lock().await.clear();
         tokio::time::sleep(Duration::from_secs(5)).await;
     }
 }
 
-/// Find the PhoneState that owns the given HCI adapter.
-/// D-Bus path format: /org/bluealsa/hci0/XX_XX_XX_XX_XX_XX/hfphf/source
-/// We extract "hci0" and look up which phone is assigned to that adapter.
-async fn find_phone_for_path<'a>(
-    phones: &'a PhoneMap,
-    dbus_path: &str,
-) -> Option<Arc<PhoneState>> {
-    let hci_dev = parse_hci_device(dbus_path)?;
-    // For now, match by adapter_mac or fall back to first phone if only one exists
-    let map = phones.read().await;
-
-    // If there's only one phone, route all events to it (backwards compat)
-    if map.len() == 1 {
-        return map.values().next().cloned();
+/// Whether a BlueALSA object path belongs to this phone. Without a known
+/// MAC (single-phone setups) every path does.
+fn is_ours(voice: &VoiceState, path: &str) -> bool {
+    match (voice.bt_mac(), parse_device_mac(path)) {
+        (Some(mine), Some(theirs)) => mine.eq_ignore_ascii_case(&theirs),
+        (Some(_), None) => false,
+        (None, _) => true,
     }
-
-    // Multi-phone: need to resolve hci device to adapter MAC, then match
-    // For now, try to match by phone_bt_mac from the D-Bus path device MAC
-    let device_mac = parse_device_mac(dbus_path);
-    if let Some(mac) = device_mac {
-        for ps in map.values() {
-            if let Some(ref bt_mac) = ps.config.phone_bt_mac {
-                if bt_mac.eq_ignore_ascii_case(&mac) {
-                    return Some(ps.clone());
-                }
-            }
-        }
-    }
-
-    // Fallback: try adapter_mac match
-    // We'd need to query BlueZ for the adapter MAC of hci_dev, but for now
-    // just return None if we can't match
-    let _ = hci_dev;
-    None
 }
 
-async fn run_multi_monitor(
-    phones: &Arc<PhoneMap>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn update(voice: &VoiceState, conn: &Connection, path: &str, running: bool, props: Option<&HashMap<String, OwnedValue>>) {
+    let profile = parse_profile(path);
+    if profile.is_empty() {
+        return;
+    }
+    let mut sinks = voice.active_sinks.lock().await;
+    if running {
+        let data = match props {
+            Some(p) => pcm_data_from_props(p, &profile),
+            None => query_pcm_properties(conn, path, &profile)
+                .await
+                .unwrap_or_else(|| serde_json::json!({"profile": profile})),
+        };
+        sinks.insert(path.to_string(), data.clone());
+        emit(voice, "audio.sink.active", data);
+        eprintln!("[dbus] [{}] Sink active: {profile} ({path})", voice.phone_id);
+    } else {
+        if sinks.remove(path).is_none() {
+            return;
+        }
+        emit(voice, "audio.sink.inactive", serde_json::json!({"profile": profile}));
+        eprintln!("[dbus] [{}] Sink inactive: {profile} ({path})", voice.phone_id);
+    }
+}
+
+fn emit(voice: &VoiceState, ty: &str, data: serde_json::Value) {
+    let mut v = serde_json::json!({"type": ty, "ts": chrono::Utc::now().timestamp_millis()});
+    if let (Some(o), serde_json::Value::Object(d)) = (v.as_object_mut(), data) {
+        o.extend(d);
+    }
+    let _ = voice.events_tx.send(v.to_string());
+}
+
+async fn run_monitor(voice: &Arc<VoiceState>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let conn = Connection::system().await?;
 
-    // Bootstrap: read all current PCM objects
-    bootstrap_multi_state(&conn, phones).await;
-
-    // Subscribe to PropertiesChanged signals from org.bluealsa
+    // Subscribe first so a change during the bootstrap isn't missed.
     let rule = MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
         .sender("org.bluealsa")?
@@ -94,11 +80,31 @@ async fn run_multi_monitor(
         .member("PropertiesChanged")?
         .build();
     let mut stream = MessageStream::for_match_rule(rule, &conn, None).await?;
+    // BlueALSA restarting changes its unique name; start over when it does.
+    let owner_rule = MatchRule::builder()
+        .msg_type(zbus::message::Type::Signal)
+        .sender("org.freedesktop.DBus")?
+        .interface("org.freedesktop.DBus")?
+        .member("NameOwnerChanged")?
+        .add_arg("org.bluealsa")?
+        .build();
+    let mut owner_changes = MessageStream::for_match_rule(owner_rule, &conn, None).await?;
 
-    eprintln!("[dbus] Multi-phone: listening for BlueALSA PCM state changes");
+    bootstrap_state(voice, &conn).await?;
+    eprintln!("[dbus] [{}] Listening for BlueALSA PCM state changes", voice.phone_id);
 
     use futures::StreamExt;
-    while let Some(msg) = stream.next().await {
+    loop {
+        let msg = tokio::select! {
+            m = stream.next() => match m {
+                Some(m) => m,
+                None => break,
+            },
+            _ = owner_changes.next() => {
+                eprintln!("[dbus] [{}] BlueALSA restarted", voice.phone_id);
+                break;
+            }
+        };
         let msg = match msg {
             Ok(m) => m,
             Err(e) => {
@@ -113,288 +119,50 @@ async fn run_multi_monitor(
         else {
             continue;
         };
-
         if iface != "org.bluealsa.PCM1" {
             continue;
         }
-
-        let Some(running_val) = changed.get("Running") else {
+        let Some(running) = changed.get("Running").and_then(|v| v.downcast_ref::<bool>().ok()) else {
             continue;
         };
-        let Ok(running) = running_val.downcast_ref::<bool>() else {
-            continue;
-        };
-
         let path = msg.header().path().map(|p| p.to_string()).unwrap_or_default();
-        let profile = parse_profile(&path);
-        if profile.is_empty() {
-            continue;
-        }
-
-        // Route to the correct phone
-        let Some(phone) = find_phone_for_path(phones, &path).await else {
-            eprintln!("[dbus] No phone matched for path: {path}");
-            continue;
-        };
-
-        if running {
-            let data = query_pcm_properties(&conn, &path, &profile)
-                .await
-                .unwrap_or_else(|| serde_json::json!({"profile": profile}));
-
-            phone.active_sinks.lock().await.insert(path.clone(), data.clone());
-
-            let event = serde_json::json!({
-                "event": "audio.sink.active",
-                "data": data,
-            });
-            let _ = phone.events_tx.send(event.to_string());
-            eprintln!("[dbus] [{}] Sink active: {profile} ({path})", phone.config.id);
-        } else {
-            phone.active_sinks.lock().await.remove(&path);
-
-            let event = serde_json::json!({
-                "event": "audio.sink.inactive",
-                "data": {"profile": profile},
-            });
-            let _ = phone.events_tx.send(event.to_string());
-            eprintln!("[dbus] [{}] Sink inactive: {profile} ({path})", phone.config.id);
+        if is_ours(voice, &path) {
+            update(voice, &conn, &path, running, None).await;
         }
     }
 
     Ok(())
 }
 
-async fn bootstrap_multi_state(
-    conn: &Connection,
-    phones: &Arc<PhoneMap>,
-) {
-    let proxy = match ObjectManagerProxy::builder(conn)
-        .destination("org.bluealsa")
-        .and_then(|b| b.path("/org/bluealsa"))
-    {
-        Ok(b) => match b.build().await {
-            Ok(p) => p,
-            Err(e) => {
-                eprintln!("[dbus] Failed to build ObjectManager proxy: {e}");
-                return;
-            }
-        },
-        Err(e) => {
-            eprintln!("[dbus] Failed to create ObjectManager proxy: {e}");
-            return;
-        }
-    };
+/// Read the PCMs that are already running. Fails while BlueALSA isn't on the
+/// bus yet (the caller retries), since a signal subscription made before the
+/// name exists never matches.
+async fn bootstrap_state(voice: &Arc<VoiceState>, conn: &Connection) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let proxy = ObjectManagerProxy::builder(conn)
+        .destination("org.bluealsa")?
+        .path("/org/bluealsa")?
+        .build()
+        .await?;
+    let objects = proxy.get_managed_objects().await?;
 
-    let objects = match proxy.get_managed_objects().await {
-        Ok(o) => o,
-        Err(e) => {
-            eprintln!("[dbus] Failed to get managed objects: {e}");
-            return;
-        }
-    };
-
+    let iface_name = zbus::names::InterfaceName::try_from("org.bluealsa.PCM1")?;
     for (path, ifaces) in objects.iter() {
         let path_str = path.to_string();
-        let iface_name: zbus::names::InterfaceName =
-            match "org.bluealsa.PCM1".try_into() {
-                Ok(n) => n,
-                Err(_) => continue,
-            };
+        if !is_ours(voice, &path_str) {
+            continue;
+        }
         let Some(props) = ifaces.get(&iface_name) else {
             continue;
         };
-
         let running = props
             .get("Running")
             .and_then(|v| v.downcast_ref::<bool>().ok())
             .unwrap_or(false);
-
-        if !running {
-            continue;
-        }
-
-        let profile = parse_profile(&path_str);
-        if profile.is_empty() {
-            continue;
-        }
-
-        if let Some(phone) = find_phone_for_path(phones, &path_str).await {
-            let data = pcm_data_from_props(props, &profile);
-            phone.active_sinks.lock().await.insert(path_str.clone(), data.clone());
-
-            let event = serde_json::json!({
-                "event": "audio.sink.active",
-                "data": data,
-            });
-            let _ = phone.events_tx.send(event.to_string());
-            eprintln!("[dbus] Bootstrap: [{}] {profile} active ({path_str})", phone.config.id);
-        }
-    }
-}
-
-// --- Legacy single-phone monitor (unchanged logic) ---
-
-async fn monitor_loop(
-    events_tx: broadcast::Sender<String>,
-    active_sinks: Arc<Mutex<HashMap<String, serde_json::Value>>>,
-) {
-    loop {
-        match run_monitor(&events_tx, &active_sinks).await {
-            Ok(()) => eprintln!("[dbus] BlueALSA monitor ended, reconnecting..."),
-            Err(e) => eprintln!("[dbus] BlueALSA monitor error: {e}, reconnecting in 5s..."),
-        }
-        active_sinks.lock().await.clear();
-        tokio::time::sleep(Duration::from_secs(5)).await;
-    }
-}
-
-async fn run_monitor(
-    events_tx: &broadcast::Sender<String>,
-    active_sinks: &Arc<Mutex<HashMap<String, serde_json::Value>>>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let conn = Connection::system().await?;
-
-    bootstrap_state(&conn, events_tx, active_sinks).await;
-
-    let rule = MatchRule::builder()
-        .msg_type(zbus::message::Type::Signal)
-        .sender("org.bluealsa")?
-        .interface("org.freedesktop.DBus.Properties")?
-        .member("PropertiesChanged")?
-        .build();
-    let mut stream = MessageStream::for_match_rule(rule, &conn, None).await?;
-
-    eprintln!("[dbus] Listening for BlueALSA PCM state changes");
-
-    use futures::StreamExt;
-    while let Some(msg) = stream.next().await {
-        let msg = match msg {
-            Ok(m) => m,
-            Err(e) => {
-                eprintln!("[dbus] Stream error: {e}");
-                continue;
-            }
-        };
-
-        let body: Body = msg.body();
-        let Ok((iface, changed)): Result<(String, HashMap<String, OwnedValue>), _> =
-            body.deserialize()
-        else {
-            continue;
-        };
-
-        if iface != "org.bluealsa.PCM1" {
-            continue;
-        }
-
-        let Some(running_val) = changed.get("Running") else {
-            continue;
-        };
-        let Ok(running) = running_val.downcast_ref::<bool>() else {
-            continue;
-        };
-
-        let path = msg.header().path().map(|p| p.to_string()).unwrap_or_default();
-        let profile = parse_profile(&path);
-        if profile.is_empty() {
-            continue;
-        }
-
         if running {
-            let data = query_pcm_properties(&conn, &path, &profile)
-                .await
-                .unwrap_or_else(|| serde_json::json!({"profile": profile}));
-
-            active_sinks.lock().await.insert(path.clone(), data.clone());
-
-            let event = serde_json::json!({
-                "event": "audio.sink.active",
-                "data": data,
-            });
-            let _ = events_tx.send(event.to_string());
-            eprintln!("[dbus] Sink active: {profile} ({path})");
-        } else {
-            active_sinks.lock().await.remove(&path);
-
-            let event = serde_json::json!({
-                "event": "audio.sink.inactive",
-                "data": {"profile": profile},
-            });
-            let _ = events_tx.send(event.to_string());
-            eprintln!("[dbus] Sink inactive: {profile} ({path})");
+            update(voice, conn, &path_str, true, Some(props)).await;
         }
     }
-
     Ok(())
-}
-
-async fn bootstrap_state(
-    conn: &Connection,
-    events_tx: &broadcast::Sender<String>,
-    active_sinks: &Arc<Mutex<HashMap<String, serde_json::Value>>>,
-) {
-    let proxy = match ObjectManagerProxy::builder(conn)
-        .destination("org.bluealsa")
-        .and_then(|b| b.path("/org/bluealsa"))
-    {
-        Ok(b) => match b.build().await {
-            Ok(p) => p,
-            Err(e) => {
-                eprintln!("[dbus] Failed to build ObjectManager proxy: {e}");
-                return;
-            }
-        },
-        Err(e) => {
-            eprintln!("[dbus] Failed to create ObjectManager proxy: {e}");
-            return;
-        }
-    };
-
-    let objects = match proxy.get_managed_objects().await {
-        Ok(o) => o,
-        Err(e) => {
-            eprintln!("[dbus] Failed to get managed objects: {e}");
-            return;
-        }
-    };
-
-    let mut sinks = active_sinks.lock().await;
-    for (path, ifaces) in objects.iter() {
-        let path_str = path.to_string();
-        let iface_name: zbus::names::InterfaceName =
-            match "org.bluealsa.PCM1".try_into() {
-                Ok(n) => n,
-                Err(_) => continue,
-            };
-        let Some(props) = ifaces.get(&iface_name) else {
-            continue;
-        };
-
-        let running = props
-            .get("Running")
-            .and_then(|v| v.downcast_ref::<bool>().ok())
-            .unwrap_or(false);
-
-        if !running {
-            continue;
-        }
-
-        let profile = parse_profile(&path_str);
-        if profile.is_empty() {
-            continue;
-        }
-
-        let data = pcm_data_from_props(props, &profile);
-        sinks.insert(path_str.clone(), data.clone());
-
-        let event = serde_json::json!({
-            "event": "audio.sink.active",
-            "data": data,
-        });
-        let _ = events_tx.send(event.to_string());
-        eprintln!("[dbus] Bootstrap: {profile} active ({path_str})");
-    }
 }
 
 // --- Shared helpers ---
@@ -449,7 +217,7 @@ fn pcm_data_from_props(
 }
 
 /// Parse BlueALSA profile from D-Bus object path.
-/// e.g., "/org/bluealsa/hci0/XX_XX_XX_XX_XX_XX/hfphf/source" → "hfp"
+/// e.g., "/org/bluealsa/hci0/dev_XX_XX_XX_XX_XX_XX/hfphf/source" → "hfp"
 fn parse_profile(path: &str) -> String {
     let parts: Vec<&str> = path.trim_end_matches('/').split('/').collect();
     if parts.len() < 2 {
@@ -463,28 +231,30 @@ fn parse_profile(path: &str) -> String {
     }
 }
 
-/// Extract HCI device name from D-Bus path.
-/// e.g., "/org/bluealsa/hci0/XX_XX_XX_XX_XX_XX/hfphf/source" → Some("hci0")
-fn parse_hci_device(path: &str) -> Option<&str> {
+/// Extract device MAC from D-Bus path (underscored format → colon format).
+/// e.g., "/org/bluealsa/hci0/dev_AA_BB_CC_DD_EE_FF/..." → Some("AA:BB:CC:DD:EE:FF")
+fn parse_device_mac(path: &str) -> Option<String> {
     let parts: Vec<&str> = path.split('/').collect();
-    // Path: ["", "org", "bluealsa", "hci0", "XX_XX_XX_XX_XX_XX", ...]
-    if parts.len() >= 4 && parts[3].starts_with("hci") {
-        Some(parts[3])
+    // Path: ["", "org", "bluealsa", "hci0", "dev_AA_BB_CC_DD_EE_FF", ...]
+    let seg = parts.get(4)?;
+    let mac = seg.strip_prefix("dev_").unwrap_or(seg);
+    if mac.len() == 17 && mac.contains('_') {
+        Some(mac.replace('_', ":"))
     } else {
         None
     }
 }
 
-/// Extract device MAC from D-Bus path (underscored format → colon format).
-/// e.g., "/org/bluealsa/hci0/AA_BB_CC_DD_EE_FF/..." → Some("AA:BB:CC:DD:EE:FF")
-fn parse_device_mac(path: &str) -> Option<String> {
-    let parts: Vec<&str> = path.split('/').collect();
-    // Path: ["", "org", "bluealsa", "hci0", "AA_BB_CC_DD_EE_FF", ...]
-    if parts.len() >= 5 {
-        let mac_underscored = parts[4];
-        if mac_underscored.len() == 17 && mac_underscored.contains('_') {
-            return Some(mac_underscored.replace('_', ":"));
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn paths() {
+        let p = "/org/bluealsa/hci2/dev_4C_2E_5E_D2_D6_00/hfphf/sink";
+        assert_eq!(parse_profile(p), "hfp");
+        assert_eq!(parse_device_mac(p).as_deref(), Some("4C:2E:5E:D2:D6:00"));
+        assert_eq!(parse_profile("/org/bluealsa/hci2/dev_4C_2E_5E_D2_D6_00/a2dpsnk/source"), "a2dp");
+        assert_eq!(parse_profile("/org/bluealsa/hci2/dev_4C_2E_5E_D2_D6_00/rfcomm"), "");
     }
-    None
 }

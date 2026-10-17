@@ -20,7 +20,7 @@ def start_snapshot_server(serial: str):
     adb_shell(
         serial,
         'nohup app_process -Djava.class.path=/data/local/tmp/snapshot-server.jar '
-        '/ com.otacon.snapshot.SnapshotServer > /dev/null 2>&1 &'
+        f'/ com.otacon.snapshot.SnapshotServer --serial {serial} > /dev/null 2>&1 &'
     )
     log.info(f'[{serial}] Snapshot server started')
 

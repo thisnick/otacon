@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::{broadcast, Mutex};
@@ -67,38 +67,29 @@ impl Default for DisplayResources {
 /// Per-phone runtime state (extracted from the former AppState).
 pub struct PhoneState {
     pub config: PhoneConfig,
-    /// Broadcast channel for captured audio (Pi mic → clients)
-    pub capture_tx: broadcast::Sender<Vec<u8>>,
     /// Broadcast channel for A2DP media audio (phone → clients)
     pub a2dp_tx: Option<broadcast::Sender<Vec<u8>>>,
-    /// Mutex protecting the single playback sender slot
-    pub playback_owner: Mutex<Option<u64>>,
+    /// Calls and call audio (ws/voice/*, REST calls/*)
+    pub voice: Arc<crate::voice::VoiceState>,
     /// Audio configuration
     pub audio_config: crate::AudioConfig,
     /// Cached accessibility snapshot for ref lookups (ADB fallback)
     pub snapshot_cache: Mutex<Option<api::snapshot::SnapshotCache>>,
     /// Bridge to device owner app's HTTP server
     pub bridge: Arc<api::bridge::BridgeState>,
-    /// Broadcast channel for JSON event messages (sink state, etc.)
+    /// Phone event feed for /ws/events and the voice sockets: JSON objects
+    /// `{"type": ..., "ts": ..., ...}`
     pub events_tx: broadcast::Sender<String>,
     /// Currently active audio sinks (D-Bus path → event data)
     pub active_sinks: Arc<Mutex<HashMap<String, serde_json::Value>>>,
     /// Screen recording state
     pub recording: api::record::RecordingState,
-    /// Simulated call state for testing without hardware
-    pub sim_call: Mutex<api::test_sim::SimCallState>,
-    /// Whether /ws/audio/call has an active client (single-consumer enforcement)
-    pub call_audio_occupied: AtomicBool,
     /// Display resources (Xvnc + scrcpy) — lazy lifecycle
     pub display: Mutex<DisplayResources>,
     /// Number of active VNC clients connected to the proxy
     pub vnc_clients: AtomicU32,
-    /// Number of active audio capture subscribers (HFP call audio)
-    pub capture_clients: AtomicU32,
     /// Number of active A2DP media audio subscribers
     pub media_clients: AtomicU32,
-    /// Whether audio capture task is running
-    pub capture_running: AtomicBool,
     /// Whether A2DP capture task is running
     pub a2dp_capture_running: AtomicBool,
     /// Fleet-agent monitor status (pushed via internal event channel)
@@ -148,6 +139,17 @@ where
 }
 
 impl PhoneState {
+    /// Publish an event on the phone feed: `{"type": ty, "ts": now, ...fields}`.
+    pub fn emit_event(&self, ty: &str, fields: serde_json::Value) {
+        let mut v = serde_json::json!({"type": ty, "ts": chrono::Utc::now().timestamp_millis()});
+        if let (Some(o), serde_json::Value::Object(f)) = (v.as_object_mut(), fields) {
+            for (k, val) in f {
+                o.entry(k).or_insert(val);
+            }
+        }
+        let _ = self.events_tx.send(v.to_string());
+    }
+
     /// Refresh the cached phone_number by querying ADB. Retries with
     /// exponential backoff to ride out container-startup ADB races and the
     /// snapshot bridge coming online late. Once populated stays populated

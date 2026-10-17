@@ -10,49 +10,27 @@ pub struct DeviceEvent {
     pub data: serde_json::Value,
 }
 
-/// Receives push events from the device owner app (via adb reverse).
-/// Broadcasts them on /ws/events and updates call state for /api/calls/status.
+/// Receives push events from the phone (the kiosk's call/SMS watcher via adb
+/// reverse) and from fleet-agent.
+///
+/// Call events feed the voice controller (caller ID fallback, and call state
+/// while HFP is down), which publishes its own `call.*` events. Everything
+/// else is republished on /ws/events as `{"type": event, "ts": ..., ...data}`.
 pub async fn event_handler(
     state: Arc<PhoneState>,
     Json(body): Json<DeviceEvent>,
 ) -> Json<serde_json::Value> {
-    let event = serde_json::json!({
-        "event": body.event,
-        "data": body.data,
-    });
-    let _ = state.events_tx.send(event.to_string());
-    eprintln!("[internal] {} from device", body.event);
-
-    // Update sim_call state so /api/calls/status reflects push events
+    eprintln!("[internal] [{}] {} from device", state.config.id, body.event);
     match body.event.as_str() {
-        "call.incoming" => {
-            let mut sim = state.sim_call.lock().await;
-            sim.state = "ringing".to_string();
-            sim.number = body.data.get("number").and_then(|v| v.as_str()).map(String::from);
-            sim.connected_at = None;
-        }
-        "call.connected" => {
-            let mut sim = state.sim_call.lock().await;
-            sim.state = "active".to_string();
-            if let Some(n) = body.data.get("number").and_then(|v| v.as_str()) {
-                sim.number = Some(n.to_string());
-            }
-            sim.connected_at = Some(std::time::Instant::now());
-        }
-        "call.ended" => {
-            let mut sim = state.sim_call.lock().await;
-            sim.state = "idle".to_string();
-            sim.number = None;
-            sim.connected_at = None;
+        "call.incoming" | "call.connected" | "call.ended" => {
+            state.voice.kiosk_event(&body.event, &body.data);
         }
         "monitor_status" => {
             if let Some(status) = body.data.get("status") {
-                let mut ms = state.monitor_status.lock().await;
-                *ms = Some(status.clone());
+                *state.monitor_status.lock().await = Some(status.clone());
             }
         }
-        _ => {}
+        _ => state.emit_event(&body.event, body.data),
     }
-
     Json(serde_json::json!({"ok": true}))
 }
