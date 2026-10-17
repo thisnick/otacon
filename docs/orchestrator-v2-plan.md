@@ -1120,7 +1120,7 @@ Changes:
 
 **Verification (end-to-end against a real phone connected to the registry)**:
 
-Use whichever phone has both `phone_number` set in the registry AND the target app installed. As of 2026-04-30, phone-4 (`+13412137456`) has Xiaohongshu (`com.xingin.xhs`) — the actual social-media-engagement target app — and is the canonical phone. Set `PHASE1_ACCOUNT_PHONE` env var so the test isn't hardcoded to a specific phone number.
+Use whichever phone has both `phone_number` set in the registry AND the target app installed. As of 2026-04-30, phone-4 (`+15555550104`) has Xiaohongshu (`com.xingin.xhs`) — the actual social-media-engagement target app — and is the canonical phone. Set `PHASE1_ACCOUNT_PHONE` env var so the test isn't hardcoded to a specific phone number.
 
 1. **Bootstrap**: delete any old `${ORCHESTRATOR_DATA_DIR}/`. Run `pnpm orchestrator service add-account --id xhs:test --phone-number ${PHASE1_ACCOUNT_PHONE}`. Confirm `accounts/xhs:test/{account.json,credentials.json,env/{persona.md,soul.md,agents.md},workspace/}` exist.
 2. **Real agent scenario** — *"open Xiaohongshu, scroll the home feed three times"* (substituted from the original Chrome+search scenario on 2026-04-30 because no phone in the current registry has Chrome installed and XHS is the actual production target app):
@@ -1646,7 +1646,7 @@ This section captures decisions corrected in-flight that were either made by the
 
 ## Hardware / fixtures
 
-- **Canonical phone**: phone-4 (`adb_serial=11031JEC202780`, `phone_number=+13412137456`).
+- **Canonical phone**: phone-4 (`adb_serial=11031JEC202780`, `phone_number=+15555550104`).
 - **Canonical app**: Xiaohongshu (`com.xingin.xhs`). Originally Chrome — substituted because no registry phone has Chrome and XHS IS the production target app for the social-media-engagement team.
 - **`KEEP_TMP_DIR=1`** env override on phaseN e2e tests preserves the tmp data dir for inspection. Useful when debugging — implementer added in commit during P2.
 

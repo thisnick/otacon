@@ -56,7 +56,7 @@ async function main() {
     const noId = await api<unknown>(server.baseUrl, '/api/v1/workspaces', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ displayName: 'x', kind: 'social', phoneNumber: '+13412137456' }),
+      body: JSON.stringify({ displayName: 'x', kind: 'social', phoneNumber: '+15555550104' }),
     })
     assert(c, noId.status === 400, `POST missing id → 400 (got ${noId.status})`)
     assert(c, isErrorEnvelope(noId.body, 'bad_request').ok, `missing-id envelope ok`)
@@ -64,7 +64,7 @@ async function main() {
     const badId = await api<unknown>(server.baseUrl, '/api/v1/workspaces', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ id: 'no-colon', displayName: 'x', kind: 'social', phoneNumber: '+13412137456' }),
+      body: JSON.stringify({ id: 'no-colon', displayName: 'x', kind: 'social', phoneNumber: '+15555550104' }),
     })
     assert(c, badId.status === 400, `POST bad-id-format → 400 (got ${badId.status})`)
 
@@ -85,7 +85,7 @@ async function main() {
         id: 'xhs:i1',
         displayName: 'I1 test',
         kind: 'social',
-        phoneNumber: '+13412137456',
+        phoneNumber: '+15555550104',
         externalRef: 'xhs:i1ref',
       }),
     })
@@ -94,7 +94,7 @@ async function main() {
     assert(c, ws.id === 'xhs:i1', `body.id = "xhs:i1" (got ${ws.id})`)
     assert(c, ws.displayName === 'I1 test', `body.displayName = "I1 test"`)
     assert(c, ws.kind === 'social', `body.kind = "social"`)
-    assert(c, ws.phoneNumber === '+13412137456', `body.phoneNumber populated`)
+    assert(c, ws.phoneNumber === '+15555550104', `body.phoneNumber populated`)
     assert(c, ws.externalRef === 'xhs:i1ref', `body.externalRef populated`)
     assert(c, typeof ws.createdAt === 'number' && ws.createdAt > 0, `createdAt set by server`)
 
@@ -104,7 +104,7 @@ async function main() {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        id: 'xhs:i1', displayName: 'x', kind: 'social', phoneNumber: '+13412137456',
+        id: 'xhs:i1', displayName: 'x', kind: 'social', phoneNumber: '+15555550104',
       }),
     })
     assert(c, dup.status === 409, `dup POST → 409 (got ${dup.status})`)
@@ -162,7 +162,7 @@ async function main() {
     const w2 = await api<Workspace>(server.baseUrl, '/api/v1/workspaces', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ id: 'xhs:i1b', displayName: 'I1b', kind: 'social', phoneNumber: '+13412137456' }),
+      body: JSON.stringify({ id: 'xhs:i1b', displayName: 'I1b', kind: 'social', phoneNumber: '+15555550104' }),
     })
     assert(c, w2.status === 201, `created xhs:i1b for session-guard test`)
     // Forge a session dir.

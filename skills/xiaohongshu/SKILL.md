@@ -46,11 +46,11 @@ pnpm cli tap <ref_from_snapshot>
 ```bash
 # Check current phone number assigned to this device
 pnpm cli info | grep phone_number
-# Output example: "phone_number  +12139230333"
+# Output example: "phone_number  +15555550103"
 
 # Or get it via JSON for programmatic use
 pnpm cli info --json | jq '.phone_number'
-# Output: "+12139230333"
+# Output: "+15555550103"
 ```
 
 **Then use that number in signup**:

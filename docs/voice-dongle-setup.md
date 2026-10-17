@@ -284,7 +284,7 @@ AT+CMGD=<index>            # Delete a specific message by index
 
 ```
 AT+CNUM
-# Response: +CNUM: ,"15102901178",129
+# Response: +CNUM: ,"15555550101",129
 ```
 
 ## Troubleshooting
@@ -532,7 +532,7 @@ Without this, the Pi can lose its WiFi AP with no visible error, requiring a man
 - **Voice calls**: Working (with physical SIM + IMEI spoof) — modem reports CEER 5,36 but call connects
 - **USB Audio**: UAC enabled, audio recording confirmed working (`AT+QAUDMOD=2`, `AT+QPCMV=1,2`)
 - **Data**: LTE connected, APNs auto-configured (fast.t-mobile.com, ims, sos, tmus)
-- **SIM**: Physical Tello SIM (activated on Samsung phone), phone number +15102824086
+- **SIM**: Physical Tello SIM (activated on Samsung phone), phone number +15555550106
 - **IMEI**: Spoofed to Samsung Galaxy IMEI1 (357111201380908, physical SIM slot)
 - **9eSIM**: Not in use — carrier blocks lines provisioned via 9eSIM adapter
 

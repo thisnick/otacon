@@ -97,7 +97,7 @@ Notes:
   "id": "xhs:test",                   // unique, URL-safe, "kind:identifier"
   "displayName": "XHS test account",
   "kind": "social",                   // currently only 'social'; extensible enum
-  "phoneNumber": "+13412137456",      // E.164 format; ← NEW required field
+  "phoneNumber": "+15555550104",      // E.164 format; ← NEW required field
   "externalRef": "xhs:nick123",       // optional human reference for the social account
   "createdAt": 1714000000000          // ms epoch; immutable after creation
 }
@@ -428,7 +428,7 @@ Persists across reload + shareable.
   - `input` Display name
   - `select` Kind
   - `combobox` Phone number — sourced from `GET /api/v1/phones`,
-    searchable, items show `+13412137456 — phone-4 (online)`
+    searchable, items show `+15555550104 — phone-4 (online)`
   - `input` External ref (optional)
   - Submit → POST `/workspaces`, navigate to detail
 
@@ -563,7 +563,7 @@ workspace.json has no `phoneNumber` field. Two options:
    ```bash
    curl -X PATCH https://otacon-orchestrator.tail0437b8.ts.net/api/v1/workspaces/xhs%3Atest \
      -H 'Content-Type: application/json' \
-     -d '{"phoneNumber":"+13412137456"}'
+     -d '{"phoneNumber":"+15555550104"}'
    ```
 2. **UI**: open `#/workspaces/xhs:test`, set phone number in Settings tab,
    save. Equivalent.

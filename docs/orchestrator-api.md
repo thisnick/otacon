@@ -159,7 +159,7 @@ interface CreateWorkspaceRequest {
   id: string                // required, unique, format "kind:identifier"
   displayName: string       // required
   kind: string              // required (currently only "social")
-  phoneNumber: string       // required, E.164 format (e.g. "+13412137456")
+  phoneNumber: string       // required, E.164 format (e.g. "+15555550104")
   externalRef?: string      // optional
 }
 ```
@@ -328,7 +328,7 @@ interface PhoneSummary {
   phoneNumber: string                       // E.164
   status: 'online' | 'offline' | 'unreachable'
   registryId: string                        // e.g. "phone-4"
-  displayLabel: string                      // e.g. "+13412137456 — phone-4 (otacon-pi)"
+  displayLabel: string                      // e.g. "+15555550104 — phone-4 (otacon-pi)"
   hostId: string | null
 }
 
