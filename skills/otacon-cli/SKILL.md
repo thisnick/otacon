@@ -13,6 +13,23 @@ Control Android phones connected to a Raspberry Pi fleet, via a central registry
 
 ## Setup (one-time per machine)
 
+Either link the CLI to one phone directly, or pair it with the registry for
+the whole fleet. Check which one a machine has with `otacon auth whoami`.
+
+### One phone, no registry: `otacon link`
+
+```bash
+otacon link https://otacon-pi.<tailnet>.ts.net:8080 phone-r5ct60sd   # the host's id for the phone
+otacon link            # show the link
+otacon unlink          # remove it
+```
+
+Phone commands (screenshot, tap, sms, call, ...) then go straight to that
+phone; `--phone <host id>` picks another phone on the same host. Registry
+commands (`phones`, `hosts`, `config`, ...) aren't available this way.
+
+### The whole fleet: the registry
+
 ```bash
 # 1. Pair this CLI with the registry — long-polls until an admin approves
 otacon auth register --registry http://otacon-registry.<tailnet>.ts.net:9080
@@ -38,6 +55,8 @@ All config values can be overridden per-invocation via env vars (precedence: env
 | `OTACON_TOKEN` | Bearer admin token |
 | `OTACON_PHONE` | Active phone ID (also via `--phone <id>`) |
 | `OTACON_CONFIG_DIR` | Config directory (default `~/.otacon`) |
+| `OTACON_HOST` | A phone's base URL (`https://<host>:8080/phones/<id>`); overrides the link and the registry (also `--host`) |
+| `OTACON_INSECURE_TLS` | `1` accepts a self-signed host certificate |
 
 ## How to invoke
 
