@@ -11,6 +11,9 @@ export interface Contact {
 
 export type ToolPolicy = "safe-read-only" | "owner" | "none";
 
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "adaptive", "max", "ultra"] as const;
+export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
+
 export interface OtaconVoiceConfig {
   enabled: boolean;
   otacon: {
@@ -32,6 +35,10 @@ export interface OtaconVoiceConfig {
   consultPolicy: "auto" | "substantive" | "always";
   /** provider/model for consults (default: the agent's default model) */
   responseModel?: string;
+  /** Thinking level for consults (default: the model's default) */
+  consultThinkingLevel?: ThinkingLevel;
+  /** Run consults in the provider's fast mode */
+  consultFastMode?: boolean;
   responseTimeoutMs: number;
   realtime: {
     provider?: string;
@@ -100,6 +107,9 @@ export function parseConfig(raw: unknown): { config?: OtaconVoiceConfig; errors:
   providers.openai ??= {};
   providers.openai.model ??= "gpt-realtime-2.1";
 
+  if (c.consultThinkingLevel !== undefined && !THINKING_LEVELS.includes(c.consultThinkingLevel as ThinkingLevel))
+    errors.push(`consultThinkingLevel must be one of ${THINKING_LEVELS.join(", ")}`);
+
   if (errors.length) return { errors };
   return {
     errors,
@@ -114,6 +124,8 @@ export function parseConfig(raw: unknown): { config?: OtaconVoiceConfig; errors:
       toolPolicy: oneOf(c.toolPolicy, ["safe-read-only", "owner", "none"] as const, "safe-read-only"),
       consultPolicy: oneOf(c.consultPolicy, ["auto", "substantive", "always"] as const, "auto"),
       responseModel: str(c.responseModel),
+      consultThinkingLevel: c.consultThinkingLevel as ThinkingLevel | undefined,
+      consultFastMode: typeof c.consultFastMode === "boolean" ? c.consultFastMode : undefined,
       responseTimeoutMs: num(c.responseTimeoutMs, 60_000, 5_000, 600_000),
       realtime: { provider: str(realtime.provider), providers, instructions: str(realtime.instructions) },
       contacts,

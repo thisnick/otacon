@@ -35,3 +35,11 @@ test("contacts and clamps", () => {
   assert.equal(config!.holdCapSeconds, 10);
   assert.equal(config!.inboundPolicy, "allowlist");
 });
+
+test("consult thinking level and fast mode", () => {
+  const { config } = parseConfig({ ...base, consultThinkingLevel: "low", consultFastMode: true });
+  assert.equal(config!.consultThinkingLevel, "low");
+  assert.equal(config!.consultFastMode, true);
+  assert.equal(parseConfig(base).config!.consultThinkingLevel, undefined);
+  assert.ok(parseConfig({ ...base, consultThinkingLevel: "loud" }).errors[0].includes("consultThinkingLevel"));
+});

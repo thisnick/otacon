@@ -44,6 +44,11 @@
       "toolPolicy": { "type": "string", "enum": ["safe-read-only", "owner", "none"] },
       "consultPolicy": { "type": "string", "enum": ["auto", "substantive", "always"] },
       "responseModel": { "type": "string" },
+      "consultThinkingLevel": {
+        "type": "string",
+        "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "adaptive", "max", "ultra"]
+      },
+      "consultFastMode": { "type": "boolean" },
       "responseTimeoutMs": { "type": "number" },
       "realtime": {
         "type": "object",

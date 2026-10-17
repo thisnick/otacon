@@ -168,6 +168,13 @@ test("consult asks the agent with the call so far and logs both", async () => {
   assert.ok(m.report().log.some((e) => /the agent answered: Nick prefers 7:30/.test(e.text)));
 });
 
+test("consult uses the configured thinking level and fast mode", async () => {
+  const { s, consults } = await connected({ cfg: { consultThinkingLevel: "low", consultFastMode: true } });
+  await s.tool("openclaw_agent_consult", { question: "What time works?" });
+  assert.equal(consults[0].thinkLevel, "low");
+  assert.equal(consults[0].fastMode, true);
+});
+
 test("hand-off: hold, call the person, announce, merge after the announcement, leave", async () => {
   const { link, s, reports } = await connected({ contacts: [NICK] });
   assert.ok(s.params.tools.some((t: any) => t.name === "call_party"));
