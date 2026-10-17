@@ -8,7 +8,7 @@ release `v<version>` is:
 | `@otacon-fleet/otacon-cli` (`src/cli`) | npm |
 | `@otacon-fleet/openclaw-otacon-voice` (`src/openclaw-voice`) | npm |
 | host server image (`Dockerfile.otacon`) | `ghcr.io/thisnick/otacon/otacon:<version>` |
-| call audio image (`Dockerfile.voice`) | `ghcr.io/thisnick/otacon/voice:<version>` |
+| modem and eSIM tools image (`Dockerfile.voice`) | `ghcr.io/thisnick/otacon/voice:<version>` |
 | registry image (`Dockerfile.registry`) | `ghcr.io/thisnick/otacon/registry:<version>` |
 | orchestrator image (`Dockerfile.orchestrator`) | `ghcr.io/thisnick/otacon/orchestrator:<version>` |
 | kiosk APK | asset on the `v<version>` GitHub release |
