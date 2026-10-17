@@ -1,8 +1,31 @@
 {
-  "name": "otacon-cli",
-  "version": "0.1.0",
-  "description": "CLI for otacon phone automation",
+  "name": "@otacon-fleet/otacon-cli",
+  "version": "0.2.0",
+  "description": "Command-line client for otacon: drive Android phones on otacon hosts (screen, apps, SMS, calls, SIMs) and the fleet registry",
   "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "otacon",
+    "android",
+    "phone",
+    "automation",
+    "cli"
+  ],
+  "homepage": "https://github.com/thisnick/otacon/tree/main/src/cli#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thisnick/otacon.git",
+    "directory": "src/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/thisnick/otacon/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "otacon": "./dist/index.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -17,15 +40,20 @@
       "default": "./dist/commands/otacon/index.js"
     }
   },
-  "bin": {
-    "otacon": "./dist/index.js"
-  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "generate": "openapi-typescript ../../docs/api/openapi.json -o src/api-types.ts",
     "generate:registry": "openapi-typescript ../../docs/openapi/registry.json -o src/registry-types.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
-    "dev": "tsx src/index.ts"
+    "dev": "tsx src/index.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "@iarna/toml": "^2.2.5",

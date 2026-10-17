@@ -1,6 +1,8 @@
 #!/usr/bin/env node
-// Accept Tailscale self-signed certs (set before any imports to avoid warning)
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+// Hosts serve valid Tailscale certificates, so TLS is verified. For a host
+// with a self-signed certificate, OTACON_INSECURE_TLS=1 turns verification
+// off (for this process only).
+if (process.env.OTACON_INSECURE_TLS === "1") process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
 
 import { Command, program } from "commander";
 import { getHostClient } from "./host-client.js";

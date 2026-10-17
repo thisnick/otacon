@@ -1,0 +1,37 @@
+name: npm packages
+
+# Checks the packages published to npm (@otacon-fleet/otacon-cli and
+# @otacon-fleet/openclaw-otacon-voice). Publishing itself happens in
+# release.yml (changesets).
+on:
+  pull_request:
+    paths: ["src/cli/**", "src/openclaw-voice/**", "pnpm-lock.yaml", "scripts/*-packages.mjs", ".github/workflows/packages.yml"]
+  push:
+    branches: [main]
+    paths: ["src/cli/**", "src/openclaw-voice/**", "pnpm-lock.yaml"]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --filter @otacon-fleet/otacon-cli --filter @otacon-fleet/openclaw-otacon-voice
+      - name: CLI
+        run: |
+          pnpm --filter @otacon-fleet/otacon-cli run typecheck
+          pnpm --filter @otacon-fleet/otacon-cli run build
+          (cd src/cli && npm pack --dry-run)
+      - name: OpenClaw plugin
+        run: |
+          pnpm --filter @otacon-fleet/openclaw-otacon-voice run test
+          pnpm --filter @otacon-fleet/openclaw-otacon-voice run build
+          (cd src/openclaw-voice && npm pack --dry-run)
+      - name: Plugin manifest version matches package.json
+        run: |
+          test "$(node -p "require('./src/openclaw-voice/package.json').version")" = \
+               "$(node -p "require('./src/openclaw-voice/openclaw.plugin.json').version")"

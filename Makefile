@@ -104,7 +104,7 @@ build-server:
 	cd src/server && cargo build --release
 
 build-cli:
-	pnpm install && pnpm --filter otacon-cli run build
+	pnpm install && pnpm --filter @otacon-fleet/otacon-cli run build
 
 restart-monitor:
 	$(SSH_CMD) "cd $(REMOTE_DIR) && docker compose exec otacon supervisorctl restart fleet-agent"
@@ -128,7 +128,7 @@ generate-api:
 	cd src/server && cargo run -- --export-openapi | python3 -m json.tool > ../../docs/api/openapi.json
 
 generate-types:
-	pnpm --filter otacon-cli run generate
+	pnpm --filter @otacon-fleet/otacon-cli run generate
 
 generate: generate-api generate-types
 

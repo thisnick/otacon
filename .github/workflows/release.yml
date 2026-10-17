@@ -1,5 +1,9 @@
 name: Release
 
+# changesets: changes merged to main with changesets open (or update) a
+# "Version Packages" PR. Merging that PR publishes the bumped packages to npm
+# (trusted publishing, no token), tags them and creates their GitHub
+# releases. See docs/releasing.md.
 on:
   push:
     branches: [main]
@@ -12,31 +16,42 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+      id-token: write # npm trusted publishing + provenance
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
 
-      - run: npm install
+      # Trusted publishing needs npm 11.5.1 or later.
+      - run: npm install -g npm@^11.5.1
 
-      - name: Create release PR or publish release
+      - run: pnpm install --frozen-lockfile
+
+      - name: Create the Version Packages PR, or publish
         id: changesets
         uses: changesets/action@v1
         with:
           title: "Version Packages"
           commit: "chore: version packages"
-          publish: npx changeset tag
+          version: pnpm run version-packages
+          publish: pnpm run release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Create GitHub release on version bump
+      - name: Create the v<version> GitHub release on a root version bump
         if: steps.changesets.outputs.published == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          gh release create "v${VERSION}" \
-            --title "v${VERSION}" \
-            --generate-notes
+          if gh release view "v${VERSION}" >/dev/null 2>&1; then
+            echo "v${VERSION} already released"
+          else
+            gh release create "v${VERSION}" --title "v${VERSION}" --generate-notes
+          fi
