@@ -16,6 +16,11 @@ def configure_screen(serial: str):
     # manual toggle). These two are also no-ops on Pixel which already persists.
     adb_shell(serial, 'settings put global adb_enabled 1')
     adb_shell(serial, 'settings put global development_settings_enabled 1')
+    # Android 11+ drops an "Always allow" computer after 7 days without a
+    # connection, leaving the phone `unauthorized` until someone taps the
+    # prompt again. 0 disables that expiry (Developer options → "Disable adb
+    # authorization timeout").
+    adb_shell(serial, 'settings put global adb_allowed_connection_time 0')
     adb_shell(serial, 'settings put system screen_brightness_mode 1')
     adb_shell(serial, 'settings put system accelerometer_rotation 0')
     adb_shell(serial, 'settings put system user_rotation 0')
