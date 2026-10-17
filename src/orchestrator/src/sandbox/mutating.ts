@@ -26,7 +26,10 @@ import { otaconRegistry } from 'otacon-cli/commands/otacon'
 /** Verbs whose first arg decides whether this invocation mutates. */
 const SUBCOMMAND_MATRIX: Record<string, { mutating: ReadonlySet<string>; defaultSub?: string }> = {
   apps: { mutating: new Set(['launch', 'stop', 'install']), defaultSub: 'list' },
-  call: { mutating: new Set(['dial', 'answer', 'hangup']), defaultSub: 'status' },
+  call: {
+    mutating: new Set(['dial', 'answer', 'reject', 'hangup', 'hold', 'resume', 'swap', 'merge', 'dtmf']),
+    defaultSub: 'status',
+  },
   clipboard: { mutating: new Set(['set']), defaultSub: 'get' },
   notifications: { mutating: new Set(['dismiss', 'action']), defaultSub: 'list' },
   record: { mutating: new Set(['start', 'stop']), defaultSub: 'status' },

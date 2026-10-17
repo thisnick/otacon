@@ -15,6 +15,7 @@ import { dongleCommands } from "./commands/dongle.js";
 import { clientCommands } from "./commands/client.js";
 import { wifiCommands } from "./commands/wifi.js";
 import { otaconRegistry } from "./commands/otacon/index.js";
+import { listenCall } from "./commands/call-listen.js";
 import { printDetail, printList } from "./format.js";
 
 program
@@ -340,30 +341,8 @@ sms
 const call = program.command("call").description("Call control commands");
 
 call
-  .command("dial")
-  .description("Dial a phone number")
-  .argument("<number>", "phone number to dial")
-  .action(async (number: string) => {
-    await runRegistry("call", ["dial", number]);
-  });
-
-call
-  .command("answer")
-  .description("Answer an incoming call")
-  .action(async () => {
-    await runRegistry("call", ["answer"]);
-  });
-
-call
-  .command("hangup")
-  .description("End the current call")
-  .action(async () => {
-    await runRegistry("call", ["hangup"]);
-  });
-
-call
   .command("status")
-  .description("Get current call status (default: detail; use --json for raw JSON)")
+  .description("List every call: id, number, direction, state, conference (default: table; use --json for raw JSON)")
   .option("--json", "output as JSON")
   .action(async (opts: { json?: boolean }) => {
     const client = await getClient();
@@ -372,12 +351,90 @@ call
       jsonOut(st);
       return;
     }
-    const record = st as unknown as CliRecord;
-    printDetail({
-      state: record.state,
-      number: record.number,
-      duration: seconds(record.duration),
+    if (st.calls.length === 0) console.log("(no calls)");
+    else printList(st.calls, [
+      { header: "ID", get: (c) => c.id },
+      { header: "NUMBER", get: (c) => c.number },
+      { header: "DIRECTION", get: (c) => c.direction },
+      { header: "STATE", get: (c) => c.state },
+      { header: "CONFERENCE", get: (c) => (c.conference ? "yes" : "no") },
+    ]);
+    if (!st.hfp.connected) {
+      console.error(
+        "note: HFP (the phone's Bluetooth control link) is disconnected; these are the last " +
+          "known calls from the kiosk. dial/answer/hangup fall back to ADB, other call commands " +
+          "fail with hfp_unavailable."
+      );
+    }
+  });
+
+call
+  .command("dial")
+  .description("Dial a phone number (E.164); an active call is put on hold first")
+  .argument("<number>", "phone number to dial, e.g. +15550001111")
+  .action(async (number: string) => {
+    await runRegistry("call", ["dial", number]);
+  });
+
+const callIdOption = (cmd: Command, fallback: string): Command =>
+  cmd.option("--call <id>", `call id from \`otacon call status\` (default: ${fallback})`);
+
+callIdOption(
+  call.command("answer").description("Answer the ringing call (a waiting call puts the active one on hold)"),
+  "the ringing call"
+).action(async (opts: { call?: string }) => {
+  await runRegistry("call", ["answer", ...(opts.call ? ["--call", opts.call] : [])]);
+});
+
+callIdOption(
+  call.command("reject").description("Decline the ringing call (the caller usually lands in voicemail)"),
+  "the ringing call"
+).action(async (opts: { call?: string }) => {
+  await runRegistry("call", ["reject", ...(opts.call ? ["--call", opts.call] : [])]);
+});
+
+callIdOption(
+  call.command("hangup").description("End a call (ending part of a merged call ends the whole merged call)"),
+  "the active call"
+).action(async (opts: { call?: string }) => {
+  await runRegistry("call", ["hangup", ...(opts.call ? ["--call", opts.call] : [])]);
+});
+
+for (const [sub, description] of [
+  ["hold", "Put the active call on hold"],
+  ["resume", "Make the held call active (only when no call is active)"],
+  ["swap", "Swap the active and held calls"],
+  ["merge", "Merge the active and held calls into one conference call"],
+] as const) {
+  call
+    .command(sub)
+    .description(description)
+    .action(async () => {
+      await runRegistry("call", [sub]);
     });
+}
+
+call
+  .command("dtmf")
+  .description("Send keypad digits on the active call")
+  .argument("<digits>", "0-9 * # A-D; w waits 500 ms (quote # and * in the shell)")
+  .action(async (digits: string) => {
+    await runRegistry("call", ["dtmf", digits]);
+  });
+
+call
+  .command("listen")
+  .description(
+    "Listen to the call (both sides, stereo: left = other party, right = otacon) from " +
+      "ws/voice/monitor. Plays live through ffplay, sox `play` or aplay (first found on PATH), " +
+      "or saves a WAV with --out. Call events go to stderr. Read-only: never takes control " +
+      "of the call. Ctrl-C to stop."
+  )
+  .option("-o, --out <file.wav>", "save a stereo 16-bit WAV instead of playing live")
+  .option("--json", "print events to stderr as raw JSON lines")
+  .action(async (opts: { out?: string; json?: boolean }) => {
+    const client = await getClient();
+    process.exit(await listenCall(client, opts));
   });
 
 // --- Notifications ---

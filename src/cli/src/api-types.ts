@@ -141,6 +141,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** Answer the ringing call */
         post: operations["answerCall"];
         delete?: never;
         options?: never;
@@ -164,6 +165,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/calls/dtmf": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["sendDtmf"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/calls/hangup": {
         parameters: {
             query?: never;
@@ -173,7 +190,76 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** End a call (default: the active call) */
         post: operations["hangupCall"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/calls/hold": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Put the active call on hold */
+        post: operations["holdCall"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/calls/merge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Merge the active and held calls */
+        post: operations["mergeCalls"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/calls/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Decline the ringing call */
+        post: operations["rejectCall"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/calls/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Make the held call active */
+        post: operations["resumeCall"];
         delete?: never;
         options?: never;
         head?: never;
@@ -190,6 +276,23 @@ export interface paths {
         get: operations["getCallStatus"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/calls/swap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Swap the active and held calls */
+        post: operations["swapCalls"];
         delete?: never;
         options?: never;
         head?: never;
@@ -657,16 +760,61 @@ export interface components {
             /** Format: int32 */
             y2: number;
         };
-        CallStatus: {
-            /** Format: int64 */
-            duration?: number | null;
+        /** @description A call as clients see it. */
+        Call: {
+            /**
+             * Format: int64
+             * @description Epoch milliseconds when the call first became active
+             */
+            answeredAt?: number | null;
+            /** @description True while the call is part of a merged call */
+            conference: boolean;
+            direction: components["schemas"]["Direction"];
+            /** @description Assigned by otacon; stable for the life of the call */
+            id: string;
+            /** @description E.164 if known */
             number?: string | null;
-            state: string;
+            numberSource?: null | components["schemas"]["NumberSource"];
+            /**
+             * Format: int64
+             * @description Epoch milliseconds
+             */
+            startedAt: number;
+            state: components["schemas"]["CallState"];
+        };
+        CallErrorResponse: {
+            /** @description bad_request, invalid_state, unsupported, hfp_unavailable, phone_error or timeout */
+            error: string;
+            message: string;
+        };
+        /** @enum {string} */
+        CallState: "dialing" | "alerting" | "incoming" | "active" | "held" | "ended";
+        CallTarget: {
+            /** @description Call id; defaults to the obvious call (see docs/voice-ws.md) */
+            call?: string | null;
+        };
+        CallsResponse: {
+            calls: components["schemas"]["Call"][];
+            hfp: components["schemas"]["HfpInfo"];
         };
         /** @description Clipboard text content */
         ClipboardContent: {
             /** @description Current clipboard text (null if empty) */
             text?: string | null;
+        };
+        /** @description Result of a call command (the socket's `ack.result`, plus `ok`). */
+        CommandResponse: {
+            call?: null | components["schemas"]["Call"];
+            /** @description All calls after the command (hold, resume, swap, merge) */
+            calls?: components["schemas"]["Call"][] | null;
+            /** @description Digits sent (dtmf) */
+            digits?: string | null;
+            /**
+             * @description Set to `adb` when the Bluetooth control link was down and the command
+             *     was done with ADB instead (dial, answer, hangup only)
+             */
+            fallback?: string | null;
+            ok: boolean;
         };
         Contact: {
             name: string;
@@ -724,7 +872,14 @@ export interface components {
             window?: string | null;
         };
         DialBody: {
-            number: string;
+            /** @description Number to call, E.164 (e.g. +15551234567) */
+            to: string;
+        };
+        /** @enum {string} */
+        Direction: "outgoing" | "incoming";
+        DtmfBody: {
+            /** @description Keypad digits: 0-9 * # A-D; `w` waits 500 ms */
+            digits: string;
         };
         EnableBody: {
             enabled: boolean;
@@ -762,6 +917,12 @@ export interface components {
             /** Format: int64 */
             subId: number;
         };
+        HfpInfo: {
+            /** @description The phone's AT+CHLD options (which of hold/swap/merge it supports) */
+            chld: string[];
+            /** @description The phone's Bluetooth control link is up */
+            connected: boolean;
+        };
         InstallBody: {
             activationCode: string;
         };
@@ -794,6 +955,8 @@ export interface components {
             index: number;
             title: string;
         };
+        /** @enum {string} */
+        NumberSource: "hfp" | "kiosk";
         OkResponse: {
             ok: boolean;
         };
@@ -923,7 +1086,9 @@ export interface components {
             duration_ms?: number;
             /**
              * Format: int32
-             * @description Pause in ms at end position before releasing (default 0). Non-zero enables drag mode via sendevent which prevents fling/momentum — useful for spinners and pickers.
+             * @description Pause in ms at end position before releasing (default 0).
+             *     Non-zero enables drag mode via sendevent which prevents
+             *     fling/momentum — useful for spinners and pickers.
              */
             pause_ms?: number;
             /** Format: int32 */
@@ -1270,14 +1435,64 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        /** @description Optional; an empty body is fine */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CallTarget"];
+            };
+        };
         responses: {
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["OkResponse"];
+                    "application/json": components["schemas"]["CommandResponse"];
+                };
+            };
+            /** @description invalid_state */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description unsupported */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description phone_error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description hfp_unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description timeout */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
                 };
             };
         };
@@ -1300,12 +1515,194 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["OkResponse"];
+                    "application/json": components["schemas"]["CommandResponse"];
+                };
+            };
+            /** @description bad_request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description invalid_state */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description phone_error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description hfp_unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description timeout */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+        };
+    };
+    sendDtmf: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DtmfBody"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResponse"];
+                };
+            };
+            /** @description bad_request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description invalid_state */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description phone_error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description hfp_unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description timeout */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
                 };
             };
         };
     };
     hangupCall: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Optional; an empty body is fine */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CallTarget"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResponse"];
+                };
+            };
+            /** @description invalid_state */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description unsupported */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description phone_error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description hfp_unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description timeout */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+        };
+    };
+    holdCall: {
         parameters: {
             query?: never;
             header?: never;
@@ -1319,7 +1716,249 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["OkResponse"];
+                    "application/json": components["schemas"]["CommandResponse"];
+                };
+            };
+            /** @description invalid_state */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description unsupported */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description phone_error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description hfp_unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description timeout */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+        };
+    };
+    mergeCalls: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResponse"];
+                };
+            };
+            /** @description invalid_state */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description unsupported */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description phone_error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description hfp_unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description timeout */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+        };
+    };
+    rejectCall: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Optional; an empty body is fine */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CallTarget"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResponse"];
+                };
+            };
+            /** @description invalid_state */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description unsupported */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description phone_error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description hfp_unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description timeout */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+        };
+    };
+    resumeCall: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResponse"];
+                };
+            };
+            /** @description invalid_state */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description unsupported */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description phone_error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description hfp_unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description timeout */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
                 };
             };
         };
@@ -1338,7 +1977,71 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CallStatus"];
+                    "application/json": components["schemas"]["CallsResponse"];
+                };
+            };
+        };
+    };
+    swapCalls: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommandResponse"];
+                };
+            };
+            /** @description invalid_state */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description unsupported */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description phone_error */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description hfp_unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
+                };
+            };
+            /** @description timeout */
+            504: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CallErrorResponse"];
                 };
             };
         };

@@ -432,10 +432,17 @@
     background: var(--surface);
     padding: 12px 20px;
     display: flex;
-    align-items: center;
-    gap: 12px;
+    flex-direction: column;
+    justify-content: center;
+    gap: 6px;
     min-width: 200px;
   }
+  .call-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .call-row .ch-btn { margin-left: auto; padding: 2px 10px; }
   .call-state-dot {
     width: 8px; height: 8px;
     border-radius: 50%;
@@ -444,6 +451,7 @@
   }
   .call-state-dot.ringing { background: var(--amber); animation: pulse 1s infinite; }
   .call-state-dot.active { background: var(--green); }
+  .call-state-dot.held { background: var(--accent); }
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
   .call-state-label {
     font-family: 'JetBrains Mono', monospace;
@@ -875,11 +883,6 @@
       <div class="ch-meter"><div class="ch-meter-fill" id="mediaListenLevel"></div></div>
       <button class="ch-btn" id="mediaListenBtn" onclick="toggleMediaListen()">Listen</button>
     </div>
-    <div class="audio-ch">
-      <span class="ch-label">Mic</span>
-      <div class="ch-meter"><div class="ch-meter-fill" id="micLevel"></div></div>
-      <button class="ch-btn" id="micBtn" onclick="toggleMic()">Send</button>
-    </div>
   </div>
 
   <div class="call-strip">
@@ -890,9 +893,8 @@
       <button class="ch-btn" onclick="answerCall()">Answer</button>
       <button class="ch-btn" onclick="hangupCall()">Hangup</button>
     </div>
-    <div class="call-status-area">
-      <div class="call-state-dot" id="callDot"></div>
-      <span class="call-state-label" id="callLabel">idle</span>
+    <div class="call-status-area" id="callList">
+      <div class="call-row"><div class="call-state-dot"></div><span class="call-state-label">idle</span></div>
     </div>
   </div>
 
@@ -1152,12 +1154,10 @@ function onPhoneChange() {
 }
 
 // --- State ---
-let HFP_SAMPLE_RATE = 16000, HFP_CHANNELS = 1;
+let HFP_SAMPLE_RATE = 16000, HFP_CHANNELS = 2;   // ws/voice/monitor: L = the other party, R = our side
 let MEDIA_SAMPLE_RATE = 44100, MEDIA_CHANNELS = 2;
 let hfpWs = null, hfpCtx = null, hfpListening = false, hfpNextTime = 0;
 let mediaWs = null, mediaCtx = null, mediaListening = false, mediaNextTime = 0;
-let micActive = false, micStream = null, micProcessor = null;
-const FRAME_SIZE = 4096;
 let phoneWidth = 0, phoneHeight = 0;
 let jsonMode = false;
 let tapping = false;
@@ -1243,34 +1243,56 @@ async function tapRef(refId, long) {
   tapping = false;
 }
 
-// --- HFP (lazy: WebSocket connects only when user clicks Listen) ---
+// --- PCM playback (interleaved pcm_s16le → Web Audio) ---
+// Schedules one chunk right after the previous one; returns the next start time.
+function playPcm(ctx, data, channels, rate, nextTime, meterId) {
+  const pcm = new Int16Array(data); const spc = Math.floor(pcm.length / channels);
+  if (!spc) return nextTime;
+  const buf = ctx.createBuffer(channels, spc, rate);
+  let s = 0;
+  for (let ch = 0; ch < channels; ch++) {
+    const f = new Float32Array(spc);
+    for (let i = 0; i < spc; i++) { f[i] = pcm[i * channels + ch] / 32768; s += f[i] * f[i]; }
+    buf.copyToChannel(f, ch);
+  }
+  const src = ctx.createBufferSource(); src.buffer = buf; src.connect(ctx.destination);
+  if (!nextTime || nextTime < ctx.currentTime) nextTime = ctx.currentTime + 0.05;
+  src.start(nextTime);
+  document.getElementById(meterId).style.width = Math.min(100, Math.sqrt(s / (spc * channels)) * 300) + '%';
+  return nextTime + spc / rate;
+}
+
+// --- Call audio (lazy: WebSocket connects only when user clicks Listen) ---
+// ws/voice/monitor is read-only: the page never sends on it. First a `hello`
+// with the audio format, then 20 ms stereo frames (L = the other party,
+// R = what otacon plays into the call) interleaved with call events.
 function connectHfp() {
   if (hfpWs && hfpWs.readyState <= 1) return; // already open or connecting
-  hfpWs = new WebSocket(`${wsBase()}/audio/call`);
+  hfpWs = new WebSocket(`${wsBase()}/voice/monitor`);
   hfpWs.binaryType = 'arraybuffer';
   hfpWs.onopen = () => setStatus('connected');
   hfpWs.onclose = () => {
-    setStatus(''); micActive = false; updateButtons();
+    setStatus(''); updateButtons();
     // Only reconnect if user is still listening
     if (hfpListening) setTimeout(connectHfp, 2000);
   };
   hfpWs.onerror = () => setStatus('error');
   hfpWs.onmessage = (e) => {
     if (typeof e.data === 'string') {
-      try { const m = JSON.parse(e.data); if (m.type==='config') { HFP_SAMPLE_RATE=m.sampleRate||HFP_SAMPLE_RATE; HFP_CHANNELS=m.channels||HFP_CHANNELS; } } catch(_){}
+      try {
+        const m = JSON.parse(e.data);
+        if (m.type === 'hello' && m.audio) {
+          HFP_SAMPLE_RATE = m.audio.sampleRate || HFP_SAMPLE_RATE;
+          HFP_CHANNELS = m.audio.channels || HFP_CHANNELS;
+        } else if (m.type === 'audio.link' && !m.up) {
+          // No frames flow while the link is down; don't leave the meter frozen
+          document.getElementById('hfpListenLevel').style.width = '0%';
+        }
+      } catch(_){}
       return;
     }
     if (!hfpListening || !hfpCtx) return;
-    const pcm = new Int16Array(e.data);
-    const float = new Float32Array(pcm.length);
-    for (let i = 0; i < pcm.length; i++) float[i] = pcm[i] / 32768;
-    const buf = hfpCtx.createBuffer(HFP_CHANNELS, float.length / HFP_CHANNELS, HFP_SAMPLE_RATE);
-    buf.copyToChannel(float, 0);
-    const src = hfpCtx.createBufferSource(); src.buffer = buf; src.connect(hfpCtx.destination);
-    if (!hfpNextTime || hfpNextTime < hfpCtx.currentTime) hfpNextTime = hfpCtx.currentTime + 0.05;
-    src.start(hfpNextTime); hfpNextTime += (float.length / HFP_CHANNELS) / HFP_SAMPLE_RATE;
-    let s = 0; for (let i = 0; i < float.length; i++) s += float[i] * float[i];
-    document.getElementById('hfpListenLevel').style.width = Math.min(100, Math.sqrt(s / float.length) * 300) + '%';
+    hfpNextTime = playPcm(hfpCtx, e.data, HFP_CHANNELS, HFP_SAMPLE_RATE, hfpNextTime, 'hfpListenLevel');
   };
 }
 function disconnectHfp() {
@@ -1292,7 +1314,7 @@ function toggleHfpListen() {
 // --- Media (lazy: WebSocket connects only when user clicks Listen) ---
 function connectMedia() {
   if (mediaWs && mediaWs.readyState <= 1) return; // already open or connecting
-  mediaWs = new WebSocket(`${wsBase()}/audio/media`);
+  mediaWs = new WebSocket(`${wsBase()}/media`);
   mediaWs.binaryType = 'arraybuffer';
   mediaWs.onclose = () => {
     updateButtons();
@@ -1304,14 +1326,7 @@ function connectMedia() {
       return;
     }
     if (!mediaListening || !mediaCtx) return;
-    const pcm = new Int16Array(e.data); const spc = pcm.length / MEDIA_CHANNELS;
-    const buf = mediaCtx.createBuffer(MEDIA_CHANNELS, spc, MEDIA_SAMPLE_RATE);
-    for (let ch = 0; ch < MEDIA_CHANNELS; ch++) { const f = new Float32Array(spc); for (let i = 0; i < spc; i++) f[i] = pcm[i * MEDIA_CHANNELS + ch] / 32768; buf.copyToChannel(f, ch); }
-    const src = mediaCtx.createBufferSource(); src.buffer = buf; src.connect(mediaCtx.destination);
-    if (!mediaNextTime || mediaNextTime < mediaCtx.currentTime) mediaNextTime = mediaCtx.currentTime + 0.05;
-    src.start(mediaNextTime); mediaNextTime += spc / MEDIA_SAMPLE_RATE;
-    const c0 = buf.getChannelData(0); let s = 0; for (let i = 0; i < c0.length; i++) s += c0[i] * c0[i];
-    document.getElementById('mediaListenLevel').style.width = Math.min(100, Math.sqrt(s / c0.length) * 300) + '%';
+    mediaNextTime = playPcm(mediaCtx, e.data, MEDIA_CHANNELS, MEDIA_SAMPLE_RATE, mediaNextTime, 'mediaListenLevel');
   };
 }
 function disconnectMedia() {
@@ -1329,83 +1344,9 @@ function toggleMediaListen() {
   updateButtons();
 }
 
-// --- Mic (AudioWorklet) ---
-const MIC_WORKLET_CODE = `
-class MicProcessor extends AudioWorkletProcessor {
-  constructor() {
-    super();
-    this._buf = new Float32Array(2048);
-    this._pos = 0;
-    this._running = true;
-    this.port.onmessage = (e) => { if (e.data === 'stop') this._running = false; };
-  }
-  process(inputs) {
-    if (!this._running) return false;
-    const input = inputs[0];
-    if (!input || !input[0]) return true;
-    const samples = input[0];
-    let i = 0;
-    while (i < samples.length) {
-      const space = this._buf.length - this._pos;
-      const chunk = Math.min(space, samples.length - i);
-      this._buf.set(samples.subarray(i, i + chunk), this._pos);
-      this._pos += chunk;
-      i += chunk;
-      if (this._pos >= this._buf.length) {
-        const pcm = new Int16Array(this._buf.length);
-        let s = 0;
-        for (let j = 0; j < this._buf.length; j++) {
-          pcm[j] = Math.max(-32768, Math.min(32767, this._buf[j] * 32768));
-          s += this._buf[j] * this._buf[j];
-        }
-        this.port.postMessage({pcm: pcm.buffer, rms: Math.sqrt(s / this._buf.length)}, [pcm.buffer]);
-        this._pos = 0;
-      }
-    }
-    return true;
-  }
-}
-registerProcessor('mic-processor', MicProcessor);
-`;
-let micWorkletReady = false;
-
-async function toggleMic() {
-  if (!micActive) {
-    connectHfp(); // ensure HFP WebSocket is connected for sending audio
-    try {
-      micStream = await navigator.mediaDevices.getUserMedia({audio: {sampleRate: HFP_SAMPLE_RATE, channelCount: HFP_CHANNELS, echoCancellation: true}});
-      const ctx = new AudioContext({sampleRate: HFP_SAMPLE_RATE});
-      if (!micWorkletReady) {
-        const blob = new Blob([MIC_WORKLET_CODE], {type: 'application/javascript'});
-        await ctx.audioWorklet.addModule(URL.createObjectURL(blob));
-        micWorkletReady = true;
-      }
-      const source = ctx.createMediaStreamSource(micStream);
-      const worklet = new AudioWorkletNode(ctx, 'mic-processor');
-      worklet.port.onmessage = (e) => {
-        const {pcm, rms} = e.data;
-        if (hfpWs && hfpWs.readyState === WebSocket.OPEN) hfpWs.send(pcm);
-        document.getElementById('micLevel').style.width = Math.min(100, rms * 300) + '%';
-      };
-      source.connect(worklet);
-      worklet.connect(ctx.destination);
-      micProcessor = worklet;
-      micProcessor._ctx = ctx;
-      micActive = true;
-    } catch(e) { return; }
-  } else {
-    if (micProcessor) { micProcessor.port.postMessage('stop'); micProcessor.disconnect(); micProcessor._ctx.close(); micProcessor = null; }
-    if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
-    micActive = false; document.getElementById('micLevel').style.width = '0%';
-    micWorkletReady = false;
-  }
-  updateButtons();
-}
-
 function updateButtons() {
   const h = document.getElementById('hfpListenBtn'); h.textContent = hfpListening ? 'Stop' : 'Listen'; h.className = 'ch-btn' + (hfpListening ? ' active' : '');
   const m = document.getElementById('mediaListenBtn'); m.textContent = mediaListening ? 'Stop' : 'Listen'; m.className = 'ch-btn' + (mediaListening ? ' active' : '');
-  const k = document.getElementById('micBtn'); k.textContent = micActive ? 'Stop' : 'Send'; k.className = 'ch-btn' + (micActive ? ' active' : '');
 }
 
 // --- Screenshot + Snapshot ---
@@ -1786,48 +1727,122 @@ async function unlockPhone() {
 }
 
 // --- Call controls ---
-let callPollInterval = null;
+// The strip shows every call (e.g. one active and one held, or a merged call).
+// It follows the call.* events on /ws/events; GET calls/status seeds it on
+// load and whenever the events socket (re)connects.
+let calls = {};            // call id → call object, as the server reports it
+let hfpConnected = true;   // the phone's Bluetooth control link
+let lastEnded = null, endedTimer = null;   // reason of the last call.ended, shown briefly
+let callError = null, callErrorTimer = null;
+let callEventSeq = 0;      // bumped on every call event, to spot a stale status snapshot
+let serverSkew = 0;        // server clock − local clock (ms), from event `ts`
 
-async function dialCall() {
-  const num = document.getElementById('dialInput').value.trim();
-  if (!num) return;
+function callDuration(answeredAt) {
+  if (!answeredAt) return '';
+  const s = Math.max(0, Math.floor((Date.now() + serverSkew - answeredAt) / 1000));
+  return ` ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function renderCalls() {
+  const list = Object.values(calls).sort((a, b) => a.startedAt - b.startedAt);
+  const rows = list.map(c => {
+    const dot = c.state === 'active' ? 'active' : c.state === 'held' ? 'held' : 'ringing';
+    const text = `${c.state} ${c.number || 'unknown'}${c.conference ? ' (merged)' : ''}`;
+    const dur = c.state === 'active' || c.state === 'held' ? c.answeredAt || '' : '';
+    return `<div class="call-row"><div class="call-state-dot ${dot}"></div>` +
+      `<span class="call-state-label">${escHtml(text)}<span class="call-dur" data-answered="${dur}">${callDuration(dur)}</span></span>` +
+      `<button class="ch-btn" data-call="${escHtml(c.id)}" title="Hang up this call (declines it if ringing)">End</button></div>`;
+  });
+  if (!rows.length) {
+    rows.push(`<div class="call-row"><div class="call-state-dot"></div>` +
+      `<span class="call-state-label">${lastEnded ? escHtml(`ended (${lastEnded})`) : 'idle'}</span></div>`);
+  }
+  if (!hfpConnected) {
+    rows.push(`<div class="call-row"><span class="call-state-label" title="Bluetooth control link is down: dial, answer and hang up go through ADB">hfp down</span></div>`);
+  }
+  if (callError) {
+    rows.push(`<div class="call-row"><span class="call-state-label" style="color:var(--red)">${escHtml(callError)}</span></div>`);
+  }
+  document.getElementById('callList').innerHTML = rows.join('');
+}
+
+// Durations tick in place, so the End buttons aren't rebuilt under the cursor
+setInterval(() => {
+  document.querySelectorAll('#callList .call-dur').forEach(el => {
+    el.textContent = callDuration(Number(el.dataset.answered));
+  });
+}, 1000);
+
+document.getElementById('callList').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-call]');
+  if (btn) hangupCall(btn.dataset.call);
+});
+
+function showCallError(text) {
+  callError = text;
+  clearTimeout(callErrorTimer);
+  callErrorTimer = setTimeout(() => { callError = null; renderCalls(); }, 6000);
+  renderCalls();
+}
+
+// One call event (call.incoming / call.state / call.ended)
+function applyCallEvent(msg) {
+  callEventSeq++;
+  const c = msg.call;
+  if (!c || !c.id) return;
+  if (msg.type === 'call.ended' || c.state === 'ended') {
+    delete calls[c.id];
+    lastEnded = msg.reason || 'unknown';
+    clearTimeout(endedTimer);
+    endedTimer = setTimeout(() => { lastEnded = null; renderCalls(); }, 5000);
+  } else {
+    calls[c.id] = c;
+  }
+  renderCalls();
+}
+
+async function refreshCallStatus() {
   try {
-    await fetch(`${apiBase()}/calls/dial`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({number: num})
-    });
-  } catch(e) {}
-  pollCallStatus();
-}
-
-async function answerCall() {
-  try { await fetch(`${apiBase()}/calls/answer`, {method: 'POST'}); } catch(e) {}
-  pollCallStatus();
-}
-
-async function hangupCall() {
-  try { await fetch(`${apiBase()}/calls/hangup`, {method: 'POST'}); } catch(e) {}
-  pollCallStatus();
-}
-
-async function pollCallStatus() {
-  try {
+    const seq = callEventSeq;
     const res = await fetch(`${apiBase()}/calls/status`);
     if (!res.ok) return;
     const data = await res.json();
-    const dot = document.getElementById('callDot');
-    const label = document.getElementById('callLabel');
-    dot.className = 'call-state-dot ' + (data.state || 'idle');
-    let text = data.state || 'idle';
-    if (data.number) text += ' ' + data.number;
-    if (data.duration) text += ' (' + data.duration + 's)';
-    label.textContent = text;
+    // An event arrived while this snapshot was in flight: it may be older
+    // than that event, so take a fresh one.
+    if (seq !== callEventSeq) return refreshCallStatus();
+    calls = {};
+    (data.calls || []).forEach(c => { if (c.state !== 'ended') calls[c.id] = c; });
+    if (data.hfp) hfpConnected = !!data.hfp.connected;
+    renderCalls();
   } catch(e) {}
 }
 
-// Poll call status every 1s
-callPollInterval = setInterval(pollCallStatus, 1000);
+// POST calls/<path>; the resulting state arrives as events. Errors come back
+// as {error: code, message} with a non-2xx status.
+async function callCommand(path, body) {
+  const opts = {method: 'POST'};
+  if (body) {
+    opts.headers = {'Content-Type': 'application/json'};
+    opts.body = JSON.stringify(body);
+  }
+  try {
+    const res = await fetch(`${apiBase()}/calls/${path}`, opts);
+    if (res.ok) return;
+    const data = await res.json().catch(() => ({}));
+    showCallError(`${path}: ${data.message || data.error || res.status}`);
+  } catch(e) {
+    showCallError(`${path}: ${e.message}`);
+  }
+}
+
+function dialCall() {
+  const to = document.getElementById('dialInput').value.trim();
+  if (to) callCommand('dial', {to});
+}
+
+function answerCall() { callCommand('answer'); }
+
+function hangupCall(id) { callCommand('hangup', id ? {call: id} : null); }
 
 // --- SMS ---
 // --- SIM panel ---
@@ -2183,20 +2198,26 @@ async function sendSms() {
 // --- Events WebSocket ---
 let eventsWs = null;
 
+// Messages are {"type": ..., "ts": ..., ...fields}. The feed has no snapshot
+// of the calls, so the strip is re-seeded from calls/status on every connect.
 function connectEvents() {
   eventsWs = new WebSocket(`${wsBase()}/events`);
-  eventsWs.onclose = () => setTimeout(connectEvents, 2000);
+  eventsWs.onopen = () => refreshCallStatus();
+  // While the feed is down, each reconnect attempt also re-reads the calls
+  eventsWs.onclose = () => { refreshCallStatus(); setTimeout(connectEvents, 2000); };
   eventsWs.onmessage = (e) => {
     try {
       const msg = JSON.parse(e.data);
-      const evt = msg.event || msg.type;
-      if (evt === 'call.incoming') {
-        pollCallStatus();
-        const num = msg.data && msg.data.number;
-        if (num) document.getElementById('dialInput').value = num;
-      } else if (evt === 'call.connected' || evt === 'call.ended' || evt === 'call.dialing') {
-        pollCallStatus();
-      } else if (evt === 'sms.received') {
+      if (msg.ts) serverSkew = msg.ts - Date.now();
+      if (msg.type === 'call.incoming' || msg.type === 'call.state' || msg.type === 'call.ended') {
+        applyCallEvent(msg);
+        // A ringing caller's number (it may arrive later, as a call.state)
+        const c = msg.call;
+        if (c && c.state === 'incoming' && c.number) document.getElementById('dialInput').value = c.number;
+      } else if (msg.type === 'hfp') {
+        hfpConnected = !!msg.connected;
+        renderCalls();
+      } else if (msg.type === 'sms.received') {
         refreshSmsThreads();
         if (selectedThread) loadMessages(selectedThread);
       }
@@ -2319,8 +2340,8 @@ async function confirmDeletePhone() {
   }
   // Audio WebSockets are now lazy — connected only when user clicks Listen
   connectEvents();
+  refreshCallStatus();
   refreshAll();
-  pollCallStatus();
   refreshSmsThreads();
   // Poll info (includes monitor data) every 10s
   setInterval(refreshInfo, 10000);
