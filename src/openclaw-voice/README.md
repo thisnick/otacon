@@ -42,6 +42,11 @@ It talks to otacon's `ws/voice/control` socket for one phone (see
 The realtime API key comes from `realtime.providers.openai.apiKey` (a
 SecretRef), an OpenAI auth profile, or `OPENAI_API_KEY`.
 
+When the voice model consults the agent, the agent answers with
+`responseModel` (default: the agent's model). `consultThinkingLevel` (for
+example `"low"`) and `consultFastMode: true` keep those answers quick while
+the other party waits.
+
 ## Third-party
 
 `assets/silero_vad.onnx` is [Silero VAD](https://github.com/snakers4/silero-vad)
