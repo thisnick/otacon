@@ -5,8 +5,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcurl4-openssl-dev libpcsclite-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Pinned: the build running on the Pi since 2026-09 (lpac 2.3.0.r456). lpac's
+# main no longer configures with these options (2026-10-17).
+ARG LPAC_REF=3ff35594ec15062a3ed10c3da1c26eb0a13390b8
 RUN git clone https://github.com/estkme-group/lpac.git /lpac \
     && cd /lpac \
+    && git checkout ${LPAC_REF} \
     && mkdir build && cd build \
     && cmake .. -DLPAC_WITH_APDU_AT=ON \
     && make -j$(nproc)
