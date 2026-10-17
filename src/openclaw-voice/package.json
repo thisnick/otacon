@@ -1,0 +1,65 @@
+{
+  "name": "openclaw-otacon-voice",
+  "version": "0.1.0",
+  "description": "OpenClaw plugin: phone calls through otacon phones, run by a realtime voice model",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "openclaw",
+    "openclaw-plugin",
+    "voice",
+    "phone",
+    "realtime",
+    "otacon"
+  ],
+  "homepage": "https://github.com/thisnick/otacon/tree/main/src/openclaw-voice#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/thisnick/otacon.git",
+    "directory": "src/openclaw-voice"
+  },
+  "bugs": {
+    "url": "https://github.com/thisnick/otacon/issues"
+  },
+  "files": [
+    "dist",
+    "assets",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.test.json && node --test dist-test/test/*.test.js",
+    "pack": "npm run build && npm pack",
+    "prepublishOnly": "npm run build"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "openclaw": ">=2026.10.3"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "onnxruntime-node": "1.22.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.10.3"
+    },
+    "build": {
+      "openclawVersion": "2026.10.3"
+    }
+  }
+}

@@ -1,0 +1,84 @@
+{
+  "id": "otacon-voice",
+  "name": "Otacon Voice",
+  "description": "Phone calls through an otacon phone, run by a realtime voice model.",
+  "version": "0.1.0",
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": [
+      "otacon_call"
+    ]
+  },
+  "configContracts": {
+    "secretInputs": {
+      "paths": [
+        {
+          "path": "realtime.providers.*.apiKey",
+          "expected": "string"
+        }
+      ]
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": { "type": "boolean" },
+      "otacon": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "url": { "type": "string", "description": "otacon host base URL, e.g. https://otacon-pi.example.ts.net:8080" },
+          "phoneId": { "type": "string", "description": "host phone id, e.g. phone-r5ct60sd" },
+          "takeover": { "type": "boolean" }
+        },
+        "required": ["url", "phoneId"]
+      },
+      "agentId": { "type": "string" },
+      "ownerName": { "type": "string" },
+      "assistantName": { "type": "string" },
+      "inboundPolicy": { "type": "string", "enum": ["disabled", "allowlist"] },
+      "allowFrom": { "type": "array", "items": { "type": "string", "pattern": "^\\+[1-9]\\d{6,14}$" } },
+      "toolPolicy": { "type": "string", "enum": ["safe-read-only", "owner", "none"] },
+      "consultPolicy": { "type": "string", "enum": ["auto", "substantive", "always"] },
+      "responseModel": { "type": "string" },
+      "responseTimeoutMs": { "type": "number" },
+      "realtime": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "provider": { "type": "string" },
+          "providers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "properties": {
+                "apiKey": { "oneOf": [{ "type": "string" }, { "type": "object" }] }
+              }
+            }
+          },
+          "instructions": { "type": "string" }
+        }
+      },
+      "contacts": {
+        "type": "object",
+        "additionalProperties": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string" },
+            "number": { "type": "string", "pattern": "^\\+[1-9]\\d{6,14}$" },
+            "description": { "type": "string" }
+          },
+          "required": ["number"]
+        }
+      },
+      "holdCapSeconds": { "type": "number" },
+      "maxCallSeconds": { "type": "number" },
+      "ringTimeoutSeconds": { "type": "number" }
+    },
+    "required": ["otacon"]
+  }
+}

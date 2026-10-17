@@ -1,0 +1,54 @@
+name: otacon-voice plugin
+
+# Build and test the OpenClaw plugin on changes; publish it to npm on an
+# `openclaw-voice-v<version>` tag (the version must match package.json and
+# openclaw.plugin.json). Needs the NPM_TOKEN repository secret.
+on:
+  pull_request:
+    paths: ["src/openclaw-voice/**", ".github/workflows/openclaw-voice.yml"]
+  push:
+    branches: [main]
+    paths: ["src/openclaw-voice/**"]
+    tags: ["openclaw-voice-v*"]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/openclaw-voice
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm ci --ignore-scripts
+      - run: npm test
+      - run: npm run build
+      - run: npm pack --dry-run
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/openclaw-voice-v')
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm provenance
+    defaults:
+      run:
+        working-directory: src/openclaw-voice
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: Tag matches the package and manifest versions
+        run: |
+          v="${GITHUB_REF_NAME#openclaw-voice-v}"
+          test "$(node -p "require('./package.json').version")" = "$v"
+          test "$(node -p "require('./openclaw.plugin.json').version")" = "$v"
+      - run: npm ci --ignore-scripts
+      - run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
