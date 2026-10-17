@@ -1,5 +1,11 @@
 # @otacon-fleet/otacon-cli
 
+## 0.3.0
+
+### Minor Changes
+
+- 1f06f83: `otacon link <host> <phone>` links the CLI straight to one phone on an otacon host, saved in `~/.otacon/config.toml` (no registry needed); `otacon link` shows it and `otacon unlink` removes it. `otacon auth whoami` shows the link.
+
 ## 0.2.0
 
 First release on npm (previously installed from the repo as `otacon-cli`).
