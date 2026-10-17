@@ -16,6 +16,26 @@ export type SmsThread = components["schemas"]["SmsThread"];
 export type SmsMessage = components["schemas"]["SmsMessage"];
 export type App = components["schemas"]["App"];
 export type Contact = components["schemas"]["Contact"];
+export type Call = components["schemas"]["Call"];
+export type CallsResponse = components["schemas"]["CallsResponse"];
+export type CallCommandResponse = components["schemas"]["CommandResponse"];
+export type HfpInfo = components["schemas"]["HfpInfo"];
+
+/**
+ * A call-control command the host refused: `{error: <code>, message}` with
+ * HTTP 400/409/422/502/503/504 (see docs/voice-ws.md, "Error codes").
+ */
+export class CallApiError extends Error {
+  /** e.g. invalid_state, unsupported, hfp_unavailable, phone_error, timeout */
+  readonly code: string
+  readonly status: number
+  constructor(code: string, message: string, status: number) {
+    super(message ? `${code}: ${message}` : code)
+    this.name = "CallApiError"
+    this.code = code
+    this.status = status
+  }
+}
 
 async function throwOnError(res: Response): Promise<void> {
   if (!res.ok) {
@@ -181,33 +201,87 @@ export class OtaconClient {
     await throwOnError(res);
   }
 
-  async callDial(number: string): Promise<void> {
-    const res = await fetch(`${this.baseUrl}/api/calls/dial`, {
+  /** POST a call-control command; throws CallApiError with the host's code + message. */
+  private async callCommand(
+    op: string,
+    body?: Record<string, unknown>
+  ): Promise<CallCommandResponse> {
+    const res = await fetch(`${this.baseUrl}/api/calls/${op}`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ number }),
+      ...(body
+        ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }
+        : {}),
     });
-    await throwOnError(res);
+    const json = (await res.json().catch(() => null)) as
+      | (CallCommandResponse & { error?: string; message?: string })
+      | null;
+    if (!res.ok) {
+      throw new CallApiError(
+        json?.error || `HTTP ${res.status}`,
+        json?.message ?? "",
+        res.status
+      );
+    }
+    return json ?? { ok: true };
   }
 
-  async callAnswer(): Promise<void> {
-    const res = await fetch(`${this.baseUrl}/api/calls/answer`, {
-      method: "POST",
-    });
-    await throwOnError(res);
+  async callDial(to: string): Promise<CallCommandResponse> {
+    return this.callCommand("dial", { to });
   }
 
-  async callHangup(): Promise<void> {
-    const res = await fetch(`${this.baseUrl}/api/calls/hangup`, {
-      method: "POST",
-    });
-    await throwOnError(res);
+  /** Answer the ringing call (or the given call id). */
+  async callAnswer(call?: string): Promise<CallCommandResponse> {
+    return this.callCommand("answer", call ? { call } : undefined);
   }
 
-  async callStatus(): Promise<{ state: string; number?: string; duration?: number }> {
+  /** Decline the ringing call (or the given call id). */
+  async callReject(call?: string): Promise<CallCommandResponse> {
+    return this.callCommand("reject", call ? { call } : undefined);
+  }
+
+  /** End a call; defaults to the active call. */
+  async callHangup(call?: string): Promise<CallCommandResponse> {
+    return this.callCommand("hangup", call ? { call } : undefined);
+  }
+
+  async callHold(): Promise<CallCommandResponse> {
+    return this.callCommand("hold");
+  }
+
+  async callResume(): Promise<CallCommandResponse> {
+    return this.callCommand("resume");
+  }
+
+  async callSwap(): Promise<CallCommandResponse> {
+    return this.callCommand("swap");
+  }
+
+  async callMerge(): Promise<CallCommandResponse> {
+    return this.callCommand("merge");
+  }
+
+  /** Keypad digits on the active call: 0-9 * # A-D; `w` waits 500 ms. */
+  async callDtmf(digits: string): Promise<CallCommandResponse> {
+    return this.callCommand("dtmf", { digits });
+  }
+
+  async callStatus(): Promise<CallsResponse> {
     const res = await fetch(`${this.baseUrl}/api/calls/status`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      const json = (await res.json().catch(() => null)) as
+        | { error?: string; message?: string }
+        | null;
+      throw new CallApiError(json?.error || `HTTP ${res.status}`, json?.message ?? "", res.status);
+    }
     return res.json();
+  }
+
+  /**
+   * WebSocket URL for a per-phone socket path (e.g. "/ws/voice/monitor"),
+   * derived from baseUrl: https → wss, http → ws.
+   */
+  wsUrl(path: string): string {
+    return `${this.baseUrl.replace(/^http/, "ws")}${path}`;
   }
 
   async recordStart(maxDuration: number = 30): Promise<void> {

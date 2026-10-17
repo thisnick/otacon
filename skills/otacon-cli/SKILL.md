@@ -346,12 +346,54 @@ otacon sms send "+1234567890" "message body"
 
 ### Calls
 
+Call control goes over the phone's Bluetooth (HFP) link. A phone can have
+several calls at once (one active, others held); each has an `id` like
+`call_7f3a9c`, assigned by otacon and stable for the life of the call.
+
 ```bash
-otacon call dial "+1234567890"
-otacon call answer                             # answer incoming
-otacon call hangup                             # end current call
-otacon call status                             # state + duration
+otacon call status                             # every call: id, number, direction, state, conference
+otacon call status --json                      # raw {calls: [...], hfp: {connected, chld}}
+otacon call dial "+15550001111"                # E.164; an active call is put on hold first
+otacon call answer                             # answer the ringing call
+otacon call reject                             # decline the ringing call (caller usually gets voicemail)
+otacon call hangup                             # end the active call
+otacon call hangup --call call_7f3a9c          # end a specific call (answer/reject take --call too)
+otacon call hold                               # put the active call on hold
+otacon call resume                             # make the held call active (when nothing is active)
+otacon call swap                               # swap the active and held calls
+otacon call merge                              # merge active + held into one conference call
+otacon call dtmf '1234#'                       # keypad digits: 0-9 * # A-D, w = 500 ms pause
 ```
+
+`state` is `dialing` → `alerting` (remote ringing) → `active`, or `incoming` →
+`active`; `active` ⇄ `held`; finally `ended`. Hanging up any call that is part
+of a merged call ends the whole merged call.
+
+Failed commands print `<code>: <message>` and exit non-zero. Codes:
+`bad_request`, `invalid_state` (e.g. `swap` with only one call), `unsupported`
+(the phone lacks that hold/merge option), `hfp_unavailable` (Bluetooth control
+link down), `phone_error`, `timeout`. When HFP is down, `call status` notes it
+and shows the last known calls; `dial`, `answer` and `hangup` fall back to ADB
+(output says `via adb fallback`), the other commands fail with
+`hfp_unavailable`.
+
+#### Listening to a call
+
+```bash
+otacon call listen                             # play both sides live (Ctrl-C to stop)
+otacon call listen --out call.wav              # save a stereo 16-bit WAV instead
+otacon call listen --out call.wav --json       # events as raw JSON lines
+```
+
+`listen` is read-only (the `ws/voice/monitor` socket): it never takes control
+of the call and any number of listeners can run at once. Audio is stereo:
+**left = the other party, right = what otacon plays into the call**. Call
+events (`call.incoming`, `call.state`, `call.ended`, `audio.link`, `hfp`) are
+printed to stderr as they arrive, each with its offset into the audio
+(`+12.34s`), which matches the position in the saved WAV. Live playback pipes
+the audio into the first player found on `PATH`: `ffplay` (ffmpeg), `play`
+(sox) or `aplay` (alsa-utils); without one, use `--out`. Ctrl-C stops and
+finalizes the WAV.
 
 ### Notifications
 
