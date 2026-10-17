@@ -1,6 +1,7 @@
 import { definePluginEntry, type PluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import { jsonResult } from "openclaw/plugin-sdk/tool-results";
 import { isE164, parseConfig, type Contact } from "./config.js";
+import { realtimeSdk } from "./realtime.js";
 import { OtaconVoiceRuntime } from "./runtime.js";
 
 const TOOL_NAME = "otacon_call";
@@ -148,7 +149,7 @@ export default definePluginEntry({
       async start(ctx) {
         if (api.registrationMode !== "full") return;
         if (process.env.OPENCLAW_CLI === "1" && !process.argv.includes("gateway")) return;
-        runtime = new OtaconVoiceRuntime(api, config);
+        runtime = new OtaconVoiceRuntime(api, config, realtimeSdk);
         try {
           await runtime.start();
           api.logger.info(`[otacon-voice] running on ${config.otacon.phoneId}`);
