@@ -1,9 +1,9 @@
 name: Build Pi Image
 
+# A Raspberry Pi OS image for provisioning a new host. Run by hand; not part
+# of releases (see docs/releasing.md).
 on:
   workflow_dispatch:
-  release:
-    types: [created]
 
 jobs:
   build:

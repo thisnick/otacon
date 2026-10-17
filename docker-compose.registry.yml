@@ -20,7 +20,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.registry
-    image: ghcr.io/thisnick/${OTACON_REPO:-otacon-dev}/registry:latest
+    image: ghcr.io/thisnick/${OTACON_REPO:-otacon}/registry:latest
     restart: unless-stopped
     network_mode: service:tailscale-registry
     depends_on: [tailscale-registry]

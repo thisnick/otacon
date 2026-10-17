@@ -1,11 +1,11 @@
 name: npm packages
 
 # Checks the packages published to npm (@otacon-fleet/otacon-cli and
-# @otacon-fleet/openclaw-otacon-voice). Publishing itself happens in
-# release.yml (changesets).
+# @otacon-fleet/openclaw-otacon-voice), and that everything in the repo has the
+# same version. Publishing itself happens in release.yml.
 on:
   pull_request:
-    paths: ["src/cli/**", "src/openclaw-voice/**", "pnpm-lock.yaml", "scripts/*-packages.mjs", ".github/workflows/packages.yml"]
+    paths: ["src/cli/**", "src/openclaw-voice/**", "pnpm-lock.yaml", "pnpm-workspace.yaml", "**/package.json", "**/Cargo.toml", ".changeset/**", "scripts/*.mjs", ".github/workflows/packages.yml"]
   push:
     branches: [main]
     paths: ["src/cli/**", "src/openclaw-voice/**", "pnpm-lock.yaml"]
@@ -31,7 +31,5 @@ jobs:
           pnpm --filter @otacon-fleet/openclaw-otacon-voice run test
           pnpm --filter @otacon-fleet/openclaw-otacon-voice run build
           (cd src/openclaw-voice && npm pack --dry-run)
-      - name: Plugin manifest version matches package.json
-        run: |
-          test "$(node -p "require('./src/openclaw-voice/package.json').version")" = \
-               "$(node -p "require('./src/openclaw-voice/openclaw.plugin.json').version")"
+      - name: One version everywhere
+        run: node scripts/sync-versions.mjs --check

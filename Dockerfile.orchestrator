@@ -37,9 +37,12 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY src/cli/package.json ./src/cli/
 COPY src/orchestrator/package.json ./src/orchestrator/
 COPY src/orchestrator/web/package.json ./src/orchestrator/web/
-# The OpenClaw plugin is a workspace member too, but the orchestrator doesn't
-# use it: its manifest is copied only so the lockfile matches; it isn't installed.
+# The OpenClaw plugin, host server and registry are workspace members too, but
+# the orchestrator doesn't use them: their manifests are copied only so the
+# lockfile matches; they aren't installed.
 COPY src/openclaw-voice/package.json ./src/openclaw-voice/
+COPY src/server/package.json ./src/server/
+COPY src/registry/package.json ./src/registry/
 RUN pnpm install --frozen-lockfile --filter "orchestrator..." --filter "orchestrator-web..."
 
 # Now copy sources and build only the orchestrator package + web bundle.
@@ -73,6 +76,8 @@ COPY --from=builder /src/src/cli/package.json ./src/cli/
 COPY --from=builder /src/src/orchestrator/package.json ./src/orchestrator/
 COPY --from=builder /src/src/orchestrator/web/package.json ./src/orchestrator/web/
 COPY --from=builder /src/src/openclaw-voice/package.json ./src/openclaw-voice/
+COPY --from=builder /src/src/server/package.json ./src/server/
+COPY --from=builder /src/src/registry/package.json ./src/registry/
 
 # CLI sources — `@otacon-fleet/otacon-cli` is consumed at runtime via `workspace:*`
 # from the orchestrator package. The CLI runs from source via tsx in

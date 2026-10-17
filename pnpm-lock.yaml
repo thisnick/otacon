@@ -181,6 +181,10 @@ importers:
         specifier: ^6.0.0
         version: 6.4.2(@types/node@24.19.2)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3)
 
+  src/registry: {}
+
+  src/server: {}
+
 packages:
 
   '@anthropic-ai/sdk@0.91.1':
