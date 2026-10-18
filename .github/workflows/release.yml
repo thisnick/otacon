@@ -1,14 +1,18 @@
 name: Release
 
-# Everything in the repo shares one version (docs/releasing.md).
+# Versions share one number line (docs/releasing.md): a package moves only
+# when it changes, and then to the next version of the whole group.
 #
-# Changes merged with changesets open (or update) a "Version Packages" PR.
-# Merging it bumps the version; a push to main whose version has no
-# v<version> tag yet is released:
-#   1. build: every image (pushed as <image>:<version>) and the kiosk APK
-#   2. publish: the npm packages (trusted publishing, no token), the
-#      v<version> tag and GitHub release with the APK, then each image's
-#      :latest moves to the new build, which Watchtower on the hosts deploys.
+# Changes merged to main open (or update) a "Version Packages" PR, from
+# their changesets plus a patch changeset for any image whose inputs changed
+# without one (scripts/auto-changesets.mjs). Merging it bumps the versions;
+# a push to main whose root version has no v<version> tag yet is released:
+#   1. build: the images whose package version is new, pushed as
+#      <image>:<version>, and the kiosk APK with the otacon image
+#   2. publish: npm packages whose version is new (trusted publishing), the
+#      v<version> tag and GitHub release, then :latest for the images just
+#      built, which Watchtower on the hosts deploys. Unchanged images keep
+#      :latest, so their containers don't restart.
 # Every step is safe to re-run.
 on:
   push:
@@ -27,8 +31,11 @@ jobs:
     outputs:
       version: ${{ steps.check.outputs.version }}
       release: ${{ steps.check.outputs.release }}
+      images: ${{ steps.images.outputs.images }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tags, to compare images with their last release
 
       - uses: pnpm/action-setup@v4
 
@@ -46,7 +53,7 @@ jobs:
           node scripts/sync-versions.mjs --check
           VERSION=$(node -p "require('./package.json').version")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null; then
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
             echo "v$VERSION is already released"
             echo "release=false" >> "$GITHUB_OUTPUT"
           else
@@ -54,7 +61,17 @@ jobs:
             echo "release=true" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Images to build
+        id: images
+        if: steps.check.outputs.release == 'true'
+        run: echo "images=$(node scripts/release-images.mjs "ghcr.io/$GITHUB_REPOSITORY")" >> "$GITHUB_OUTPUT"
+
+      - name: Changesets for images changed without one
+        if: steps.check.outputs.release == 'false'
+        run: node scripts/auto-changesets.mjs
+
       - name: Open or update the Version Packages PR
+        if: steps.check.outputs.release == 'false'
         uses: changesets/action@v1
         with:
           title: Version Packages
@@ -65,10 +82,10 @@ jobs:
 
   build:
     needs: version
-    if: needs.version.outputs.release == 'true'
+    if: needs.version.outputs.release == 'true' && needs.version.outputs.images != '[]'
     uses: ./.github/workflows/build.yml
     with:
-      version: ${{ needs.version.outputs.version }}
+      images: ${{ needs.version.outputs.images }}
       push: true
     permissions:
       contents: read
@@ -76,6 +93,8 @@ jobs:
 
   publish:
     needs: [version, build]
+    # A release with no new image skips build; publish runs either way.
+    if: always() && needs.version.outputs.release == 'true' && (needs.build.result == 'success' || needs.build.result == 'skipped')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -83,6 +102,7 @@ jobs:
       id-token: write # npm trusted publishing + provenance
     env:
       VERSION: ${{ needs.version.outputs.version }}
+      BUILT: ${{ needs.version.outputs.images }}
       IMAGES: ghcr.io/${{ github.repository }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
@@ -104,31 +124,38 @@ jobs:
       - name: Publish the npm packages
         run: pnpm run release
 
-      - uses: actions/download-artifact@v4
+      - if: contains(needs.version.outputs.images, '"otacon"')
+        uses: actions/download-artifact@v4
         with:
           name: kiosk-apk
           path: apk
 
       - name: Create the v${{ env.VERSION }} GitHub release
         run: |
-          cp apk/otacon-kiosk.apk "otacon-kiosk-$VERSION.apk"
           node scripts/release-notes.mjs "$VERSION" > notes.md
+          assets=()
+          if [ -f apk/otacon-kiosk.apk ]; then
+            cp apk/otacon-kiosk.apk "otacon-kiosk-$VERSION.apk"
+            assets+=("otacon-kiosk-$VERSION.apk")
+          fi
           if gh release view "v$VERSION" >/dev/null 2>&1; then
-            gh release upload "v$VERSION" "otacon-kiosk-$VERSION.apk" --clobber
+            [ ${#assets[@]} -eq 0 ] || gh release upload "v$VERSION" "${assets[@]}" --clobber
           else
             gh release create "v$VERSION" --target "$GITHUB_SHA" --title "v$VERSION" \
-              --notes-file notes.md "otacon-kiosk-$VERSION.apk"
+              --notes-file notes.md "${assets[@]}"
           fi
 
-      - uses: docker/login-action@v3
+      - if: needs.version.outputs.images != '[]'
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Last, so the hosts only deploy a release that finished.
-      - name: Point each image's :latest at v${{ env.VERSION }}
+      - name: Point :latest at the images just built
+        if: needs.version.outputs.images != '[]'
         run: |
-          for image in otacon voice registry orchestrator; do
-            docker buildx imagetools create -t "$IMAGES/$image:latest" "$IMAGES/$image:$VERSION"
+          echo "$BUILT" | jq -r '.[] | "\(.image) \(.version)"' | while read -r image version; do
+            docker buildx imagetools create -t "$IMAGES/$image:latest" "$IMAGES/$image:$version"
           done

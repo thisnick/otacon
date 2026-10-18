@@ -1,14 +1,16 @@
 name: Build
 
-# The release artifacts: four ARM64 images and the kiosk APK. release.yml
-# calls this for each release and pushes <image>:<version>. Pull requests
-# that touch a Dockerfile or this workflow build everything without pushing.
-# Run it by hand (Actions → Build) to check a branch; that doesn't push
-# either unless asked, and then only <image>:sha-<commit>.
+# The ARM64 images (and, with the otacon image, the kiosk APK). release.yml
+# calls this with the images a release builds, each pushed as
+# <image>:<version>. Pull requests that touch a Dockerfile or this workflow
+# build all of them without pushing. Run it by hand (Actions → Build) to
+# check a branch; that doesn't push either unless asked, and then only
+# <image>:sha-<commit>.
 on:
   workflow_call:
     inputs:
-      version:
+      images:
+        description: 'JSON: [{"image", "file", "version"}] (scripts/release-images.mjs)'
         type: string
         required: true
       push:
@@ -35,17 +37,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - image: otacon
-            file: Dockerfile.otacon
-          - image: voice
-            file: Dockerfile.voice
-          - image: registry
-            file: Dockerfile.registry
-          - image: orchestrator
-            file: Dockerfile.orchestrator
+        include: ${{ fromJSON(inputs.images || '[{"image":"otacon","file":"Dockerfile.otacon"},{"image":"voice","file":"Dockerfile.voice"},{"image":"registry","file":"Dockerfile.registry"},{"image":"orchestrator","file":"Dockerfile.orchestrator"}]') }}
     env:
-      TAG: ${{ inputs.version || format('sha-{0}', github.sha) }}
+      TAG: ${{ matrix.version || format('sha-{0}', github.sha) }}
     steps:
       - uses: actions/checkout@v4
 
