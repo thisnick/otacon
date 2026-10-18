@@ -161,6 +161,30 @@
           },
           "instructions": {
             "type": "string"
+          },
+          "agentContext": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "includeIdentity": {
+                "type": "boolean"
+              },
+              "includeWorkspaceFiles": {
+                "type": "boolean"
+              },
+              "files": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "maxChars": {
+                "type": "number"
+              }
+            }
           }
         }
       },

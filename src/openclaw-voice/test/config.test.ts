@@ -66,3 +66,9 @@ test("the phone-menu navigator and the consult filler: defaults and overrides", 
   assert.deepEqual(c.menu.decisions.apiKey, ref);
   assert.equal(c.menu.threshold, 0.7);
 });
+
+test("agent context: off by default, voice-call's files and size when on", () => {
+  assert.equal(parseConfig(base).config!.realtime.agentContext.enabled, false);
+  const c = parseConfig({ ...base, realtime: { agentContext: { enabled: true } } }).config!.realtime.agentContext;
+  assert.deepEqual(c, { enabled: true, includeIdentity: true, includeWorkspaceFiles: true, files: ["SOUL.md", "IDENTITY.md", "USER.md"], maxChars: 6000 });
+});

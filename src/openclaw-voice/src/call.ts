@@ -19,6 +19,7 @@ import type {
   resolveConfiguredRealtimeVoiceProvider,
 } from "openclaw/plugin-sdk/realtime-voice";
 import type { Contact, OtaconVoiceConfig } from "./config.js";
+import { buildAgentContext, type AgentContextSdk } from "./context.js";
 import { MenuNavigator, type DecisionClient } from "./navigator.js";
 import { callSessionKey, type SessionKeySdk } from "./session.js";
 import type { Transcriber } from "./transcriber.js";
@@ -37,6 +38,7 @@ export interface RealtimeSdk {
   resampler(inRate: number, outRate: number): { process(chunk: Buffer): Buffer };
   sessionKeys: SessionKeySdk;
   resolveSecretRefs(refs: unknown[], options: { config: unknown }): Promise<Map<string, unknown>>;
+  agentContext: AgentContextSdk;
 }
 
 /** The phone-menu navigator's parts for one call (runtime.ts builds them). */
@@ -361,7 +363,7 @@ export class CallMission {
 
   // ---- realtime model ----
 
-  private instructions(): string {
+  private instructions(agentContext?: string): string {
     const { config, party, direction, brief, contacts } = this.o;
     const lines = [
       `You are ${config.assistantName}, speaking on a live phone call on behalf of ${config.ownerName}.`,
@@ -395,6 +397,7 @@ export class CallMission {
       );
     }
     if (config.realtime.instructions) lines.push("", config.realtime.instructions);
+    if (agentContext) lines.push("", agentContext);
     return lines.join("\n");
   }
 
@@ -436,6 +439,15 @@ export class CallMission {
       surface: "gateway-relay",
       useProviderDefaultModel: true,
     });
+    const agentContext = await buildAgentContext(this.o.sdk.agentContext, {
+      config: config.realtime.agentContext,
+      cfg: api.config,
+      agentId: this.o.agentId,
+      consultToolName: this.o.sdk.consultToolName,
+    }).catch((err) => {
+      this.debug(`agent context unavailable: ${err instanceof Error ? err.message : String(err)}`);
+      return undefined;
+    });
     this.session = this.o.sdk.createSession({
       provider: resolved.provider,
       providerConfig: resolved.providerConfig,
@@ -443,7 +455,7 @@ export class CallMission {
       cfg: api.config,
       agentId: this.o.agentId,
       audioFormat: this.o.sdk.audioFormat,
-      instructions: this.instructions(),
+      instructions: this.instructions(agentContext),
       tools: this.tools(),
       markStrategy: "transport",
       audioSink: {

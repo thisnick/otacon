@@ -2,6 +2,7 @@
 // defaults. Security follows the stock voice-call plugin: inbound calls only
 // from allowFrom, calls bound to an agent and session, consult tool policy.
 
+import { AGENT_CONTEXT_DEFAULTS, type AgentContextConfig } from "./context.js";
 import type { SessionScope } from "./session.js";
 
 export interface Contact {
@@ -62,6 +63,8 @@ export interface OtaconVoiceConfig {
     providers: Record<string, Record<string, unknown>>;
     /** Extra instructions appended to the built-in rules */
     instructions?: string;
+    /** The agent's identity and workspace files in the voice model's instructions (context.ts) */
+    agentContext: AgentContextConfig;
   };
   /** People the assistant may call during a call (hand-off) */
   contacts: Contact[];
@@ -150,6 +153,7 @@ export function parseConfig(raw: unknown): { config?: OtaconVoiceConfig; errors:
   const decisions = obj(menu.decisions);
 
   const realtime = obj(c.realtime);
+  const agentContext = obj(realtime.agentContext);
   const providers: Record<string, Record<string, unknown>> = {};
   for (const [k, v] of Object.entries(obj(realtime.providers))) providers[k] = obj(v);
   // A configured model avoids the provider's GPT-Live default, which can't
@@ -183,7 +187,20 @@ export function parseConfig(raw: unknown): { config?: OtaconVoiceConfig; errors:
       consultFastMode: typeof c.consultFastMode === "boolean" ? c.consultFastMode : undefined,
       consultFiller: typeof c.consultFiller === "string" ? c.consultFiller.trim() : "Checking.",
       responseTimeoutMs: num(c.responseTimeoutMs, 60_000, 5_000, 600_000),
-      realtime: { provider: str(realtime.provider), providers, instructions: str(realtime.instructions) },
+      realtime: {
+        provider: str(realtime.provider),
+        providers,
+        instructions: str(realtime.instructions),
+        agentContext: {
+          enabled: agentContext.enabled === true,
+          includeIdentity: agentContext.includeIdentity !== false,
+          includeWorkspaceFiles: agentContext.includeWorkspaceFiles !== false,
+          files: Array.isArray(agentContext.files)
+            ? agentContext.files.filter((f): f is string => typeof f === "string" && Boolean(f.trim()))
+            : AGENT_CONTEXT_DEFAULTS.files,
+          maxChars: Math.round(num(agentContext.maxChars, AGENT_CONTEXT_DEFAULTS.maxChars, 0, 50_000)),
+        },
+      },
       contacts,
       menu: {
         enabled: menu.enabled !== false,

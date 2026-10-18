@@ -56,6 +56,18 @@ see that conversation. With `session.dmScope` giving each chat its own
 session, set it to the owner's chat (for example
 `agent:main:whatsapp:direct:+15550002222`) so call reports reach them.
 
+## Agent context
+
+`realtime.agentContext: { enabled: true }` adds the agent's voice context to
+the voice model's instructions, built exactly as the stock voice-call
+plugin builds it:
+- the agent's configured identity (name, emoji, vibe, theme, persona);
+- the workspace files `SOUL.md`, `IDENTITY.md` and `USER.md` (`files`), up to
+  `maxChars` (6000).
+
+The voice model then knows who it is and who it works for. It's off unless
+enabled.
+
 ## Phone menus
 
 On calls an agent places, a phone-menu navigator listens alongside the voice

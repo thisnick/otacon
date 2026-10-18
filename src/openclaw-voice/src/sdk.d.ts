@@ -84,6 +84,16 @@ declare module "openclaw/plugin-sdk/routing" {
   export function parseAgentSessionKey(key: string): { agentId: string; rest: string } | null;
 }
 
+declare module "openclaw/plugin-sdk/agent-runtime" {
+  export function resolveAgentIdentity(cfg: unknown, agentId: string): unknown;
+  export function resolveAgentWorkspaceDir(cfg: unknown, agentId: string): string;
+}
+
+declare module "openclaw/plugin-sdk/security-runtime" {
+  /** Reads confined to rootDir */
+  export function root(rootDir: string): Promise<{ readText(file: string): Promise<string> }>;
+}
+
 declare module "openclaw/plugin-sdk/secret-ref-runtime" {
   /** Values of SecretRefs ({ source, provider, id }), keyed by ref. */
   export function resolveSecretRefValues(refs: unknown[], options: { config: unknown; env?: NodeJS.ProcessEnv }): Promise<Map<string, unknown>>;
