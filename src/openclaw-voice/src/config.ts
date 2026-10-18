@@ -31,6 +31,12 @@ export interface OtaconVoiceConfig {
   assistantName: string;
   inboundPolicy: "disabled" | "allowlist";
   allowFrom: string[];
+  /**
+   * Session incoming calls belong to: their consults see its conversation and
+   * the report goes there (default: agent:<agentId>:main). Set it to the
+   * owner's chat when DMs get their own sessions (session.dmScope).
+   */
+  inboundSessionKey?: string;
   toolPolicy: ToolPolicy;
   consultPolicy: "auto" | "substantive" | "always";
   /** provider/model for consults (default: the agent's default model) */
@@ -107,6 +113,9 @@ export function parseConfig(raw: unknown): { config?: OtaconVoiceConfig; errors:
   providers.openai ??= {};
   providers.openai.model ??= "gpt-realtime-2.1";
 
+  const inboundSessionKey = str(c.inboundSessionKey);
+  if (inboundSessionKey && !inboundSessionKey.startsWith("agent:")) errors.push("inboundSessionKey must be a session key (agent:...)");
+
   if (c.consultThinkingLevel !== undefined && !THINKING_LEVELS.includes(c.consultThinkingLevel as ThinkingLevel))
     errors.push(`consultThinkingLevel must be one of ${THINKING_LEVELS.join(", ")}`);
 
@@ -121,6 +130,7 @@ export function parseConfig(raw: unknown): { config?: OtaconVoiceConfig; errors:
       assistantName: str(c.assistantName) ?? "an AI assistant",
       inboundPolicy: oneOf(c.inboundPolicy, ["disabled", "allowlist"] as const, "disabled"),
       allowFrom,
+      inboundSessionKey,
       toolPolicy: oneOf(c.toolPolicy, ["safe-read-only", "owner", "none"] as const, "safe-read-only"),
       consultPolicy: oneOf(c.consultPolicy, ["auto", "substantive", "always"] as const, "auto"),
       responseModel: str(c.responseModel),

@@ -5,9 +5,9 @@ import { config, FakeLink, fakeApi, fakeSdk, settle } from "./fakes.js";
 
 const ALLOWED = "+15555550102";
 
-function setup() {
+function setup(extra: Record<string, unknown> = {}) {
   const link = new FakeLink();
-  const { sdk, sessions } = fakeSdk();
+  const { sdk, sessions, consults } = fakeSdk();
   const { api, events, wakes } = fakeApi();
   link.handler = (type, f) => {
     if (type === "answer") {
@@ -20,11 +20,11 @@ function setup() {
     }
     return {};
   };
-  const rt = new OtaconVoiceRuntime(api, config({ inboundPolicy: "allowlist", allowFrom: [ALLOWED] }), sdk, {
+  const rt = new OtaconVoiceRuntime(api, config({ inboundPolicy: "allowlist", allowFrom: [ALLOWED], ...extra }), sdk, {
     link,
     createDetector: async () => null,
   });
-  return { rt, link, sessions, events, wakes };
+  return { rt, link, sessions, events, wakes, consults };
 }
 
 test("inbound: callers not on the allowlist are left ringing", async () => {
@@ -51,6 +51,19 @@ test("inbound: allowlisted callers are answered, and the call is reported to mai
   assert.match(events[0].text, /Incoming call from \+15555550102 ended \(completed/);
   assert.match(events[0].text, /\+15555550102: Hi, it's me/);
   assert.equal(wakes.length, 1, "the agent is woken to read it");
+});
+
+test("inbound: inboundSessionKey gets the report, and consults fork it", async () => {
+  const chat = "agent:main:whatsapp:direct:+15555550102";
+  const { rt, link, sessions, events, consults } = setup({ inboundSessionKey: chat });
+  await rt.start();
+  link.call("call.incoming", { id: "i1", number: ALLOWED, direction: "incoming", state: "incoming" });
+  await settle();
+  await sessions[0].tool("openclaw_agent_consult", { question: "What's on my calendar?" });
+  assert.equal(consults[0].spawnedBy, chat);
+  link.call("call.ended", { id: "i1" }, "remote");
+  await settle();
+  assert.equal(events[0].sessionKey, chat);
 });
 
 test("outbound: one call at a time; the report goes to the requesting session", async () => {

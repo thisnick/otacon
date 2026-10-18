@@ -118,6 +118,7 @@ export class OtaconVoiceRuntime {
       party: { name: known?.name ?? number, number, role: "primary" },
       contacts: this.config.contacts,
       agentId: this.config.agentId ?? "main",
+      requesterSessionKey: this.config.inboundSessionKey,
       inboundCallId: msg.call.id,
     });
     mission.start();
