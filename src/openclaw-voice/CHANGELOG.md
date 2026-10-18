@@ -1,12 +1,18 @@
 # @otacon-fleet/openclaw-otacon-voice
 
+## 2.1.0
+
+### Minor Changes
+
+- 661fe58: `inboundSessionKey`: the session incoming calls belong to (their report and consults). Without it, reports went to `agent:<agentId>:main`, which the owner never sees when each chat has its own session (`session.dmScope`).
+- dcee7dd: Calls run in a session chosen like the stock voice-call plugin's: `sessionScope` `per-phone` (the default: one session per phone number, `agent:<agentId>:voice:<digits>`, so the agent remembers earlier calls with that number, including ones made with voice-call), `per-call` or `main`, and `otacon_call` takes a `sessionKey` to name the session itself. Each call used to get a new session. The report names the call's session.
+
 ## 2.0.0
 
 ### Major Changes
 
 - Everything in the repo now shares one version and is released together: the npm packages, the host server, the registry and the orchestrator (docs/releasing.md).
 - No plugin changes since 0.2.0.
-
 
 ## 0.2.0
 
