@@ -36,6 +36,11 @@ const toolParameters = {
         required: ["name", "number"],
       },
     },
+    sessionKey: {
+      type: "string",
+      description:
+        "call: the OpenClaw session the call runs in (its consults, so what the agent remembers of it). Default: one session per phone number, shared by every call with that number",
+    },
     callId: { type: "string", description: "end: the call id returned by call" },
   },
   required: ["action"],
@@ -72,6 +77,7 @@ export default definePluginEntry({
       contacts?: { name: string; number: string; description?: string }[];
       agentId?: string;
       requesterSessionKey?: string;
+      sessionKey?: string;
     }) => {
       if (!runtime) throw new Error("otacon-voice is not running in this process");
       const contacts: Contact[] = [];
@@ -86,6 +92,7 @@ export default definePluginEntry({
         contacts,
         agentId: args.agentId ?? config.agentId ?? agentFromSessionKey(args.requesterSessionKey) ?? "main",
         requesterSessionKey: args.requesterSessionKey,
+        sessionKey: args.sessionKey,
       });
     };
 
@@ -104,6 +111,7 @@ export default definePluginEntry({
               name: p.name,
               brief: p.brief,
               contacts: p.contacts,
+              sessionKey: p.sessionKey,
               agentId: ctx.agentId,
               requesterSessionKey: ctx.sessionKey,
             });

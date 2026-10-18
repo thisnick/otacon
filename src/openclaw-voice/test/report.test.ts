@@ -10,6 +10,7 @@ const base = {
   outcome: "completed" as const,
   startedAt: 0,
   endedAt: 65_000,
+  sessionKey: "agent:main:voice:15550001111",
   agentId: "main",
 };
 

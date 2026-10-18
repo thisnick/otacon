@@ -42,6 +42,14 @@ It talks to otacon's `ws/voice/control` socket for one phone (see
 The realtime API key comes from `realtime.providers.openai.apiKey` (a
 SecretRef), an OpenAI auth profile, or `OPENAI_API_KEY`.
 
+Each call runs in an OpenClaw session, where its consults happen, chosen as
+the stock voice-call plugin chooses it. With `sessionScope: "per-phone"`
+(the default), that's `agent:<agentId>:voice:<digits>`: every call with the
+same number shares one session, so the agent remembers earlier calls (the
+same keys as voice-call, so its sessions carry over). `"per-call"` gives
+each call its own session and `"main"` uses the agent's main session.
+`otacon_call` can name the session instead (`sessionKey`).
+
 Incoming calls belong to `agent:<agentId>:main` unless `inboundSessionKey`
 names another session: the report goes there, and consults during the call
 see that conversation. With `session.dmScope` giving each chat its own

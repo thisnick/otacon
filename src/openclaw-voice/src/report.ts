@@ -27,6 +27,7 @@ export function formatReport(r: MissionReport): string {
   const out = [head];
   if (r.brief) out.push(`Goal: ${r.brief}`);
   if (r.summary) out.push(`The assistant's note: ${r.summary}`);
+  out.push(`Call session (where its consults ran): ${r.sessionKey}`);
   if (r.log.length) {
     let lines = r.log.map(formatLogEntry);
     let text = lines.join("\n");

@@ -79,6 +79,15 @@ declare module "openclaw/plugin-sdk/plugin-entry" {
   }): unknown;
 }
 
+declare module "openclaw/plugin-sdk/routing" {
+  export function normalizeAgentId(id: string): string;
+  export function parseAgentSessionKey(key: string): { agentId: string; rest: string } | null;
+}
+
+declare module "openclaw/plugin-sdk/session-store-runtime" {
+  export function canonicalizeMainSessionAlias(p: { cfg: unknown; agentId: string; sessionKey: string }): string;
+}
+
 declare module "openclaw/plugin-sdk/tool-results" {
   import type { AgentToolResult } from "openclaw/plugin-sdk/plugin-entry";
   export function jsonResult(payload: unknown): AgentToolResult;
