@@ -2,7 +2,7 @@
   "id": "otacon-voice",
   "name": "Otacon Voice",
   "description": "Phone calls through an otacon phone, run by a realtime voice model.",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "activation": {
     "onStartup": true
   },
