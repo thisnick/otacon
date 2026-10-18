@@ -15,6 +15,14 @@ const LUIGIS_OPTIONS = [
   "To hear these options again, press 9.",
 ];
 
+const MOMA = [
+  "Thank you for calling The Museum of Modern Art.",
+  "MoMA is open daily from 10:30 a.m. to 5:30 p.m., and until 7 p.m. on Saturdays.",
+  "Tickets can be purchased online at moma.org.",
+  "For the MoMA Design Store, press 1. For membership, press 2. For MoMA PS1, press 3.",
+  "To speak with an operator, press 0. To repeat this message, press pound.",
+];
+
 const SCENARIOS = {
   // Should press 3 right after hearing it, not wait for the menu to end.
   menu: {
@@ -31,6 +39,13 @@ const SCENARIOS = {
       ["assistant", "Hi Marco, a table for two tonight at 7:30, please, under Nick."],
       "Sure, let me check. Yes, 7:30 works.",
     ],
+  },
+  // No option fits, but the brief allows a person, and giving up after a
+  // couple of loops (the MoMA call, 2026-10-18): the navigator must not
+  // wait forever.
+  deadend: {
+    goal: "Find MoMA's street address using the phone menu. Press the address, hours or visitor-info option as soon as you hear it, then hang up once you have the address. If there's no such option you may ask a live person. If the menu loops a couple of times without it, hang up.",
+    lines: [...Array(3)].flatMap(() => MOMA),
   },
   // A person answers: hand off at once.
   person: {
@@ -55,6 +70,14 @@ const key = process.env.OPENROUTER_API_KEY;
 if (!key) throw new Error("OPENROUTER_API_KEY is not set");
 const client = openRouterDecisions({ apiKey: key, model: process.env.MODEL ?? "openai/gpt-6-luna-decisions" });
 const p = (a, q, c) => (a[q]?.probabilities?.[c] ?? 0).toFixed(2);
+// What the navigator would do with these answers (navigator.ts check()).
+const T = Number(process.env.THRESHOLD ?? 0.6);
+const would = (a) => {
+  const act = a.action.choice, pa = a.action.probabilities[act] ?? 0;
+  if (pa < T) return "";
+  if (act === "press") return (a.key.probabilities[a.key.choice] ?? 0) >= T && a.key.choice !== "none" ? `=> PRESS ${a.key.choice}` : "";
+  return act === "wait" ? "" : `=> ${act.toUpperCase()}`;
+};
 
 for (const [name, sc] of Object.entries(SCENARIOS)) {
   if (process.argv[2] && process.argv[2] !== name) continue;
@@ -66,6 +89,6 @@ for (const [name, sc] of Object.entries(SCENARIOS)) {
     const state = { goal: sc.goal, seconds_into_call: 2 + i * 2.4, on_hold: false, seconds_on_hold: 0, transcript, keys_pressed: sc.pressed ?? [] };
     const a = await client.decide(state, QUESTIONS);
     const act = a.action.choice;
-    console.log(`  ${(who === "assistant" ? "(assistant) " : "") + text.slice(0, 60).padEnd(60)} -> ${act} ${p(a, "action", act)}  key ${a.key.choice} ${p(a, "key", a.key.choice)}  (press ${p(a, "action", "press")}, hand_off ${p(a, "action", "hand_off")}, hang_up ${p(a, "action", "hang_up")})`);
+    console.log(`  ${(who === "assistant" ? "(assistant) " : "") + text.slice(0, 60).padEnd(60)} -> ${act} ${p(a, "action", act)}  key ${a.key.choice} ${p(a, "key", a.key.choice)}  (press ${p(a, "action", "press")}, hand_off ${p(a, "action", "hand_off")}, hang_up ${p(a, "action", "hang_up")}) ${would(a)}`);
   }
 }

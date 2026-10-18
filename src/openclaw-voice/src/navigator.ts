@@ -2,8 +2,8 @@
 // (OpenRouter's Decisions API) reads the live transcript of the line every
 // few seconds, beside the voice model, and decides one of:
 //   - press a menu option ("for directions, press 2")
-//   - hang up: the goal is done, or there's no way to reach it (a loop with
-//     no fitting option, closed, not in service)
+//   - hang up: no person is on the line and the goal is done, or there's no
+//     way to reach it (a loop with no fitting option, closed, not in service)
 //   - hand off: a person is speaking. The navigator stops for the rest of the
 //     call and the voice model carries on alone.
 //   - wait
@@ -101,9 +101,8 @@ export const QUESTIONS: Record<string, ChoiceQuestion> = {
 export interface NavigatorOptions {
   goal: string;
   checkEverySeconds: number;
-  pressThreshold: number;
-  handOffThreshold: number;
-  hangUpThreshold: number;
+  /** Probability the chosen action (and, to press, the key) needs */
+  threshold: number;
   client: DecisionClient;
   /** Milliseconds; the call's answer time is t = 0 */
   now(): number;
@@ -224,21 +223,21 @@ export class MenuNavigator {
       // Logged when the answer changes, not every few seconds.
       if (action !== this.lastAction) {
         this.lastAction = action;
-        this.o.log(`navigator: ${action} (${p("action", action ?? "").toFixed(2)}) at ${this.t()}s`);
+        this.o.log(`navigator: ${action} (${p("action", action ?? "").toFixed(2)}, key ${a.key?.choice} ${p("key", a.key?.choice ?? "").toFixed(2)}) at ${this.t()}s`);
       }
-      if (action === "hand_off" && p("action", "hand_off") >= this.o.handOffThreshold) {
+      if (action === "hand_off" && p("action", "hand_off") >= this.o.threshold) {
         this.o.log(`navigator: a person is speaking (${p("action", "hand_off").toFixed(2)}); handing off`);
         this.stop();
         return this.o.handOff();
       }
-      if (action === "hang_up" && p("action", "hang_up") > this.o.hangUpThreshold && !this.holding) {
+      if (action === "hang_up" && p("action", "hang_up") >= this.o.threshold && !this.holding) {
         const reason = p("hang_up_reason", "goal_done") >= p("hang_up_reason", "no_way") ? "goal_done" : "no_way";
         this.o.log(`navigator: hanging up, ${reason} (${p("action", "hang_up").toFixed(2)})`);
         this.stop();
         return this.o.hangUp(reason);
       }
       const key = a.key?.choice;
-      if (action === "press" && p("action", "press") >= this.o.pressThreshold && key && KEYS.includes(key) && p("key", key) >= this.o.pressThreshold) {
+      if (action === "press" && p("action", "press") >= this.o.threshold && key && KEYS.includes(key) && p("key", key) >= this.o.threshold) {
         this.o.log(`navigator: pressing ${key} (${p("action", "press").toFixed(2)}/${p("key", key).toFixed(2)})`);
         this.pressed("navigator", key);
         await this.o.press(key);

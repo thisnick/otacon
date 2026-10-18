@@ -10,9 +10,7 @@ function nav(answer: FakeDecisions["answer"]) {
   const n = new MenuNavigator({
     goal: "Book a table for 2 at 7:30",
     checkEverySeconds: 3,
-    pressThreshold: 0.8,
-    handOffThreshold: 0.8,
-    hangUpThreshold: 0.9,
+    threshold: 0.6,
     client: decisions,
     now: () => 0,
     press: async (k) => void acts.push(`press ${k}`),
@@ -41,8 +39,8 @@ test("presses an offered option once, then waits for the line to answer", async 
   assert.deepEqual(acts, ["press 3"]);
 });
 
-test("below the press threshold nothing is pressed", async () => {
-  const { n, acts } = nav({ action: "press", key: "3", p: 0.7 });
+test("below the threshold nothing is pressed", async () => {
+  const { n, acts } = nav({ action: "press", key: "3", p: 0.55 });
   n.lineText("To make a reservation, press three. ");
   await n.check();
   assert.deepEqual(acts, []);
@@ -59,11 +57,11 @@ test("hands off once a person speaks, and stops for good", async () => {
   assert.equal(decisions.states.length, 1);
 });
 
-test("hangs up only above 0.9, and never while on hold", async () => {
-  const atThreshold = nav({ action: "hang_up", p: 0.9 });
-  atThreshold.n.lineText("We are closed. ");
-  await atThreshold.n.check();
-  assert.deepEqual(atThreshold.acts, []);
+test("hangs up from the threshold, and never while on hold", async () => {
+  const below = nav({ action: "hang_up", p: 0.55 });
+  below.n.lineText("We are closed. ");
+  await below.n.check();
+  assert.deepEqual(below.acts, []);
 
   const onHold = nav({ action: "hang_up", p: 0.97 });
   onHold.n.hold(true);

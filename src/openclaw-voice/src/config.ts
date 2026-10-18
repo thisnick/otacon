@@ -93,12 +93,11 @@ export interface MenuConfig {
   };
   /** How often the navigator looks at new transcript (seconds) */
   checkEverySeconds: number;
-  /** Probability needed to press a menu option */
-  pressThreshold: number;
-  /** Probability needed to hand the call to the voice model (a person is speaking) */
-  handOffThreshold: number;
-  /** Probability needed to hang up (goal done, or no way to reach it) */
-  hangUpThreshold: number;
+  /**
+   * Probability the navigator's chosen action (press, hand off, hang up) must
+   * have; pressing also needs the key's. One decision, one threshold.
+   */
+  threshold: number;
 }
 
 const DELAYS = ["minimal", "low", "medium", "high", "xhigh"] as const;
@@ -195,9 +194,7 @@ export function parseConfig(raw: unknown): { config?: OtaconVoiceConfig; errors:
         },
         decisions: { model: str(decisions.model) ?? "openai/gpt-6-luna-decisions", apiKey: decisions.apiKey },
         checkEverySeconds: num(menu.checkEverySeconds, 3, 1, 30),
-        pressThreshold: num(menu.pressThreshold, 0.8, 0.5, 1),
-        handOffThreshold: num(menu.handOffThreshold, 0.75, 0.5, 1),
-        hangUpThreshold: num(menu.hangUpThreshold, 0.9, 0.5, 1),
+        threshold: num(menu.threshold, 0.6, 0.5, 1),
       },
       holdCapSeconds: num(c.holdCapSeconds, 300, 10, 3600),
       maxCallSeconds: num(c.maxCallSeconds, 1800, 60, 4 * 3600),
