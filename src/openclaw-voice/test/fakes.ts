@@ -8,7 +8,13 @@ import type { SessionKeySdk } from "../src/session.js";
 import { parseConfig, type OtaconVoiceConfig } from "../src/config.js";
 import { OtaconLink, type OtaconCall } from "../src/otacon.js";
 
-export const logger = { info() {}, warn() {}, error() {}, debug() {} };
+export const logs: string[] = [];
+export const logger = {
+  info: (m: string) => void logs.push(m),
+  warn: (m: string) => void logs.push(m),
+  error: (m: string) => void logs.push(m),
+  debug() {},
+};
 
 export const tick = () => new Promise<void>((r) => setImmediate(r));
 
@@ -77,8 +83,19 @@ export class FakeLink extends OtaconLink {
 export class FakeSession implements BridgeSession {
   audioIn: Buffer[] = [];
   userMessages: string[] = [];
-  toolResults: { callId: string; result: any; options?: { suppressResponse?: boolean } }[] = [];
+  toolResults: { callId: string; result: any; options?: { suppressResponse?: boolean; willContinue?: boolean } }[] = [];
   closed = false;
+  /** Events sent through the provider bridge (call.ts's silent notes). */
+  bridgeEvents: any[] = [];
+  /** Whether the bridge takes interim ("working") tool results. */
+  continuation = true;
+  get bridge() {
+    return { sendEvent: (e: unknown) => void this.bridgeEvents.push(e), supportsToolResultContinuation: this.continuation };
+  }
+  /** Text of the silent notes the model got. */
+  get notes(): string[] {
+    return this.bridgeEvents.map((e) => e.item?.content?.[0]?.text ?? "");
+  }
 
   /** Like a real session's socket: events arrive in the async context it was created in. */
   private ctx = new AsyncResource("fake-realtime-session");
@@ -91,7 +108,7 @@ export class FakeSession implements BridgeSession {
   sendUserMessage(t: string) {
     this.userMessages.push(t);
   }
-  submitToolResult(callId: string, result: unknown, options?: { suppressResponse?: boolean }) {
+  submitToolResult(callId: string, result: unknown, options?: { suppressResponse?: boolean; willContinue?: boolean }) {
     this.toolResults.push({ callId, result, options });
   }
   handleBargeIn() {}
@@ -115,6 +132,8 @@ export class FakeSession implements BridgeSession {
     this.params.onTranscript(role, text, true);
   }
 }
+
+export const fakeSecrets: Record<string, string> = {};
 
 /** The SDK's routing helpers, as they behave (checked against 2026.10.3). */
 export const fakeSessionKeys: SessionKeySdk = {
@@ -147,6 +166,8 @@ export function fakeSdk() {
     consultToolsAllow: () => undefined,
     resampler: () => ({ process: (b: Buffer) => b }),
     sessionKeys: fakeSessionKeys,
+    // SecretRefs { source: "store", id } resolve from fakeSecrets.
+    resolveSecretRefs: async (refs: unknown[]) => new Map(refs.map((r: any, i) => [String(i), fakeSecrets[r?.id]])),
   };
   return { sdk, sessions, consults };
 }
@@ -193,3 +214,33 @@ export function fakeApi() {
 
 /** 32 ms of 16 kHz audio */
 export const frame = (v = 1000) => Buffer.alloc(1024, v & 0xff);
+
+/** A decision model whose answers the test sets; records each request's state. */
+export class FakeDecisions {
+  states: any[] = [];
+  answer: { action: string; p?: number; key?: string; reason?: string } = { action: "wait" };
+  async decide(state: unknown) {
+    this.states.push(state);
+    const { action, p = 0.95, key, reason = "goal_done" } = this.answer;
+    const probs = (choice: string, all: string[]) => Object.fromEntries(all.map((c) => [c, c === choice ? p : (1 - p) / (all.length - 1)]));
+    return {
+      action: { choice: action, probabilities: probs(action, ["wait", "press", "hand_off", "hang_up"]) },
+      key: { choice: key ?? "none", probabilities: probs(key ?? "none", ["1", "2", "3", "none"]) },
+      hang_up_reason: { choice: reason, probabilities: probs(reason, ["goal_done", "no_way", "neither"]) },
+    };
+  }
+}
+
+/** A live transcriber the test drives. */
+export class FakeTranscriber {
+  audio: Buffer[] = [];
+  closed = false;
+  handlers?: { onText(delta: string): void; onError(err: Error): void };
+  open = (h: { onText(delta: string): void; onError(err: Error): void }) => {
+    this.handlers = h;
+    return { send: (b: Buffer) => void this.audio.push(b), close: () => void (this.closed = true) };
+  };
+  say(text: string) {
+    this.handlers?.onText(text);
+  }
+}

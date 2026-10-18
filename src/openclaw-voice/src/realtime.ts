@@ -11,6 +11,7 @@ import {
   resolveRealtimeVoiceAgentConsultToolsAllow,
 } from "openclaw/plugin-sdk/realtime-voice";
 import { normalizeAgentId, parseAgentSessionKey } from "openclaw/plugin-sdk/routing";
+import { resolveSecretRefValues } from "openclaw/plugin-sdk/secret-ref-runtime";
 import { canonicalizeMainSessionAlias } from "openclaw/plugin-sdk/session-store-runtime";
 import type { RealtimeSdk } from "./call.js";
 
@@ -24,4 +25,5 @@ export const realtimeSdk: RealtimeSdk = {
   consultToolsAllow: resolveRealtimeVoiceAgentConsultToolsAllow,
   resampler: createStreamingPcmResampler,
   sessionKeys: { normalizeAgentId, parseAgentSessionKey, canonicalizeMainSessionAlias },
+  resolveSecretRefs: resolveSecretRefValues,
 };

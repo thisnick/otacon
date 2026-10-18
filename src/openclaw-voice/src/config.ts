@@ -54,6 +54,8 @@ export interface OtaconVoiceConfig {
   consultThinkingLevel?: ThinkingLevel;
   /** Run consults in the provider's fast mode */
   consultFastMode?: boolean;
+  /** What the voice model says while a consult runs (default "Checking.") */
+  consultFiller: string;
   responseTimeoutMs: number;
   realtime: {
     provider?: string;
@@ -63,6 +65,8 @@ export interface OtaconVoiceConfig {
   };
   /** People the assistant may call during a call (hand-off) */
   contacts: Contact[];
+  /** The phone-menu navigator on calls an agent places (navigator.ts) */
+  menu: MenuConfig;
   /** Longest wait on hold before hanging up and reporting (seconds) */
   holdCapSeconds: number;
   maxCallSeconds: number;
@@ -70,6 +74,34 @@ export interface OtaconVoiceConfig {
 }
 
 const E164 = /^\+[1-9]\d{6,14}$/;
+
+export interface MenuConfig {
+  enabled: boolean;
+  transcription: {
+    /** OpenAI streaming speech-to-text model */
+    model: string;
+    /** gpt-live-transcribe's latency/accuracy trade-off */
+    delay: "minimal" | "low" | "medium" | "high" | "xhigh";
+    /** OpenAI API key (string or SecretRef; default: the realtime provider's) */
+    apiKey?: unknown;
+  };
+  decisions: {
+    /** OpenRouter decision model */
+    model: string;
+    /** OpenRouter API key (string or SecretRef) */
+    apiKey?: unknown;
+  };
+  /** How often the navigator looks at new transcript (seconds) */
+  checkEverySeconds: number;
+  /** Probability needed to press a menu option */
+  pressThreshold: number;
+  /** Probability needed to hand the call to the voice model (a person is speaking) */
+  handOffThreshold: number;
+  /** Probability needed to hang up (goal done, or no way to reach it) */
+  hangUpThreshold: number;
+}
+
+const DELAYS = ["minimal", "low", "medium", "high", "xhigh"] as const;
 
 export function isE164(n: unknown): n is string {
   return typeof n === "string" && E164.test(n);
@@ -114,6 +146,10 @@ export function parseConfig(raw: unknown): { config?: OtaconVoiceConfig; errors:
     contacts.push({ id, name: str(e.name) ?? id, number, description: str(e.description) });
   }
 
+  const menu = obj(c.menu);
+  const transcription = obj(menu.transcription);
+  const decisions = obj(menu.decisions);
+
   const realtime = obj(c.realtime);
   const providers: Record<string, Record<string, unknown>> = {};
   for (const [k, v] of Object.entries(obj(realtime.providers))) providers[k] = obj(v);
@@ -146,9 +182,23 @@ export function parseConfig(raw: unknown): { config?: OtaconVoiceConfig; errors:
       responseModel: str(c.responseModel),
       consultThinkingLevel: c.consultThinkingLevel as ThinkingLevel | undefined,
       consultFastMode: typeof c.consultFastMode === "boolean" ? c.consultFastMode : undefined,
+      consultFiller: typeof c.consultFiller === "string" ? c.consultFiller.trim() : "Checking.",
       responseTimeoutMs: num(c.responseTimeoutMs, 60_000, 5_000, 600_000),
       realtime: { provider: str(realtime.provider), providers, instructions: str(realtime.instructions) },
       contacts,
+      menu: {
+        enabled: menu.enabled !== false,
+        transcription: {
+          model: str(transcription.model) ?? "gpt-live-transcribe",
+          delay: oneOf(transcription.delay, DELAYS, "medium"),
+          apiKey: transcription.apiKey,
+        },
+        decisions: { model: str(decisions.model) ?? "openai/gpt-6-luna-decisions", apiKey: decisions.apiKey },
+        checkEverySeconds: num(menu.checkEverySeconds, 3, 1, 30),
+        pressThreshold: num(menu.pressThreshold, 0.8, 0.5, 1),
+        handOffThreshold: num(menu.handOffThreshold, 0.75, 0.5, 1),
+        hangUpThreshold: num(menu.hangUpThreshold, 0.9, 0.5, 1),
+      },
       holdCapSeconds: num(c.holdCapSeconds, 300, 10, 3600),
       maxCallSeconds: num(c.maxCallSeconds, 1800, 60, 4 * 3600),
       ringTimeoutSeconds: num(c.ringTimeoutSeconds, 45, 10, 120),

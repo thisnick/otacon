@@ -3,6 +3,7 @@
 #
 #   tests/voice/e2e/gateway.sh init     # write its config from fleet.local.json
 #   tests/voice/e2e/gateway.sh install  # build the plugin, install it, (re)start
+#   tests/voice/e2e/gateway.sh secrets  # store the navigator's OpenRouter key in its secret store
 #   tests/voice/e2e/gateway.sh start|stop
 #
 # State lives in $OTACON_VOICE_TEST_HOME (default ~/code/otacon-voice-test),
@@ -41,6 +42,8 @@ cfg = {
     "inboundPolicy": "allowlist", "allowFrom": [fleet.number("phone-3"), fleet.F["ownerNumber"]],
     "toolPolicy": "safe-read-only",
     "realtime": {"provider": "openai", "providers": {"openai": {"model": "gpt-realtime-2.1", "voice": "marin"}}},
+    # The navigator's OpenRouter key is a SecretRef into this gateway's store (`gateway.sh secrets`).
+    "menu": {"decisions": {"apiKey": {"source": "store", "provider": "default", "id": "OTACON_VOICE_OPENROUTER_API_KEY"}}},
     "holdCapSeconds": 300}}}},
 }
 path = sys.argv[1]
@@ -81,6 +84,20 @@ install() {
   (cd "$REPO/src/openclaw-voice" && rm -f ./*.tgz && npm pack --ignore-scripts >/dev/null 2>&1) || exit 1
   cp "$REPO"/src/openclaw-voice/otacon-fleet-openclaw-otacon-voice-*.tgz "$T/home/otacon-voice.tgz"
   stop
+  # OpenClaw checks the config against the plugin installed now, which may
+  # not know newer config keys yet: install without the keys its schema
+  # lacks, then write the config back (init).
+  python3 - "$T/home/.openclaw/openclaw.json" "$T/home/.openclaw/extensions/otacon-voice/openclaw.plugin.json" <<'PY'
+import json, os, sys
+p, manifest = sys.argv[1], sys.argv[2]
+if os.path.exists(manifest):
+    known = json.load(open(manifest))["configSchema"]["properties"].keys()
+    c = json.load(open(p))
+    cfg = c.get("plugins", {}).get("entries", {}).get("otacon-voice", {}).get("config", {})
+    for k in [k for k in cfg if k not in known]:
+        del cfg[k]
+    json.dump(c, open(p, "w"), indent=2)
+PY
   # install needs the gateway's state lease, which lapses a few seconds after a stop.
   for attempt in $(seq 1 12); do
     out=$(run_cli plugins install /home/node/otacon-voice.tgz --force --accept-capabilities 2>&1 | sed -E 's/\x1b\[[0-9;]*m//g')
@@ -90,13 +107,32 @@ install() {
   done
   cmp -s <(tar -xzOf "$T/home/otacon-voice.tgz" package/dist/call.js) "$T/home/.openclaw/extensions/otacon-voice/dist/call.js" \
     || { echo "installed files don't match the package" >&2; exit 1; }
+  init >/dev/null
   start
+}
+
+# The OpenRouter key goes into the gateway's own secret store, read from stdin
+# (never a file or an argument), as in production.
+secrets() {
+  stop
+  for attempt in $(seq 1 12); do
+    if python3 "$HERE/../fleet.py" secret OPENROUTER_API_KEY |
+      docker run --rm -i --network host -u "$(id -u):$(id -g)" -v "$T/home:/home/node" -e HOME=/home/node \
+        --entrypoint node "$IMAGE" /app/dist/index.js secrets store set OTACON_VOICE_OPENROUTER_API_KEY --kind secret --value-file - >/dev/null 2>&1; then
+      echo "stored OTACON_VOICE_OPENROUTER_API_KEY (attempt $attempt)"
+      return 0
+    fi
+    sleep 5
+  done
+  echo "could not store the key" >&2
+  return 1
 }
 
 case "${1:-}" in
   init) init ;;
+  secrets) secrets ;;
   install) install ;;
   start) start ;;
   stop) stop ;;
-  *) echo "usage: $0 init|install|start|stop" >&2; exit 2 ;;
+  *) echo "usage: $0 init|install|secrets|start|stop" >&2; exit 2 ;;
 esac

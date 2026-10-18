@@ -37,6 +37,10 @@
     "TWILIO_AUTH_TOKEN": {
       "item": "<item id>",
       "key": "TWILIO_AUTH_TOKEN"
+    },
+    "OPENROUTER_API_KEY": {
+      "item": "<item id>",
+      "key": "OPENROUTER_API_KEY"
     }
   }
 }

@@ -2,16 +2,18 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, mock, test } from "node:test";
 import { CallMission, type MissionReport } from "../src/call.js";
 import type { Contact } from "../src/config.js";
-import { config, FakeDetector, FakeLink, fakeApi, fakeSdk, frame, settle } from "./fakes.js";
+import { config, FakeDecisions, FakeDetector, FakeLink, FakeTranscriber, fakeApi, fakeSdk, frame, settle } from "./fakes.js";
 
 const BIZ = "+15555550100";
 const NICK: Contact = { id: "nick", name: "Nick", number: "+15555550101" };
 
-beforeEach(() => mock.timers.enable({ apis: ["setTimeout", "Date"] }));
+beforeEach(() => mock.timers.enable({ apis: ["setTimeout", "setInterval", "Date"] }));
 afterEach(() => mock.timers.reset());
 
-function setup(o: { direction?: "outbound" | "inbound"; contacts?: Contact[]; cfg?: Record<string, unknown> } = {}) {
+function setup(o: { direction?: "outbound" | "inbound"; contacts?: Contact[]; cfg?: Record<string, unknown>; menu?: boolean } = {}) {
   const link = new FakeLink();
+  const decisions = new FakeDecisions();
+  const transcriber = new FakeTranscriber();
   const { sdk, sessions, consults } = fakeSdk();
   const { api } = fakeApi();
   const detector = new FakeDetector();
@@ -43,9 +45,10 @@ function setup(o: { direction?: "outbound" | "inbound"; contacts?: Contact[]; cf
     contacts: o.contacts ?? [],
     agentId: "main",
     requesterSessionKey: "agent:main:main",
+    menu: o.menu ? { decisions, openTranscriber: transcriber.open } : undefined,
     onEnd: (r) => reports.push(r),
   });
-  return { m, link, sessions, consults, detector, reports };
+  return { m, link, sessions, consults, detector, reports, decisions, transcriber };
 }
 
 /** Start an outbound call and have it answered. */
@@ -231,4 +234,113 @@ test("inbound: answers the ringing call and greets first", async () => {
   assert.deepEqual(link.cmds[0], { type: "answer", fields: { call: "in1" } });
   assert.equal(sessions.length, 1);
   assert.match(sessions[0].userMessages[0], /Greet the caller/);
+});
+
+// ---- phone-menu navigator ----
+
+/** Let the navigator take its next look at the call. */
+async function navigatorCheck() {
+  mock.timers.tick(3000);
+  await settle();
+}
+
+test("navigator: hears the line, presses menu options and tells the voice model, and sees the voice model's presses", async () => {
+  const { m, s, link, decisions, transcriber } = await connected({ menu: true });
+  assert.match(s.params.instructions, /phone-menu navigator is also listening/);
+  link.emit("audio", frame());
+  assert.equal(transcriber.audio.length, 1, "the line reaches the live transcriber");
+  assert.equal(s.audioIn.length, 1, "and still reaches the voice model");
+
+  decisions.answer = { action: "press", key: "3" };
+  transcriber.say("To make a reservation, press three. ");
+  await navigatorCheck();
+  assert.deepEqual(link.cmds.at(-1), { type: "dtmf", fields: { digits: "3" } });
+  assert.equal(s.bridgeEvents.at(-1).type, "conversation.item.create");
+  assert.equal(s.bridgeEvents.at(-1).item.role, "system");
+  assert.match(s.notes.at(-1)!, /navigator pressed 3 on your behalf/);
+  assert.equal(s.userMessages.length, 0, "notes don't ask the voice model to reply");
+
+  // The menu asks for information: that's the voice model's.
+  decisions.answer = { action: "wait" };
+  transcriber.say("Please enter your phone number. ");
+  await s.tool("send_dtmf", { digits: "5551234" });
+  await navigatorCheck();
+  assert.deepEqual(
+    decisions.states.at(-1).keys_pressed.map((k: any) => `${k.by}:${k.keys}`),
+    ["navigator:3", "assistant:5551234"],
+  );
+  assert.ok(m.report().log.some((e) => e.text === "the navigator pressed 3"));
+  await m.finish("completed");
+  assert.equal(transcriber.closed, true);
+});
+
+test("navigator: hands off when a person speaks; the voice model has the call from then on", async () => {
+  const { m, s, link, decisions, transcriber } = await connected({ menu: true });
+  decisions.answer = { action: "hand_off" };
+  transcriber.say("Hi, this is Marco at Luigi's. How can I help? ");
+  s.transcript("assistant", "Hi Marco, I'd like a table for two.");
+  await navigatorCheck();
+  assert.equal(transcriber.closed, true, "the live transcript stops");
+  assert.match(s.notes.at(-1)!, /a person is on the line\. The call is yours/);
+  assert.equal(decisions.states[0].transcript.at(-1).who, "assistant");
+
+  const checks = decisions.states.length;
+  transcriber.say("Sure, what time? ");
+  link.emit("audio", frame());
+  await navigatorCheck();
+  assert.equal(decisions.states.length, checks, "no more checks after the hand-off");
+  await m.finish("completed");
+});
+
+test("navigator: hangs up when the goal is done, and reports why", async () => {
+  const { s, decisions, transcriber, reports } = await connected({ menu: true });
+  decisions.answer = { action: "hang_up", p: 0.97, reason: "goal_done" };
+  transcriber.say("We are at 1 2 3 Main Street in Oakland. ");
+  await navigatorCheck();
+  await settle();
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].outcome, "completed");
+  assert.match(reports[0].summary!, /navigator hung up: what the line said achieved the goal/);
+  assert.equal(s.closed, true);
+});
+
+test("navigator: on hold it hears the line only while someone speaks", async () => {
+  const { m, s, link, detector, transcriber } = await connected({ menu: true });
+  await s.tool("wait_on_hold");
+  mock.timers.tick(5000); // well past the last speech
+  link.emit("audio", frame());
+  assert.equal(transcriber.audio.length, 0, "hold music isn't transcribed");
+  detector.prob = 0.9; // someone speaks
+  link.emit("audio", frame());
+  await settle();
+  link.emit("audio", frame());
+  assert.ok(transcriber.audio.length >= 1, "speech on hold is");
+  await m.finish("completed");
+});
+
+test("navigator: never on incoming calls", async () => {
+  const { m, transcriber, sessions } = setup({ direction: "inbound", menu: true });
+  m.start();
+  await settle();
+  assert.equal(sessions.length, 1);
+  assert.equal(transcriber.handlers, undefined);
+  assert.doesNotMatch(sessions[0].params.instructions, /phone-menu navigator/);
+  await m.finish("completed");
+});
+
+test("consults get the working response first: the voice model says the filler while the agent works", async () => {
+  const { s, m } = await connected({ cfg: { consultFiller: "One moment." } });
+  await s.tool("openclaw_agent_consult", { question: "What time works?" });
+  const [working, final] = s.toolResults.slice(-2);
+  assert.equal(working.options?.willContinue, true);
+  assert.equal(working.result.status, "working");
+  assert.match(working.result.message, /Say only "One moment\."/);
+  assert.deepEqual(final.result, { text: "Nick prefers 7:30." });
+  await m.finish("completed");
+
+  const plain = await connected();
+  plain.s.continuation = false; // a bridge without interim results
+  await plain.s.tool("openclaw_agent_consult", { question: "What time works?" });
+  assert.equal(plain.s.toolResults.length, 1, "only the answer");
+  await plain.m.finish("completed");
 });

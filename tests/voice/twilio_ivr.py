@@ -1,5 +1,7 @@
-"""Fake restaurant phone menu on Twilio, for testing DTMF and (later) the
-voice plugin's menu navigation and hold handling.
+"""Fake restaurant phone menu on Twilio, for testing DTMF and the voice
+plugin's menu navigation and hold handling. The menu reads its options twice
+with no pause long enough to end a turn, then hold music, then "Marco", the
+host, who talks like a person.
 
   setup   create/update the Studio flow and buy a number pointed at it
   test    phone-2 calls the number, presses 1, 2, 3 over ws/voice/control,
@@ -68,8 +70,12 @@ def say(name, text, nxt, voice=VOICE):
 
 
 def flow_definition():
-    menu_text = ("Thanks for calling Luigi's Trattoria. For our location and hours, press 1. "
-                 "For prices, press 2. To make a reservation, press 3.")
+    # Read twice in one go, like a real menu that never pauses for a turn:
+    # the option a caller needs (reservations) comes in the middle.
+    options = ("For our location and hours, press 1. For prices and today's specials, press 2. "
+               "To make a reservation, press 3. For catering and private events, press 4. "
+               "For gift cards, press 5. To hear these options again, press 9. ")
+    menu_text = "Thanks for calling Luigi's Trattoria, serving Oakland since 1987. " + options + options
     states = [
         {"name": "Trigger", "type": "trigger", "properties": {},
          "transitions": [{"event": "incomingMessage"}, {"event": "incomingCall", "next": "menu"},
