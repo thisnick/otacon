@@ -33,7 +33,14 @@ export const images = [
   { image: "otacon", file: "Dockerfile.otacon", package: "otacon-server" },
   { image: "voice", file: "Dockerfile.voice", package: "otacon-server" },
   { image: "registry", file: "Dockerfile.registry", package: "otacon-registry" },
-  { image: "orchestrator", file: "Dockerfile.orchestrator", package: "orchestrator" },
+  {
+    image: "orchestrator",
+    file: "Dockerfile.orchestrator",
+    package: "orchestrator",
+    // Copied only so `pnpm install --frozen-lockfile` sees the whole
+    // workspace: only their dependencies can change the image.
+    lockfileOnly: ["package.json", "src/openclaw-voice/package.json", "src/server/package.json", "src/registry/package.json"],
+  },
 ];
 
 /** The repo paths an image is built from: its Dockerfile and what it COPYs/ADDs. */

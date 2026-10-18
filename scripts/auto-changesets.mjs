@@ -7,7 +7,8 @@
 // An image's inputs are its Dockerfile and what it copies (repo.mjs).
 // Edits that only move versions don't count: a `version` in package.json or
 // the plugin manifest, a crate's own version in Cargo.toml / Cargo.lock, a
-// CHANGELOG.md.
+// CHANGELOG.md. For a package.json an image copies only for the lockfile
+// (`lockfileOnly` in repo.mjs), only its dependencies count.
 //
 //   node scripts/auto-changesets.mjs [--dry-run]
 import { execFileSync, spawnSync } from "node:child_process";
@@ -42,8 +43,13 @@ function covered(name, seen = new Set()) {
 }
 
 const crateNames = ["otacon-server", "otacon-registry"];
-function withoutVersions(file, text) {
+const DEPENDENCY_FIELDS = ["name", "dependencies", "devDependencies", "optionalDependencies", "peerDependencies", "pnpm"];
+function withoutVersions(file, text, lockfileOnly) {
   const base = path.basename(file);
+  if (lockfileOnly.has(file)) {
+    const j = JSON.parse(text);
+    return JSON.stringify(DEPENDENCY_FIELDS.map((k) => j[k]));
+  }
   if (base === "CHANGELOG.md") return "";
   if (base === "package.json" || base === "openclaw.plugin.json") {
     const j = JSON.parse(text);
@@ -58,11 +64,11 @@ function withoutVersions(file, text) {
   return text;
 }
 
-function realChange(base, file) {
+function realChange(base, file, lockfileOnly) {
   const before = spawnSync("git", ["show", `${base}:${file}`], { cwd: root, encoding: "utf8" });
   const nowPath = path.join(root, file);
   if (before.status !== 0 || !fs.existsSync(nowPath)) return true; // added or removed
-  return withoutVersions(file, before.stdout) !== withoutVersions(file, fs.readFileSync(nowPath, "utf8"));
+  return withoutVersions(file, before.stdout, lockfileOnly) !== withoutVersions(file, fs.readFileSync(nowPath, "utf8"), lockfileOnly);
 }
 
 const owners = [...new Set(images.map((i) => i.package))];
@@ -77,9 +83,11 @@ for (const name of owners) {
     console.log(`${name}: no ${base} tag to compare with; skipping`);
     continue;
   }
-  const inputs = [...new Set(images.filter((i) => i.package === name).flatMap((i) => imageInputs(i.file)))];
+  const own = images.filter((i) => i.package === name);
+  const inputs = [...new Set(own.flatMap((i) => imageInputs(i.file)))];
+  const lockfileOnly = new Set(own.flatMap((i) => i.lockfileOnly ?? []));
   const changed = git("diff", "--name-only", `${base}..HEAD`, "--", ...inputs).split("\n").filter(Boolean);
-  const real = changed.filter((f) => realChange(base, f));
+  const real = changed.filter((f) => realChange(base, f, lockfileOnly));
   if (!real.length) {
     console.log(`${name}: its images are unchanged since ${base}`);
     continue;
