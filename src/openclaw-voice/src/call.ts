@@ -19,6 +19,7 @@ import type {
   resolveConfiguredRealtimeVoiceProvider,
 } from "openclaw/plugin-sdk/realtime-voice";
 import type { Contact, OtaconVoiceConfig } from "./config.js";
+import { callSessionKey, type SessionKeySdk } from "./session.js";
 import { OtaconCommandError, type OtaconCall, type OtaconLink } from "./otacon.js";
 import { SpeechWindow } from "./vad.js";
 
@@ -32,6 +33,7 @@ export interface RealtimeSdk {
   consult: typeof consultRealtimeVoiceAgent;
   consultToolsAllow(policy: string): string[] | undefined;
   resampler(inRate: number, outRate: number): { process(chunk: Buffer): Buffer };
+  sessionKeys: SessionKeySdk;
 }
 
 /** Speech probability per 32 ms window of 16 kHz audio (vad.ts). */
@@ -100,6 +102,8 @@ export interface MissionReport {
   startedAt: number;
   endedAt: number;
   requesterSessionKey?: string;
+  /** The session the call ran in */
+  sessionKey: string;
   agentId: string;
 }
 
@@ -117,6 +121,8 @@ export interface MissionOptions {
   contacts: Contact[];
   agentId: string;
   requesterSessionKey?: string;
+  /** The session to run the call in, from whoever placed it (default: config.sessionScope) */
+  sessionKey?: string;
   onEnd(report: MissionReport): void;
 }
 
@@ -130,6 +136,8 @@ const tool = (name: string, description: string, properties: Record<string, unkn
 export class CallMission {
   readonly id = `oc_${randomUUID().slice(0, 8)}`;
   readonly startedAt = Date.now();
+  /** The session the call runs in: its consults happen there */
+  readonly sessionKey: string;
   private lines: Line[] = [];
   private active: number | null = null;
   private session?: BridgeSession;
@@ -159,6 +167,14 @@ export class CallMission {
   private pendingMerge?: () => void;
 
   constructor(private o: MissionOptions) {
+    this.sessionKey = callSessionKey(o.sdk.sessionKeys, {
+      cfg: o.api.config,
+      agentId: o.agentId,
+      scope: o.config.sessionScope,
+      phone: o.party.number,
+      callId: this.id,
+      explicit: o.sessionKey,
+    });
     this.up = o.sdk.resampler(16000, MODEL_RATE);
     this.down = o.sdk.resampler(MODEL_RATE, 16000);
   }
@@ -317,6 +333,7 @@ export class CallMission {
       startedAt: this.startedAt,
       endedAt: Date.now(),
       requesterSessionKey: this.o.requesterSessionKey,
+      sessionKey: this.sessionKey,
       agentId: this.o.agentId,
     };
   }
@@ -592,7 +609,7 @@ export class CallMission {
       agentRuntime,
       logger: api.logger,
       agentId: this.o.agentId,
-      sessionKey: `agent:${this.o.agentId}:voice:otacon:${this.id}`,
+      sessionKey: this.sessionKey,
       messageProvider: "voice",
       lane: "voice",
       runIdPrefix: `otacon-voice-consult:${this.id}`,

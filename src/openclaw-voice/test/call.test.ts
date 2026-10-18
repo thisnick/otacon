@@ -162,7 +162,9 @@ test("consult asks the agent with the call so far and logs both", async () => {
   s.transcript("user", "What time works for Nick?");
   const r = await s.tool("openclaw_agent_consult", { question: "What time works?" });
   assert.deepEqual(r.result, { text: "Nick prefers 7:30." });
-  assert.equal(consults[0].sessionKey, `agent:main:voice:otacon:${m.id}`);
+  // Per phone by default: every call with this number shares one session.
+  assert.equal(consults[0].sessionKey, "agent:main:voice:15555550100");
+  assert.equal(m.report().sessionKey, "agent:main:voice:15555550100");
   assert.equal(consults[0].spawnedBy, "agent:main:main");
   assert.deepEqual(consults[0].transcript, [{ role: "user", text: "What time works for Nick?" }]);
   assert.ok(m.report().log.some((e) => /the agent answered: Nick prefers 7:30/.test(e.text)));

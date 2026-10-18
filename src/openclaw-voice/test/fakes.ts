@@ -3,6 +3,7 @@
 
 import type { BridgeSession } from "openclaw/plugin-sdk/realtime-voice";
 import type { RealtimeSdk, SpeechDetectorLike } from "../src/call.js";
+import type { SessionKeySdk } from "../src/session.js";
 import { parseConfig, type OtaconVoiceConfig } from "../src/config.js";
 import { OtaconLink, type OtaconCall } from "../src/otacon.js";
 
@@ -112,6 +113,17 @@ export class FakeSession implements BridgeSession {
   }
 }
 
+/** The SDK's routing helpers, as they behave (checked against 2026.10.3). */
+export const fakeSessionKeys: SessionKeySdk = {
+  normalizeAgentId: (id) => id.trim().toLowerCase(),
+  parseAgentSessionKey: (key) => {
+    const m = /^agent:([^:]+):(.+)$/i.exec(key.trim());
+    return m ? { agentId: m[1].toLowerCase(), rest: m[2] } : null;
+  },
+  canonicalizeMainSessionAlias: ({ cfg, sessionKey }) =>
+    (cfg as any)?.session?.scope === "global" && /^agent:[^:]+:main$/.test(sessionKey) ? "global" : sessionKey,
+};
+
 export function fakeSdk() {
   const sessions: FakeSession[] = [];
   const consults: Record<string, any>[] = [];
@@ -131,6 +143,7 @@ export function fakeSdk() {
     },
     consultToolsAllow: () => undefined,
     resampler: () => ({ process: (b: Buffer) => b }),
+    sessionKeys: fakeSessionKeys,
   };
   return { sdk, sessions, consults };
 }

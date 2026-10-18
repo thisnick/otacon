@@ -17,6 +17,8 @@ export interface StartCall {
   contacts?: Contact[];
   agentId: string;
   requesterSessionKey?: string;
+  /** The session to run the call in (default: config.sessionScope) */
+  sessionKey?: string;
 }
 
 export class OtaconVoiceRuntime {
@@ -66,7 +68,15 @@ export class OtaconVoiceRuntime {
     const contacts = [...this.config.contacts, ...(req.contacts ?? [])];
     const known = contacts.find((c) => c.number === req.to);
     const party: Party = { name: req.name?.trim() || known?.name || req.to, number: req.to, role: "primary" };
-    const mission = this.newMission({ direction: "outbound", party, brief: req.brief, contacts, agentId: req.agentId, requesterSessionKey: req.requesterSessionKey });
+    const mission = this.newMission({
+      direction: "outbound",
+      party,
+      brief: req.brief,
+      contacts,
+      agentId: req.agentId,
+      requesterSessionKey: req.requesterSessionKey,
+      sessionKey: req.sessionKey,
+    });
     mission.start();
     return { missionId: mission.id };
   }
@@ -84,6 +94,7 @@ export class OtaconVoiceRuntime {
     contacts: Contact[];
     agentId: string;
     requesterSessionKey?: string;
+    sessionKey?: string;
     inboundCallId?: string;
   }) {
     const mission = new CallMission({

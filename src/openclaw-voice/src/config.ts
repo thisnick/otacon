@@ -2,6 +2,8 @@
 // defaults. Security follows the stock voice-call plugin: inbound calls only
 // from allowFrom, calls bound to an agent and session, consult tool policy.
 
+import type { SessionScope } from "./session.js";
+
 export interface Contact {
   id: string;
   name: string;
@@ -26,6 +28,13 @@ export interface OtaconVoiceConfig {
   };
   /** Agent the calls belong to (default: the requester's, else "main") */
   agentId?: string;
+  /**
+   * The session a call runs in, as in the stock voice-call plugin: one per
+   * phone number (default; calls with the same number share memory), one
+   * per call, or the agent's main session. A caller of otacon_call can name
+   * the session instead.
+   */
+  sessionScope: SessionScope;
   /** Who the assistant acts for, as said on calls */
   ownerName: string;
   assistantName: string;
@@ -126,6 +135,7 @@ export function parseConfig(raw: unknown): { config?: OtaconVoiceConfig; errors:
       enabled: c.enabled !== false,
       otacon: { url: url!, phoneId: phoneId!, takeover: otacon.takeover === true },
       agentId: str(c.agentId),
+      sessionScope: oneOf(c.sessionScope, ["per-phone", "per-call", "main"] as const, "per-phone"),
       ownerName: str(c.ownerName) ?? "my principal",
       assistantName: str(c.assistantName) ?? "an AI assistant",
       inboundPolicy: oneOf(c.inboundPolicy, ["disabled", "allowlist"] as const, "disabled"),

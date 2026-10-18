@@ -43,3 +43,9 @@ test("consult thinking level and fast mode", () => {
   assert.equal(parseConfig(base).config!.consultThinkingLevel, undefined);
   assert.ok(parseConfig({ ...base, consultThinkingLevel: "loud" }).errors[0].includes("consultThinkingLevel"));
 });
+
+test("sessionScope defaults to per-phone", () => {
+  assert.equal(parseConfig(base).config!.sessionScope, "per-phone");
+  assert.equal(parseConfig({ ...base, sessionScope: "per-call" }).config!.sessionScope, "per-call");
+  assert.equal(parseConfig({ ...base, sessionScope: "nope" }).config!.sessionScope, "per-phone");
+});
