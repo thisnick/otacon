@@ -42,6 +42,12 @@ It talks to otacon's `ws/voice/control` socket for one phone (see
 The realtime API key comes from `realtime.providers.openai.apiKey` (a
 SecretRef), an OpenAI auth profile, or `OPENAI_API_KEY`.
 
+Incoming calls belong to `agent:<agentId>:main` unless `inboundSessionKey`
+names another session: the report goes there, and consults during the call
+see that conversation. With `session.dmScope` giving each chat its own
+session, set it to the owner's chat (for example
+`agent:main:whatsapp:direct:+15550002222`) so call reports reach them.
+
 When the voice model consults the agent, the agent answers with
 `responseModel` (default: the agent's model). `consultThinkingLevel` (for
 example `"low"`) and `consultFastMode: true` keep those answers quick while
