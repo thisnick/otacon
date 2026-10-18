@@ -2,6 +2,7 @@
 // phone, the active call mission, inbound call screening, and reporting call
 // outcomes back to the agent session that asked for the call.
 
+import { AsyncResource } from "node:async_hooks";
 import type { PluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import { CallMission, type MissionReport, type Party, type RealtimeSdk, type SpeechDetectorLike } from "./call.js";
 import { isE164, type Contact, type OtaconVoiceConfig } from "./config.js";
@@ -24,6 +25,13 @@ export interface StartCall {
 export class OtaconVoiceRuntime {
   readonly link: OtaconLink;
   private mission?: CallMission;
+  /**
+   * The plugin service's async context, from start(). A call an agent places
+   * runs in it, not in the agent turn that called the tool: OpenClaw closes
+   * a turn's async work scope when the turn ends, and the call's consults
+   * would then fail ("Async work scope is closed").
+   */
+  private home?: AsyncResource;
   private detector: SpeechDetectorLike | null = null;
   private recent: MissionReport[] = [];
 
@@ -40,6 +48,7 @@ export class OtaconVoiceRuntime {
   private createDetector: () => Promise<SpeechDetectorLike | null>;
 
   async start() {
+    this.home = new AsyncResource("otacon-voice.call");
     this.detector = await this.createDetector().catch(() => null);
     if (!this.detector) this.api.logger.warn("[otacon-voice] speech detector unavailable (onnxruntime-node); hold detection falls back to the model");
     this.link.on("call", (msg) => this.onCall(msg));
@@ -77,7 +86,7 @@ export class OtaconVoiceRuntime {
       requesterSessionKey: req.requesterSessionKey,
       sessionKey: req.sessionKey,
     });
-    mission.start();
+    this.home ? this.home.runInAsyncScope(() => mission.start()) : mission.start();
     return { missionId: mission.id };
   }
 

@@ -35,6 +35,13 @@ PERSONAS = {
         "When someone says Nick is joining, wait for him. Only after you hear 'this is Nick', greet him, move the "
         "cleaning to Thursday at 2 PM, confirm it, and say goodbye."
     ),
+    "pharmacy": (
+        "You work at Corner Pharmacy and you're answering the phone. Keep every reply to one or two short sentences. "
+        "Answer with: 'Corner Pharmacy, how can I help you?' Whatever the caller wants, first ask for the patient's "
+        "date of birth: you can't look anyone up without it. If they don't have it, say you'll wait while they find "
+        "it, and keep asking politely. Once you hear a date, say the prescription is ready for pickup, thank them, "
+        "and say goodbye."
+    ),
     "nick-calls": (
         "You are Nick, calling your own phone, which your AI assistant answers. Wait for it to greet you. Then ask: "
         "'Can you check whether I have anything on my calendar tomorrow?' Listen to the answer, react briefly, thank it, "
