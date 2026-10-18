@@ -29,7 +29,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "tsc -p tsconfig.test.json && node --test dist-test/test/*.test.js",
+    "test": "tsc -p tsconfig.test.json && node --test --test-timeout=10000 --test-force-exit dist-test/test/*.test.js",
     "pack": "npm run build && npm pack",
     "prepublishOnly": "npm run build"
   },

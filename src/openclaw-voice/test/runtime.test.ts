@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { test } from "node:test";
 import { OtaconVoiceRuntime } from "../src/runtime.js";
 import { config, FakeLink, fakeApi, fakeSdk, settle } from "./fakes.js";
@@ -24,7 +25,7 @@ function setup(extra: Record<string, unknown> = {}) {
     link,
     createDetector: async () => null,
   });
-  return { rt, link, sessions, events, wakes, consults };
+  return { rt, link, sdk, sessions, events, wakes, consults };
 }
 
 test("inbound: callers not on the allowlist are left ringing", async () => {
@@ -64,6 +65,34 @@ test("inbound: inboundSessionKey gets the report, and consults fork it", async (
   link.call("call.ended", { id: "i1" }, "remote");
   await settle();
   assert.equal(events[0].sessionKey, chat);
+});
+
+test("outbound: a call placed from an agent turn outlives the turn's async scope", async () => {
+  // OpenClaw closes an agent turn's async work scope when the turn ends, and
+  // work still running in it fails. Here the turn's scope is a store.
+  const turn = new AsyncLocalStorage<{ closed: boolean }>();
+  const { rt, link, sdk, sessions } = setup();
+  const consult = sdk.consult;
+  sdk.consult = async (p) => {
+    if (turn.getStore()?.closed) throw new Error("Async work scope is closed");
+    return consult(p);
+  };
+  await rt.start();
+  const scope = { closed: false };
+  await turn.run(scope, () =>
+    rt.startCall({ to: "+15555550100", brief: "Is the prescription ready?", agentId: "main", requesterSessionKey: "agent:main:main" }),
+  );
+  scope.closed = true; // the tool returned and the turn ended
+  await settle();
+  link.call("call.state", { id: "o1", number: "+15555550100", state: "active" }); // they answer
+  await settle();
+  try {
+    const r = await sessions[0].tool("openclaw_agent_consult", { question: "What's Nick's date of birth?" });
+    assert.deepEqual(r.result, { text: "Nick prefers 7:30." });
+  } finally {
+    link.call("call.ended", { id: "o1" }, "remote"); // or its timers keep the test process alive
+    await settle();
+  }
 });
 
 test("outbound: one call at a time; the report goes to the requesting session", async () => {

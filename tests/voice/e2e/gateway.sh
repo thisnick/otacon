@@ -9,6 +9,10 @@
 # outside the repo. Host networking (it reaches the otacon Pi over the tailnet)
 # on port 28789, pinned in its config so its CLI never talks to a live gateway
 # on the default 18789. The OpenAI key comes from fleet.py at start.
+#
+# The plugin uses phone-2 unless OTACON_VOICE_PHONE names another fleet phone
+# (set it for `init`; run.sh reads it too). A live gateway may hold phone-2's
+# voice socket, and then the test gateway can't connect to it.
 set -eu
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../../.." && pwd)"
@@ -32,7 +36,7 @@ cfg = {
   "gateway": {"mode": "local", "bind": "loopback", "port": 28789, "auth": {"mode": "token"}},
   "agents": {"defaults": {"model": {"primary": "openai/gpt-6-luna"}}},
   "plugins": {"allow": ["otacon-voice"], "entries": {"otacon-voice": {"enabled": True, "config": {
-    "otacon": {"url": f"https://{fleet.HOST}", "phoneId": fleet.host_id("phone-2")},
+    "otacon": {"url": f"https://{fleet.HOST}", "phoneId": fleet.host_id(os.environ.get("OTACON_VOICE_PHONE", "phone-2"))},
     "ownerName": "Nick", "assistantName": "Nick's assistant",
     "inboundPolicy": "allowlist", "allowFrom": [fleet.number("phone-3"), fleet.F["ownerNumber"]],
     "toolPolicy": "safe-read-only",
@@ -72,7 +76,9 @@ start() {
 }
 
 install() {
-  (cd "$REPO/src/openclaw-voice" && rm -f ./*.tgz && npm install --no-audit --no-fund >/dev/null && npx tsc -p tsconfig.json && npm pack >/dev/null 2>&1)
+  # The plugin is a pnpm workspace package: build it with pnpm, pack it with npm.
+  (cd "$REPO" && pnpm --filter @otacon-fleet/openclaw-otacon-voice run build >/dev/null) || exit 1
+  (cd "$REPO/src/openclaw-voice" && rm -f ./*.tgz && npm pack --ignore-scripts >/dev/null 2>&1) || exit 1
   cp "$REPO"/src/openclaw-voice/otacon-fleet-openclaw-otacon-voice-*.tgz "$T/home/otacon-voice.tgz"
   stop
   # install needs the gateway's state lease, which lapses a few seconds after a stop.

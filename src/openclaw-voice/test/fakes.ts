@@ -1,3 +1,4 @@
+import { AsyncResource } from "node:async_hooks";
 // Test doubles: an otacon link without a socket, a realtime SDK whose
 // sessions record what they're sent, and a speech detector with a dial.
 
@@ -79,6 +80,8 @@ export class FakeSession implements BridgeSession {
   toolResults: { callId: string; result: any; options?: { suppressResponse?: boolean } }[] = [];
   closed = false;
 
+  /** Like a real session's socket: events arrive in the async context it was created in. */
+  private ctx = new AsyncResource("fake-realtime-session");
   constructor(public params: any) {}
 
   async connect() {}
@@ -99,7 +102,7 @@ export class FakeSession implements BridgeSession {
 
   /** The model calls a tool; resolves when the plugin has handled it. */
   async tool(name: string, args: Record<string, unknown> = {}) {
-    await this.params.onToolCall({ name, args, callId: `${name}-${this.toolResults.length}` }, this);
+    await this.ctx.runInAsyncScope(() => this.params.onToolCall({ name, args, callId: `${name}-${this.toolResults.length}` }, this));
     return this.toolResults[this.toolResults.length - 1];
   }
 
