@@ -1,6 +1,6 @@
 {
   "name": "otacon",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "private": true,
   "description": "Infrastructure-as-code for a Raspberry Pi phone kiosk",
   "packageManager": "pnpm@10.32.1",
