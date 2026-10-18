@@ -135,6 +135,22 @@ export class FakeSession implements BridgeSession {
 
 export const fakeSecrets: Record<string, string> = {};
 
+/** The agent's identity and workspace files for the agent-context tests. */
+export const fakeWorkspace: { identity: Record<string, string>; files: Record<string, string> } = {
+  identity: {},
+  files: {},
+};
+export const fakeAgentContext = {
+  resolveAgentIdentity: () => fakeWorkspace.identity,
+  resolveAgentWorkspaceDir: () => "/workspace",
+  workspaceRoot: async () => ({
+    readText: async (f: string) => {
+      if (!(f in fakeWorkspace.files)) throw new Error(`no ${f}`);
+      return fakeWorkspace.files[f];
+    },
+  }),
+};
+
 /** The SDK's routing helpers, as they behave (checked against 2026.10.3). */
 export const fakeSessionKeys: SessionKeySdk = {
   normalizeAgentId: (id) => id.trim().toLowerCase(),
@@ -168,6 +184,7 @@ export function fakeSdk() {
     sessionKeys: fakeSessionKeys,
     // SecretRefs { source: "store", id } resolve from fakeSecrets.
     resolveSecretRefs: async (refs: unknown[]) => new Map(refs.map((r: any, i) => [String(i), fakeSecrets[r?.id]])),
+    agentContext: fakeAgentContext,
   };
   return { sdk, sessions, consults };
 }

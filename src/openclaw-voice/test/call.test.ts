@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, beforeEach, mock, test } from "node:test";
 import { CallMission, type MissionReport } from "../src/call.js";
 import type { Contact } from "../src/config.js";
-import { config, FakeDecisions, FakeDetector, FakeLink, FakeTranscriber, fakeApi, fakeSdk, frame, settle } from "./fakes.js";
+import { config, fakeWorkspace, FakeDecisions, FakeDetector, FakeLink, FakeTranscriber, fakeApi, fakeSdk, frame, settle } from "./fakes.js";
 
 const BIZ = "+15555550100";
 const NICK: Contact = { id: "nick", name: "Nick", number: "+15555550101" };
@@ -343,4 +343,17 @@ test("consults get the working response first: the voice model says the filler w
   await plain.s.tool("openclaw_agent_consult", { question: "What time works?" });
   assert.equal(plain.s.toolResults.length, 1, "only the answer");
   await plain.m.finish("completed");
+});
+
+test("agent context: the agent's identity and workspace files reach the voice model, when enabled", async () => {
+  fakeWorkspace.identity = { name: "Eta" };
+  fakeWorkspace.files = { "USER.md": "Nick Yu. Phone: <owner number>." };
+  const on = await connected({ cfg: { realtime: { agentContext: { enabled: true } } } });
+  assert.match(on.s.params.instructions, /OpenClaw agent voice context:/);
+  assert.match(on.s.params.instructions, /### USER\.md\nNick Yu/);
+  await on.m.finish("completed");
+
+  const off = await connected();
+  assert.doesNotMatch(off.s.params.instructions, /agent voice context/);
+  await off.m.finish("completed");
 });
