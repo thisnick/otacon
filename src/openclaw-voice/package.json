@@ -1,6 +1,6 @@
 {
   "name": "@otacon-fleet/openclaw-otacon-voice",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "OpenClaw plugin: phone calls through otacon phones, run by a realtime voice model",
   "type": "module",
   "license": "MIT",
