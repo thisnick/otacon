@@ -545,9 +545,7 @@ export class CallMission {
     this.navigator = new MenuNavigator({
       goal: this.o.brief ?? "",
       checkEverySeconds: cfg.checkEverySeconds,
-      pressThreshold: cfg.pressThreshold,
-      handOffThreshold: cfg.handOffThreshold,
-      hangUpThreshold: cfg.hangUpThreshold,
+      threshold: cfg.threshold,
       client: menu.decisions,
       now: () => Date.now() - this.answeredAt,
       press: (keys) => this.navigatorPress(keys),

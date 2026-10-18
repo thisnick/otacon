@@ -244,13 +244,7 @@
           "checkEverySeconds": {
             "type": "number"
           },
-          "pressThreshold": {
-            "type": "number"
-          },
-          "handOffThreshold": {
-            "type": "number"
-          },
-          "hangUpThreshold": {
+          "threshold": {
             "type": "number"
           }
         }

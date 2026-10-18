@@ -66,11 +66,13 @@ to a decision model on OpenRouter (Luna Decisions by default) every
 
 - **Press:** an offered menu option that fits the goal, the moment it's read.
   The voice model gets a silent note.
-- **Hang up:** above `menu.hangUpThreshold` (0.9), when no person is on the
-  line and the goal is done or can't be reached (a loop, closed, not in
-  service).
+- **Hang up:** when no person is on the line and the goal is done or can't be
+  reached (a loop, closed, not in service). Never while on hold.
 - **Hand off:** a person is speaking. The navigator stops for the rest of the
   call.
+
+These are one decision. The chosen action needs probability
+`menu.threshold` (0.6), and a press also needs the key's.
 
 Both models keep the keypad. Information the menu wants typed in (a phone
 number, a date of birth) is the voice model's; each sees the other's
