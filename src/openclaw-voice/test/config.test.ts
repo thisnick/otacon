@@ -49,3 +49,20 @@ test("sessionScope defaults to per-phone", () => {
   assert.equal(parseConfig({ ...base, sessionScope: "per-call" }).config!.sessionScope, "per-call");
   assert.equal(parseConfig({ ...base, sessionScope: "nope" }).config!.sessionScope, "per-phone");
 });
+
+test("the phone-menu navigator and the consult filler: defaults and overrides", () => {
+  const d = parseConfig(base).config!;
+  assert.equal(d.consultFiller, "Checking.");
+  assert.equal(d.menu.enabled, true);
+  assert.equal(d.menu.transcription.model, "gpt-live-transcribe");
+  assert.equal(d.menu.transcription.delay, "medium");
+  assert.equal(d.menu.decisions.model, "openai/gpt-6-luna-decisions");
+  assert.deepEqual([d.menu.checkEverySeconds, d.menu.pressThreshold, d.menu.handOffThreshold, d.menu.hangUpThreshold], [3, 0.8, 0.75, 0.9]);
+  const ref = { source: "store", provider: "default", id: "OTACON_VOICE_OPENROUTER_API_KEY" };
+  const c = parseConfig({ ...base, consultFiller: "", menu: { enabled: false, transcription: { delay: "high" }, decisions: { apiKey: ref }, hangUpThreshold: 0.95 } }).config!;
+  assert.equal(c.consultFiller, "");
+  assert.equal(c.menu.enabled, false);
+  assert.equal(c.menu.transcription.delay, "high");
+  assert.deepEqual(c.menu.decisions.apiKey, ref);
+  assert.equal(c.menu.hangUpThreshold, 0.95);
+});

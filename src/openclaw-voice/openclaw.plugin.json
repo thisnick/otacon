@@ -17,6 +17,14 @@
         {
           "path": "realtime.providers.*.apiKey",
           "expected": "string"
+        },
+        {
+          "path": "menu.decisions.apiKey",
+          "expected": "string"
+        },
+        {
+          "path": "menu.transcription.apiKey",
+          "expected": "string"
         }
       ]
     }
@@ -74,7 +82,11 @@
       },
       "sessionScope": {
         "type": "string",
-        "enum": ["per-phone", "per-call", "main"]
+        "enum": [
+          "per-phone",
+          "per-call",
+          "main"
+        ]
       },
       "inboundSessionKey": {
         "type": "string",
@@ -115,6 +127,9 @@
       },
       "consultFastMode": {
         "type": "boolean"
+      },
+      "consultFiller": {
+        "type": "string"
       },
       "responseTimeoutMs": {
         "type": "number"
@@ -169,6 +184,75 @@
           "required": [
             "number"
           ]
+        }
+      },
+      "menu": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "transcription": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "model": {
+                "type": "string"
+              },
+              "delay": {
+                "type": "string",
+                "enum": [
+                  "minimal",
+                  "low",
+                  "medium",
+                  "high",
+                  "xhigh"
+                ]
+              },
+              "apiKey": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "object"
+                  }
+                ]
+              }
+            }
+          },
+          "decisions": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "model": {
+                "type": "string"
+              },
+              "apiKey": {
+                "oneOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "object"
+                  }
+                ]
+              }
+            }
+          },
+          "checkEverySeconds": {
+            "type": "number"
+          },
+          "pressThreshold": {
+            "type": "number"
+          },
+          "handOffThreshold": {
+            "type": "number"
+          },
+          "hangUpThreshold": {
+            "type": "number"
+          }
         }
       },
       "holdCapSeconds": {

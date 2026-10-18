@@ -4,10 +4,12 @@
 
 import { AsyncResource } from "node:async_hooks";
 import type { PluginApi } from "openclaw/plugin-sdk/plugin-entry";
-import { CallMission, type MissionReport, type Party, type RealtimeSdk, type SpeechDetectorLike } from "./call.js";
+import { CallMission, type MenuDeps, type MissionReport, type Party, type RealtimeSdk, type SpeechDetectorLike } from "./call.js";
 import { isE164, type Contact, type OtaconVoiceConfig } from "./config.js";
 import { OtaconLink } from "./otacon.js";
+import { openRouterDecisions } from "./navigator.js";
 import { formatReport } from "./report.js";
+import { openAiLiveTranscriber } from "./transcriber.js";
 import { SpeechDetector } from "./vad.js";
 
 export interface StartCall {
@@ -39,20 +41,76 @@ export class OtaconVoiceRuntime {
     private api: PluginApi,
     private config: OtaconVoiceConfig,
     private sdk: RealtimeSdk,
-    deps: { link?: OtaconLink; createDetector?: () => Promise<SpeechDetectorLike | null> } = {},
+    deps: { link?: OtaconLink; createDetector?: () => Promise<SpeechDetectorLike | null>; menu?: MenuDeps } = {},
   ) {
     this.link = deps.link ?? new OtaconLink({ ...config.otacon, logger: api.logger });
     this.createDetector = deps.createDetector ?? (() => SpeechDetector.create());
+    this.menu = deps.menu;
   }
 
   private createDetector: () => Promise<SpeechDetectorLike | null>;
+  /** The phone-menu navigator for agent-placed calls; absent when it's off. */
+  private menu?: MenuDeps;
 
   async start() {
     this.home = new AsyncResource("otacon-voice.call");
+    this.menu ??= await this.buildMenu();
     this.detector = await this.createDetector().catch(() => null);
     if (!this.detector) this.api.logger.warn("[otacon-voice] speech detector unavailable (onnxruntime-node); hold detection falls back to the model");
     this.link.on("call", (msg) => this.onCall(msg));
     this.link.start();
+  }
+
+  /**
+   * The navigator's decision model and live transcriber, from the keys in
+   * the plugin config (strings or SecretRefs). Resolved once at start; off
+   * without them.
+   */
+  private async buildMenu(): Promise<MenuDeps | undefined> {
+    const m = this.config.menu;
+    if (!m.enabled) return undefined;
+    const log = this.api.logger;
+    const decisionsKey = await this.secret(m.decisions.apiKey);
+    if (!decisionsKey) {
+      log.info("[otacon-voice] phone-menu navigator off: no OpenRouter key (menu.decisions.apiKey)");
+      return undefined;
+    }
+    // The live transcript uses the realtime voice model's OpenAI key unless it has its own.
+    const sttKey =
+      (await this.secret(m.transcription.apiKey)) ??
+      (await this.secret(this.config.realtime.providers.openai?.apiKey)) ??
+      (process.env.OPENAI_API_KEY?.trim() || undefined);
+    if (!sttKey) {
+      log.info("[otacon-voice] phone-menu navigator off: no OpenAI key for the live transcript");
+      return undefined;
+    }
+    log.info(`[otacon-voice] phone-menu navigator on (${m.decisions.model}; ${m.transcription.model}, delay ${m.transcription.delay})`);
+    const decisions = openRouterDecisions({ apiKey: decisionsKey, model: m.decisions.model });
+    return {
+      decisions,
+      openTranscriber: (handlers) =>
+        openAiLiveTranscriber({
+          apiKey: sttKey,
+          model: m.transcription.model,
+          delay: m.transcription.delay,
+          prompt: "A phone call: an automated phone menu, hold messages, or a person.",
+          ...handlers,
+        }),
+    };
+  }
+
+  /** A config secret: a plain string, or a SecretRef resolved by OpenClaw. */
+  private async secret(value: unknown): Promise<string | undefined> {
+    if (typeof value === "string") return value.trim() || undefined;
+    if (!value || typeof value !== "object") return undefined;
+    try {
+      const values = await this.sdk.resolveSecretRefs([value], { config: this.api.config });
+      const v = [...values.values()][0];
+      return typeof v === "string" && v.trim() ? v.trim() : undefined;
+    } catch (err) {
+      this.api.logger.warn(`[otacon-voice] couldn't resolve a secret: ${String(err).slice(0, 160)}`);
+      return undefined;
+    }
   }
 
   stop() {
@@ -85,6 +143,7 @@ export class OtaconVoiceRuntime {
       agentId: req.agentId,
       requesterSessionKey: req.requesterSessionKey,
       sessionKey: req.sessionKey,
+      menu: this.menu,
     });
     this.home ? this.home.runInAsyncScope(() => mission.start()) : mission.start();
     return { missionId: mission.id };
@@ -104,6 +163,7 @@ export class OtaconVoiceRuntime {
     agentId: string;
     requesterSessionKey?: string;
     sessionKey?: string;
+    menu?: MenuDeps;
     inboundCallId?: string;
   }) {
     const mission = new CallMission({

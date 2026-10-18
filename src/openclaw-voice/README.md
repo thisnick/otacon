@@ -56,10 +56,46 @@ see that conversation. With `session.dmScope` giving each chat its own
 session, set it to the owner's chat (for example
 `agent:main:whatsapp:direct:+15550002222`) so call reports reach them.
 
+## Phone menus
+
+On calls an agent places, a phone-menu navigator listens alongside the voice
+model. A live transcript of the line (OpenAI `gpt-live-transcribe`, which
+keeps pace even with a menu that never pauses) goes, with the call's goal,
+to a decision model on OpenRouter (Luna Decisions by default) every
+`menu.checkEverySeconds` (3):
+
+- **Press:** an offered menu option that fits the goal, the moment it's read.
+  The voice model gets a silent note.
+- **Hang up:** above `menu.hangUpThreshold` (0.9), when no person is on the
+  line and the goal is done or can't be reached (a loop, closed, not in
+  service).
+- **Hand off:** a person is speaking. The navigator stops for the rest of the
+  call.
+
+Both models keep the keypad. Information the menu wants typed in (a phone
+number, a date of birth) is the voice model's; each sees the other's
+presses. Incoming calls don't use the navigator.
+
+The OpenRouter key is required. Store it in OpenClaw's secret store, then
+refer to it from the config:
+
+```sh
+printf %s "$OPENROUTER_API_KEY" | openclaw secrets store set OTACON_VOICE_OPENROUTER_API_KEY --kind secret --value-file -
+```
+
+```json
+"menu": { "decisions": { "apiKey": { "source": "store", "provider": "default", "id": "OTACON_VOICE_OPENROUTER_API_KEY" } } }
+```
+
+The transcript uses the realtime provider's OpenAI key unless
+`menu.transcription.apiKey` names another. `menu.enabled: false` turns the
+navigator off.
+
 When the voice model consults the agent, the agent answers with
 `responseModel` (default: the agent's model). `consultThinkingLevel` (for
 example `"low"`) and `consultFastMode: true` keep those answers quick while
-the other party waits.
+the other party waits. Meanwhile the voice model says `consultFiller`
+("Checking." by default).
 
 ## Third-party
 

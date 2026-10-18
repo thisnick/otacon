@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { test } from "node:test";
 import { OtaconVoiceRuntime } from "../src/runtime.js";
-import { config, FakeLink, fakeApi, fakeSdk, settle } from "./fakes.js";
+import { config, FakeLink, fakeApi, fakeSdk, fakeSecrets, logs, settle } from "./fakes.js";
 
 const ALLOWED = "+15555550102";
 
@@ -113,4 +113,22 @@ test("outbound: one call at a time; the report goes to the requesting session", 
   assert.equal(events[0].sessionKey, "agent:main:chat-1");
   assert.match(events[0].text, /placed to Luigi's \(\+15555550100\) has ended \(no_answer/);
   assert.equal(rt.status(missionId)?.ended, true);
+});
+
+test("the phone-menu navigator: on with an OpenRouter key (a SecretRef) and the realtime OpenAI key; off without the key", async () => {
+  fakeSecrets.OPENROUTER_TEST = "sk-or-test";
+  const on = setup({
+    menu: { decisions: { apiKey: { source: "store", provider: "default", id: "OPENROUTER_TEST" } } },
+    realtime: { providers: { openai: { apiKey: "sk-test" } } },
+  });
+  logs.length = 0;
+  await on.rt.start();
+  assert.ok(logs.some((l) => /phone-menu navigator on \(openai\/gpt-6-luna-decisions; gpt-live-transcribe, delay medium\)/.test(l)), logs.join("\n"));
+  on.rt.stop();
+
+  const off = setup();
+  logs.length = 0;
+  await off.rt.start();
+  assert.ok(logs.some((l) => /navigator off: no OpenRouter key/.test(l)));
+  off.rt.stop();
 });

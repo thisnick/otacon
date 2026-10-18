@@ -84,6 +84,11 @@ declare module "openclaw/plugin-sdk/routing" {
   export function parseAgentSessionKey(key: string): { agentId: string; rest: string } | null;
 }
 
+declare module "openclaw/plugin-sdk/secret-ref-runtime" {
+  /** Values of SecretRefs ({ source, provider, id }), keyed by ref. */
+  export function resolveSecretRefValues(refs: unknown[], options: { config: unknown; env?: NodeJS.ProcessEnv }): Promise<Map<string, unknown>>;
+}
+
 declare module "openclaw/plugin-sdk/session-store-runtime" {
   export function canonicalizeMainSessionAlias(p: { cfg: unknown; agentId: string; sessionKey: string }): string;
 }
@@ -139,6 +144,15 @@ declare module "openclaw/plugin-sdk/realtime-voice" {
     handleBargeIn(options?: { audioPlaybackActive?: boolean; force?: boolean }): void;
     acknowledgeMark(name?: string): void;
     close(options?: { disposition?: "detach" }): void | Promise<void>;
+    /**
+     * The provider's own bridge. Not part of the documented SDK: call.ts uses
+     * it, guarded, for notes the model doesn't reply to (OpenAI's sendEvent)
+     * and for tool-result continuation, as the stock voice-call plugin does.
+     */
+    readonly bridge?: {
+      sendEvent?(event: unknown): void;
+      supportsToolResultContinuation?: boolean;
+    };
   }
   export function createRealtimeVoiceBridgeSession(p: {
     provider: ResolvedProvider["provider"];
