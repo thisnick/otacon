@@ -1,8 +1,8 @@
 name: npm packages
 
 # Checks the packages published to npm (@otacon-fleet/otacon-cli and
-# @otacon-fleet/openclaw-otacon-voice), and that everything in the repo has the
-# same version. Publishing itself happens in release.yml.
+# @otacon-fleet/openclaw-otacon-voice), and that the repo's versions are in
+# step (scripts/sync-versions.mjs). Publishing itself happens in release.yml.
 on:
   pull_request:
     paths: ["src/cli/**", "src/openclaw-voice/**", "pnpm-lock.yaml", "pnpm-workspace.yaml", "**/package.json", "**/Cargo.toml", ".changeset/**", "scripts/*.mjs", ".github/workflows/packages.yml"]
@@ -31,5 +31,5 @@ jobs:
           pnpm --filter @otacon-fleet/openclaw-otacon-voice run test
           pnpm --filter @otacon-fleet/openclaw-otacon-voice run build
           (cd src/openclaw-voice && npm pack --dry-run)
-      - name: One version everywhere
+      - name: Versions in step
         run: node scripts/sync-versions.mjs --check

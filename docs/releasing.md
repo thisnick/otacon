@@ -1,47 +1,66 @@
 # Releasing
 
-Everything in this repo shares one version and is released together. A
-release `v<version>` is:
+Every component in this repo is versioned on one number line. A component
+gets a new version only when it changes, and then it takes the next version
+of the whole repo; components released together get the same version. So a
+component's version names the release that last changed it, and
+`v<version>`, the repo's latest release, is the highest version of them all.
 
-| What | Where |
+| Package (`.changeset`) | Released as |
 |---|---|
 | `@otacon-fleet/otacon-cli` (`src/cli`) | npm |
 | `@otacon-fleet/openclaw-otacon-voice` (`src/openclaw-voice`) | npm |
-| host server image (`Dockerfile.otacon`) | `ghcr.io/thisnick/otacon/otacon:<version>` |
-| modem and eSIM tools image (`Dockerfile.voice`) | `ghcr.io/thisnick/otacon/voice:<version>` |
-| registry image (`Dockerfile.registry`) | `ghcr.io/thisnick/otacon/registry:<version>` |
-| orchestrator image (`Dockerfile.orchestrator`) | `ghcr.io/thisnick/otacon/orchestrator:<version>` |
-| kiosk APK | asset on the `v<version>` GitHub release |
+| `otacon-server` (`src/server`) | images `ghcr.io/thisnick/otacon/otacon` (`Dockerfile.otacon`, with the kiosk APK) and `.../voice` (`Dockerfile.voice`, modem and eSIM tools) |
+| `otacon-registry` (`src/registry`) | image `.../registry` (`Dockerfile.registry`) |
+| `orchestrator` (`src/orchestrator`) | image `.../orchestrator` (`Dockerfile.orchestrator`) |
+| `orchestrator-web` (`src/orchestrator/web`) | part of the orchestrator image |
 
-Images are linux/arm64 (the Pi and the orchestrator VPS). Once a release has
-finished, each image's `:latest` points at it, and Watchtower on the hosts
-deploys it within minutes.
+Images are linux/arm64 (the Pi and the orchestrator VPS) and are tagged with
+their package's version. A release builds only the images whose package
+moved, and moves only their `:latest`. Watchtower on the hosts deploys a new
+`:latest` within minutes, so a container restarts only when its image
+changed. The image–package map lives in `scripts/repo.mjs`.
+
+For example, from everything at 2.1.0: a plugin fix releases v2.1.1 (only
+the plugin moves, to 2.1.1; nothing on the Pi restarts). A server change after
+it releases v2.2.0 (the server moves to 2.2.0, from the highest version; the
+`otacon` and `voice` containers restart). A CLI change then moves the CLI and
+the orchestrator, which bundles it, to the next version.
 
 ## Day to day
 
-1. In a PR, add a changeset: `pnpm changeset`. Pick the package the change
-   is about (`otacon-server` for the host server, `otacon-registry`,
-   `orchestrator`, the CLI or the plugin) and patch/minor/major, then write
-   one line for the changelog. Commit the generated `.changeset/*.md`.
+1. In a PR, add a changeset: `pnpm changeset`. Pick the package the change is
+   about and patch/minor/major, then write one line for the changelog.
+   Commit the generated `.changeset/*.md`. Dependents move too: a CLI
+   changeset also releases the orchestrator.
 2. When it merges, `.github/workflows/release.yml` opens or updates a
-   **Version Packages** PR. Every package moves to the same new version (a
-   changesets "fixed" group), changelogs are written, and
-   `scripts/sync-versions.mjs` copies the version to the repo root, the
-   plugin manifest and the Rust crates.
-3. Merging the Version Packages PR releases that version. On a push to main
-   whose version has no `v<version>` tag yet, the workflow:
-   1. builds every image (pushed as `<image>:<version>`) and the APK
-      (`.github/workflows/build.yml`, on GitHub's ARM runners);
-   2. publishes the npm packages that aren't on npm yet;
-   3. creates the `v<version>` tag and GitHub release (notes from the
-      changelogs, `scripts/release-notes.mjs`) with the APK;
-   4. moves each image's `:latest` to the new version.
+   **Version Packages** PR: new versions for the packages with changesets
+   (a changesets "linked" group), changelogs, and `scripts/sync-versions.mjs`
+   for what changesets doesn't know about. That's the repo root (the highest
+   version), the plugin manifest and the Rust crates (their package's
+   version).
+
+   A change that reaches an image without a changeset still gets released:
+   before building the PR, `scripts/auto-changesets.mjs` adds a patch
+   changeset for any package whose images' inputs changed since its last
+   release. The inputs are the Dockerfile and what it copies; edits that only
+   move a version or a changelog don't count.
+3. Merging the Version Packages PR releases it. On a push to main whose root
+   version has no `v<version>` tag yet, the workflow:
+   1. builds each image whose package version has no image tag yet, pushed
+      as `<image>:<version>` (`.github/workflows/build.yml`, on GitHub's ARM
+      runners), plus the APK with the otacon image;
+   2. publishes the npm packages whose version isn't on npm yet;
+   3. creates the `v<version>` tag and GitHub release, with every
+      component's version, the changelogs (`scripts/release-notes.mjs`) and
+      the APK when it was built;
+   4. moves `:latest` of the images it built.
 
    Any failed step can be re-run from the Actions page; every step is safe
    to repeat.
 
-`node scripts/sync-versions.mjs --check` (also run in CI) fails if any
-version differs.
+`node scripts/sync-versions.mjs --check` (also run in CI) fails if a version
+is out of step.
 
 ## Hosts
 
