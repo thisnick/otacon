@@ -220,13 +220,21 @@ test("call_party only calls allowed contacts", async () => {
   assert.ok(!link.types().includes("hold"));
 });
 
-test("inbound: answers the ringing call and greets first", async () => {
-  const { m, link, sessions } = setup({ direction: "inbound" });
+test("inbound: answers the ringing call and greets first, with the configured greeting", async () => {
+  const { m, link, sessions } = setup({ direction: "inbound", cfg: { inboundGreeting: "I'm the bot, how can I help?" } });
   m.start();
   await settle();
   assert.deepEqual(link.cmds[0], { type: "answer", fields: { call: "in1" } });
   assert.equal(sessions.length, 1);
-  assert.match(sessions[0].userMessages[0], /Greet the caller/);
+  assert.match(sessions[0].userMessages[0], /Include this greeting in your first spoken reply: "I'm the bot, how can I help\?"/);
+  assert.doesNotMatch(sessions[0].userMessages[0], /my principal|an AI assistant/, "no owner or assistant name added");
+  await m.finish("completed");
+
+  const quiet = setup({ direction: "inbound", cfg: { inboundGreeting: "" } });
+  quiet.m.start();
+  await settle();
+  assert.equal(quiet.sessions[0].userMessages.length, 0, "no greeting: it waits for the caller");
+  await quiet.m.finish("completed");
 });
 
 // ---- phone-menu navigator ----

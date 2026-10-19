@@ -66,6 +66,10 @@
       "assistantName": {
         "type": "string"
       },
+      "inboundGreeting": {
+        "type": "string",
+        "description": "Included in the voice model's first words when it answers an incoming call (default \"Hello! How can I help you today?\"; empty: it waits for the caller)"
+      },
       "inboundPolicy": {
         "type": "string",
         "enum": [
