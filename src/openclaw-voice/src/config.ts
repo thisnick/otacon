@@ -42,6 +42,12 @@ export interface OtaconVoiceConfig {
   inboundPolicy: "disabled" | "allowlist";
   allowFrom: string[];
   /**
+   * What the voice model includes in its first words when it answers an
+   * incoming call, as voice-call's inboundGreeting (default "Hello! How can
+   * I help you today?"; "" for no greeting: it waits for the caller).
+   */
+  inboundGreeting: string;
+  /**
    * Session incoming calls belong to: their consults see its conversation and
    * the report goes there (default: agent:<agentId>:main). Set it to the
    * owner's chat when DMs get their own sessions (session.dmScope).
@@ -180,6 +186,7 @@ export function parseConfig(raw: unknown): { config?: OtaconVoiceConfig; errors:
       assistantName: str(c.assistantName) ?? "an AI assistant",
       inboundPolicy: oneOf(c.inboundPolicy, ["disabled", "allowlist"] as const, "disabled"),
       allowFrom,
+      inboundGreeting: typeof c.inboundGreeting === "string" ? c.inboundGreeting.trim() : "Hello! How can I help you today?",
       inboundSessionKey,
       toolPolicy: oneOf(c.toolPolicy, ["safe-read-only", "owner", "none"] as const, "safe-read-only"),
       consultPolicy: oneOf(c.consultPolicy, ["auto", "substantive", "always"] as const, "auto"),

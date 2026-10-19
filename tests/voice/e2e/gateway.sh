@@ -39,7 +39,7 @@ cfg = {
   "plugins": {"allow": ["otacon-voice"], "entries": {"otacon-voice": {"enabled": True, "config": {
     "otacon": {"url": f"https://{fleet.HOST}", "phoneId": fleet.host_id(os.environ.get("OTACON_VOICE_PHONE", "phone-2"))},
     "ownerName": "Nick", "assistantName": "Nick's assistant",
-    "inboundPolicy": "allowlist", "allowFrom": [fleet.number("phone-3"), fleet.F["ownerNumber"]],
+    "inboundPolicy": "allowlist", "allowFrom": [fleet.number("phone-3"), fleet.number("phone-pixel4"), fleet.F["ownerNumber"]],
     "toolPolicy": "safe-read-only",
     "realtime": {"provider": "openai", "providers": {"openai": {"model": "gpt-realtime-2.1", "voice": "marin"}}},
     # The navigator's OpenRouter key is a SecretRef into this gateway's store (`gateway.sh secrets`).

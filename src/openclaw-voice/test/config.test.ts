@@ -50,8 +50,10 @@ test("sessionScope defaults to per-phone", () => {
   assert.equal(parseConfig({ ...base, sessionScope: "nope" }).config!.sessionScope, "per-phone");
 });
 
-test("the phone-menu navigator: defaults and overrides", () => {
+test("the phone-menu navigator and the inbound greeting: defaults and overrides", () => {
   const d = parseConfig(base).config!;
+  assert.equal(d.inboundGreeting, "Hello! How can I help you today?");
+  assert.equal(parseConfig({ ...base, inboundGreeting: " I'm the bot. " }).config!.inboundGreeting, "I'm the bot.");
   assert.equal(d.menu.enabled, true);
   assert.equal(d.menu.transcription.model, "gpt-live-transcribe");
   assert.equal(d.menu.transcription.delay, "medium");

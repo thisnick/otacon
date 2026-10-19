@@ -4,7 +4,7 @@
 #   tests/voice/e2e/run.sh ivr       # agent books a table through the Twilio test menu (hold included)
 #   tests/voice/e2e/run.sh ivr-hold-limit  # same, but the agent gives up after 1 min on hold (outcome hold_cap)
 #   tests/voice/e2e/run.sh handoff   # agent reschedules with a persona "business", brings in persona "Nick"
-#   tests/voice/e2e/run.sh inbound   # persona "Nick" calls phone-2; the plugin answers and consults the agent
+#   tests/voice/e2e/run.sh inbound   # persona "Nick" calls the plugin's phone (from phone-3, or pixel4 when that's phone-3); the plugin answers and consults the agent
 #   tests/voice/e2e/run.sh call-me   # the agent calls the owner (ownerNumber), a real person, to hear the voice
 #   tests/voice/e2e/run.sh consult   # the agent calls a persona pharmacy that asks for something only the agent knows
 #
@@ -70,7 +70,9 @@ case "$1" in
     wait $D $N 2>/dev/null
     ;;
   inbound)
-    py "$HERE/persona.py" --phone phone-3 --persona nick-calls --voice cedar --dial phone-2 --hangup-on-goodbye \
+    PLUGIN_PHONE="${OTACON_VOICE_PHONE:-phone-2}"
+    CALLER=phone-3; [ "$PLUGIN_PHONE" = phone-3 ] && CALLER=phone-pixel4
+    py "$HERE/persona.py" --phone "$CALLER" --persona nick-calls --voice cedar --dial "$PLUGIN_PHONE" --hangup-on-goodbye \
       --log "$RUN/personas.jsonl" > "$RUN/nick.log" 2>&1
     sleep 30
     ;;

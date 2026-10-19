@@ -545,9 +545,11 @@ export class CallMission {
     await this.session.connect();
     this.debug(`realtime session up (${resolved.provider.id})`);
     if (this.o.menu && this.o.direction === "outbound") this.startNavigator(this.o.menu);
-    if (this.o.direction === "inbound") {
-      // We picked up: speak first.
-      this.say(`[You just answered the phone. Greet the caller briefly as ${config.assistantName} answering ${config.ownerName}'s phone, and ask how you can help.]`);
+    if (this.o.direction === "inbound" && config.inboundGreeting) {
+      // We picked up: speak first, as voice-call does.
+      this.say(
+        `[You just answered the phone. Start the call by greeting the caller naturally. Include this greeting in your first spoken reply: "${config.inboundGreeting}"]`,
+      );
     }
   }
 

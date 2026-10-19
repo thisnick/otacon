@@ -23,7 +23,9 @@ realtime voice model, with the OpenClaw agent behind it.
   person has answered, and on incoming calls, aren't handled: `maxCallSeconds`
   ends the call.
 - **Inbound**: with `inboundPolicy: "allowlist"`, calls from `allowFrom` are
-  answered; all others are left ringing.
+  answered; all others are left ringing. The voice model speaks first, its
+  first words including `inboundGreeting` (default "Hello! How can I help
+  you today?", as voice-call; `""`: it waits for the caller).
 
 It talks to otacon's `ws/voice/control` socket for one phone (see
 `docs/voice-ws.md`), which the plugin holds for as long as it runs.
