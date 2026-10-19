@@ -189,11 +189,21 @@ export function fakeSdk() {
   return { sdk, sessions, consults };
 }
 
-/** A detector that reports `prob` for every 32 ms window (1024 bytes) pushed. */
+/** A detector that reports `prob` and `rms` for every 32 ms window (1024 bytes) pushed. */
 export class FakeDetector implements SpeechDetectorLike {
   prob = 0;
-  push(pcm: Buffer, onWindow: (p: number) => void) {
-    for (let i = 0; i + 1024 <= pcm.length; i += 1024) onWindow(this.prob);
+  /** Loudness: music-level by default */
+  rms = 0.05;
+  windows = 0;
+  resets = 0;
+  push(pcm: Buffer, onWindow: (p: number, rms: number) => void) {
+    for (let i = 0; i + 1024 <= pcm.length; i += 1024) {
+      this.windows++;
+      onWindow(this.prob, this.rms);
+    }
+  }
+  reset() {
+    this.resets++;
   }
 }
 
@@ -243,7 +253,7 @@ export class FakeDecisions {
     return {
       action: { choice: action, probabilities: probs(action, ["wait", "press", "hand_off", "hang_up"]) },
       key: { choice: key ?? "none", probabilities: probs(key ?? "none", ["1", "2", "3", "none"]) },
-      hang_up_reason: { choice: reason, probabilities: probs(reason, ["goal_done", "no_way", "neither"]) },
+      hang_up_reason: { choice: reason, probabilities: probs(reason, ["goal_done", "no_way", "hold_limit", "neither"]) },
     };
   }
 }

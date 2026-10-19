@@ -1,6 +1,7 @@
 // Speech detection on the call's incoming audio with Silero VAD (v5, MIT),
-// run locally with onnxruntime. Used for hold: hold music and silence score
-// near 0, speech (live or recorded) near 1. Nothing here leaves the machine.
+// run locally with onnxruntime: hold music and silence score near 0, speech
+// (live or recorded) near 1. The phone-menu navigator uses it to tell a hold
+// (linesound.ts). Nothing here leaves the machine.
 
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,7 +22,8 @@ export function modelPath(): string {
 }
 
 /**
- * Feed 16 kHz pcm_s16le; reports a speech probability per 32 ms window.
+ * Feed 16 kHz pcm_s16le; reports a speech probability and the loudness (RMS,
+ * full scale 1) per 32 ms window.
  * Windows are processed in order; calls are queued so the model's state
  * stays consistent.
  */
@@ -51,8 +53,8 @@ export class SpeechDetector {
     this.pending = new Float32Array(0);
   }
 
-  /** Queue audio; `onWindow(prob)` is called for each full window. */
-  push(pcm16: Buffer, onWindow: (prob: number) => void) {
+  /** Queue audio; `onWindow(prob, rms)` is called for each full window. */
+  push(pcm16: Buffer, onWindow: (prob: number, rms: number) => void) {
     const n = pcm16.length >> 1;
     const f = new Float32Array(this.pending.length + n);
     f.set(this.pending, 0);
@@ -67,6 +69,9 @@ export class SpeechDetector {
     if (!windows.length) return;
     this.chain = this.chain.then(async () => {
       for (const w of windows) {
+        let squares = 0;
+        for (const x of w) squares += x * x;
+        const rms = Math.sqrt(squares / WINDOW);
         const input = new Float32Array(CONTEXT + WINDOW);
         input.set(this.ctx, 0);
         input.set(w, CONTEXT);
@@ -78,34 +83,11 @@ export class SpeechDetector {
             sr: this.sr,
           });
           this.state = r.stateN;
-          onWindow(Number(r.output.data[0]));
+          onWindow(Number(r.output.data[0]), rms);
         } catch {
-          onWindow(0);
+          onWindow(0, rms);
         }
       }
     });
-  }
-}
-
-/**
- * Rolling summary of the last `windows` VAD results: the share that is
- * speech, and whether there is sound at all (music vs silence).
- */
-export class SpeechWindow {
-  private probs: number[] = [];
-  constructor(private size: number) {}
-  add(p: number) {
-    this.probs.push(p);
-    if (this.probs.length > this.size) this.probs.shift();
-  }
-  get full() {
-    return this.probs.length >= this.size;
-  }
-  speechShare(threshold = 0.5): number {
-    if (!this.probs.length) return 0;
-    return this.probs.filter((p) => p > threshold).length / this.probs.length;
-  }
-  clear() {
-    this.probs = [];
   }
 }

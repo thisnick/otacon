@@ -10,7 +10,7 @@ const NICK: Contact = { id: "nick", name: "Nick", number: "+15555550101" };
 beforeEach(() => mock.timers.enable({ apis: ["setTimeout", "setInterval", "Date"] }));
 afterEach(() => mock.timers.reset());
 
-function setup(o: { direction?: "outbound" | "inbound"; contacts?: Contact[]; cfg?: Record<string, unknown>; menu?: boolean } = {}) {
+function setup(o: { direction?: "outbound" | "inbound"; contacts?: Contact[]; cfg?: Record<string, unknown>; menu?: boolean; holdLimitSeconds?: number } = {}) {
   const link = new FakeLink();
   const decisions = new FakeDecisions();
   const transcriber = new FakeTranscriber();
@@ -46,6 +46,7 @@ function setup(o: { direction?: "outbound" | "inbound"; contacts?: Contact[]; cf
     agentId: "main",
     requesterSessionKey: "agent:main:main",
     menu: o.menu ? { decisions, openTranscriber: transcriber.open } : undefined,
+    holdLimitSeconds: o.holdLimitSeconds,
     onEnd: (r) => reports.push(r),
   });
   return { m, link, sessions, consults, detector, reports, decisions, transcriber };
@@ -68,7 +69,7 @@ test("outbound: dials, starts the model on answer, pipes audio both ways", async
   assert.match(s.params.instructions, /Move the cleaning to Thursday 2 PM/);
   assert.deepEqual(
     s.params.tools.map((t: any) => t.name),
-    ["send_dtmf", "wait_on_hold", "end_call", "openclaw_agent_consult"],
+    ["send_dtmf", "end_call", "openclaw_agent_consult"],
   );
   link.emit("audio", frame());
   assert.equal(s.audioIn.length, 1, "phone audio reaches the model");
@@ -114,50 +115,42 @@ test("end_call waits for the goodbye to play, hangs up, reports the note", async
   assert.deepEqual(said, ["Bright Smile Dental: You're all set for Thursday.", "assistant: Thanks, bye!"]);
 });
 
-test("the other side hanging up ends the mission", async () => {
+test("the other side hanging up ends the mission, with what it said last", async () => {
   const { link, reports, s } = await connected();
   link.call("call.ended", { id: "c1" }, "remote");
+  await settle();
+  assert.equal(reports.length, 0, "waits for the last words");
+  assert.equal(s.audioIn.at(-1)!.length, 16000 * 2, "a second of silence ends the voice model's turn");
+  s.transcript("assistant", "Goodbye!"); // its reply to the silence, never played
+  s.transcript("user", "Great, you're all set. Goodbye!");
   await settle();
   assert.equal(reports[0].outcome, "completed");
   assert.ok(s.closed);
   assert.ok(reports[0].log.some((e) => /hung up \(remote\)/.test(e.text)));
+  const said = reports[0].log.filter((e) => e.kind !== "event").map((e) => `${e.who}: ${e.text}`);
+  assert.deepEqual(said, ["Bright Smile Dental: Great, you're all set. Goodbye!"]);
+  assert.match(reports[0].log.at(-1)!.text, /hung up \(remote\)/, "the hang-up is logged after the last words");
 });
 
-test("hold: the model hears nothing until someone speaks, then gets the pre-roll", async () => {
-  const { link, s, detector } = await connected();
-  await s.tool("wait_on_hold");
-  const before = s.audioIn.length;
+test("the other side hanging up with nothing left to say: reported after a short wait", async () => {
+  const { link, reports } = await connected();
+  link.call("call.ended", { id: "c1" }, "remote");
+  await settle();
+  mock.timers.tick(3000);
+  await settle();
+  assert.equal(reports[0].outcome, "completed");
+});
+
+test("hold: the model hears the line throughout, hold music included, and is told only to say it'll hold", async () => {
+  const { link, s, detector, reports } = await connected();
+  assert.match(s.params.instructions, /If someone asks you to hold, say "Sure, I'll hold\." once/);
   detector.prob = 0;
   for (let i = 0; i < 50; i++) link.emit("audio", frame());
-  assert.equal(s.audioIn.length, before, "hold audio never reaches the model");
-  detector.prob = 0.9;
-  for (let i = 0; i < 31; i++) link.emit("audio", frame());
-  assert.ok(s.audioIn.length > before, "woken with pre-roll");
-  const after = s.audioIn.length;
-  link.emit("audio", frame());
-  assert.equal(s.audioIn.length, after + 1, "listening live again");
-});
-
-test("hold cap: hangs up and reports after holdCapSeconds", async () => {
-  const { link, s, reports } = await connected();
-  await s.tool("wait_on_hold");
-  mock.timers.tick(59_000);
+  assert.equal(s.audioIn.length, 50, "hold music reaches the model");
+  assert.equal(detector.windows, 0, "without the navigator, no speech detection");
+  mock.timers.tick(600_000);
   await settle();
-  assert.equal(reports.length, 0);
-  mock.timers.tick(1_000);
-  await settle();
-  assert.equal(reports[0].outcome, "hold_cap");
-  assert.ok(link.types().includes("hangup"));
-});
-
-test("30 s without speech enters hold by itself", async () => {
-  const { link, s, detector } = await connected();
-  detector.prob = 0;
-  mock.timers.tick(31_000);
-  link.emit("audio", frame());
-  const n = s.audioIn.length;
-  link.emit("audio", frame());
-  assert.equal(s.audioIn.length, n, "music no longer reaches the model");
+  assert.equal(reports.length, 0, "no hold limit without the navigator");
 });
 
 test("consult asks the agent with the call so far and logs both", async () => {
@@ -304,17 +297,61 @@ test("navigator: hangs up when the goal is done, and reports why", async () => {
   assert.equal(s.closed, true);
 });
 
-test("navigator: on hold it hears the line only while someone speaks", async () => {
-  const { m, s, link, detector, transcriber } = await connected({ menu: true });
-  await s.tool("wait_on_hold");
-  mock.timers.tick(5000); // well past the last speech
-  link.emit("audio", frame());
-  assert.equal(transcriber.audio.length, 0, "hold music isn't transcribed");
-  detector.prob = 0.9; // someone speaks
-  link.emit("audio", frame());
+test("navigator: hears hold music too, and hangs up past the hold limit", async () => {
+  const { s, link, detector, decisions, transcriber, reports } = await connected({ menu: true });
+  assert.equal(detector.resets, 1, "a fresh detector for the call");
+  detector.prob = 0;
+  // 6 s of hold music and nothing said: the navigator still looks.
+  for (let i = 0; i < 31 * 6; i++) link.emit("audio", frame());
+  assert.equal(transcriber.audio.length, 31 * 6, "hold music is transcribed");
+  decisions.answer = { action: "hang_up", p: 0.95, reason: "hold_limit" };
+  await navigatorCheck();
   await settle();
+  const st = decisions.states.at(-1);
+  assert.equal(st.line_audio.now, "music");
+  assert.equal(st.line_audio.seconds_on_hold, 6);
+  assert.equal(st.hold_limit_seconds, 60);
+  assert.equal(reports[0].outcome, "hold_cap");
+  assert.match(reports[0].summary!, /on hold for longer than 1 min/);
+  assert.ok(link.types().includes("hangup"));
+});
+
+test("navigator: whoever places the call can set its hold limit", async () => {
+  const { m, decisions, transcriber } = await connected({ menu: true, holdLimitSeconds: 900 });
+  transcriber.say("Please hold. ");
+  await navigatorCheck();
+  assert.equal(decisions.states.at(-1).hold_limit_seconds, 900);
+  await m.finish("completed");
+});
+
+test("navigator: 10 s of music stops the line reaching the voice model until someone speaks, then it gets the last 2 s", async () => {
+  const { m, s, link, detector, transcriber } = await connected({ menu: true });
+  detector.prob = 0;
+  for (let i = 0; i < 31 * 10; i++) link.emit("audio", frame());
+  assert.equal(s.audioIn.length, 31 * 10, "the first 10 s reach it");
+  for (let i = 0; i < 31 * 5; i++) link.emit("audio", frame());
+  assert.equal(s.audioIn.length, 31 * 10, "then the music doesn't");
+  assert.equal(transcriber.audio.length, 31 * 15, "the navigator still hears it all");
+  detector.prob = 0.9;
+  for (let i = 0; i < 31; i++) link.emit("audio", frame());
+  // 2 s of 32 ms frames: the latest 62 (the second of speech among them)
+  assert.equal(s.audioIn.length, 31 * 10 + 62, "speech: the last 2 s, then live");
   link.emit("audio", frame());
-  assert.ok(transcriber.audio.length >= 1, "speech on hold is");
+  assert.equal(s.audioIn.length, 31 * 10 + 63);
+  await m.finish("completed");
+});
+
+test("navigator: after the hand-off, no muting and no more speech detection", async () => {
+  const { m, s, link, detector, decisions, transcriber } = await connected({ menu: true });
+  decisions.answer = { action: "hand_off" };
+  transcriber.say("Hi, this is Marco. ");
+  await navigatorCheck();
+  const n = detector.windows;
+  const heard = s.audioIn.length;
+  detector.prob = 0;
+  for (let i = 0; i < 31 * 12; i++) link.emit("audio", frame());
+  assert.equal(detector.windows, n);
+  assert.equal(s.audioIn.length, heard + 31 * 12, "hold music after the hand-off reaches the voice model");
   await m.finish("completed");
 });
 

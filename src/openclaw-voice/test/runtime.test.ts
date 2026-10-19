@@ -47,6 +47,8 @@ test("inbound: allowlisted callers are answered, and the call is reported to mai
   sessions[0].transcript("user", "Hi, it's me");
   link.call("call.ended", { id: "i1" }, "remote");
   await settle();
+  sessions[0].transcript("user", "Bye!"); // the last words the mission waits for
+  await settle();
   assert.equal(events.length, 1);
   assert.equal(events[0].sessionKey, "agent:main:main");
   assert.match(events[0].text, /Incoming call from \+15555550102 ended \(completed/);
@@ -63,6 +65,8 @@ test("inbound: inboundSessionKey gets the report, and consults fork it", async (
   await sessions[0].tool("openclaw_agent_consult", { question: "What's on my calendar?" });
   assert.equal(consults[0].spawnedBy, chat);
   link.call("call.ended", { id: "i1" }, "remote");
+  await settle();
+  sessions[0].transcript("user", "Bye!");
   await settle();
   assert.equal(events[0].sessionKey, chat);
 });
@@ -104,8 +108,10 @@ test("outbound: one call at a time; the report goes to the requesting session", 
     brief: "Book a table",
     agentId: "main",
     requesterSessionKey: "agent:main:chat-1",
+    holdLimitSeconds: 99_999,
   });
   await settle();
+  assert.equal((rt as any).mission.o.holdLimitSeconds, 1800, "a hold limit is capped by the call's");
   await assert.rejects(rt.startCall({ to: "+15555550100", brief: "again", agentId: "main" }), /already in progress/);
   await assert.rejects(rt.startCall({ to: "5551234", brief: "x", agentId: "main" }).catch((e) => Promise.reject(e)), /already in progress|E.164/);
   link.call("call.ended", { id: "o1" }, "failed");

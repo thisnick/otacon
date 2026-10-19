@@ -5,18 +5,23 @@ realtime voice model, with the OpenClaw agent behind it.
 
 - **Agent tool `otacon_call`**: place a call with a goal (`brief`); it runs in
   the background, and when it ends the whole call log (both sides,
-  timestamped, plus events such as keys pressed, hold, lines joined) is
+  timestamped, plus events such as keys pressed and lines joined) is
   delivered to the requesting session as a system message, for the agent to
-  summarize and act on.
+  summarize and act on. When the other side hangs up, the report waits up to
+  3 s for its last words.
+- `otacon_call` takes `holdLimitMinutes` to set how long that call waits on
+  hold (default `holdCapSeconds`, 300 s; at most `maxCallSeconds`, 1800 s).
 - **On the call** the voice model can press keys (`send_dtmf`, sent over
-  Bluetooth HFP as `AT+VTS`), wait on hold (`wait_on_hold`), consult the
-  agent (`openclaw_agent_consult`), end the call with a summary, and, when
+  Bluetooth HFP as `AT+VTS`), consult the agent (`openclaw_agent_consult`), end the call with a summary, and, when
   contacts are allowed, bring a person in on a second line and join the
   lines (`call_party`, `switch_line`, `connect_lines`, `drop_line`).
-- **Hold**: while holding, the model hears nothing (hold music never reaches
-  it). A local speech detector (Silero VAD, run with onnxruntime) wakes it
-  with ~2 s of pre-roll when someone speaks. 30 s without speech enters hold
-  on its own. `holdCapSeconds` (default 300) hangs up and reports.
+- **Hold**: asked to hold, the voice model says "Sure, I'll hold." Holds are
+  handled on calls an agent places, while the phone-menu navigator listens
+  (see Phone menus): it times the hold and hangs up past the limit, and
+  after 10 s of hold music the voice model stops hearing the line until
+  someone speaks (it would otherwise talk through the music). Holds after a
+  person has answered, and on incoming calls, aren't handled: `maxCallSeconds`
+  ends the call.
 - **Inbound**: with `inboundPolicy: "allowlist"`, calls from `allowFrom` are
   answered; all others are left ringing.
 
@@ -79,9 +84,19 @@ to a decision model on OpenRouter (Luna Decisions by default) every
 - **Press:** an offered menu option that fits the goal, the moment it's read.
   The voice model gets a silent note.
 - **Hang up:** when no person is on the line and the goal is done or can't be
-  reached (a loop, closed, not in service). Never while on hold.
-- **Hand off:** a person is speaking. The navigator stops for the rest of the
-  call.
+  reached (a loop, closed, not in service), or the call has been on hold
+  longer than its hold limit.
+- **Hand off:** the line waits for a spoken answer: someone asks how they can
+  help, or just says hello. A greeting or welcome alone isn't one. The
+  navigator stops for the rest of the call.
+
+A local speech detector (Silero VAD, run with onnxruntime) tells the
+navigator, second by second, whether the line plays speech, music or
+silence, and how long the call has been on hold (since the line went to
+music or silence after the last key press; recorded messages in between
+count). While music or silence plays, the navigator looks when it begins and
+every 15 s. Ten seconds without speech mutes the line to the voice model;
+the first second of speech unmutes it, with the last 2 s replayed.
 
 These are one decision. The chosen action needs probability
 `menu.threshold` (0.6), and a press also needs the key's.
