@@ -1,5 +1,11 @@
 # @otacon-fleet/openclaw-otacon-voice
 
+## 2.6.0
+
+### Minor Changes
+
+- a8165a6: New `inboundGreeting` setting, as in voice-call: the voice model's first words on an incoming call include it (default "Hello! How can I help you today?"; empty: it waits for the caller). The built-in greeting that named the assistant and the owner ("…answering Nick's phone") is gone.
+
 ## 2.5.1
 
 ### Patch Changes
