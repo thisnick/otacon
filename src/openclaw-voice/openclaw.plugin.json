@@ -1,7 +1,7 @@
 {
   "id": "otacon-voice",
   "name": "Otacon Voice",
-  "description": "Phone calls through an otacon phone, run by a realtime voice model.",
+  "description": "Phone calls through otacon phones and Twilio numbers, run by a realtime voice model.",
   "version": "2.6.0",
   "activation": {
     "onStartup": true
@@ -25,6 +25,10 @@
         {
           "path": "menu.transcription.apiKey",
           "expected": "string"
+        },
+        {
+          "path": "lines.*.authToken",
+          "expected": "string"
         }
       ]
     }
@@ -36,26 +40,73 @@
       "enabled": {
         "type": "boolean"
       },
-      "otacon": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "url": {
-            "type": "string",
-            "description": "otacon host base URL, e.g. https://otacon-pi.example.ts.net:8080"
+      "lines": {
+        "type": "array",
+        "minItems": 1,
+        "description": "The phone lines: otacon phones and Twilio numbers",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "description": "What the agent picks with otacon_call's line, e.g. sim or twilio"
+            },
+            "provider": {
+              "type": "string",
+              "enum": [
+                "otacon",
+                "twilio"
+              ]
+            },
+            "number": {
+              "type": "string",
+              "description": "The line's number (E.164), shown to the agent; Twilio lines use fromNumber"
+            },
+            "url": {
+              "type": "string",
+              "description": "otacon host base URL, e.g. https://otacon-pi.example.ts.net:8080"
+            },
+            "phoneId": {
+              "type": "string",
+              "description": "host phone id, e.g. phone-r5ct60sd"
+            },
+            "takeover": {
+              "type": "boolean"
+            },
+            "accountSid": {
+              "type": "string",
+              "description": "Twilio account SID"
+            },
+            "authToken": {
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "object"
+                }
+              ],
+              "description": "Twilio auth token: a string or a SecretRef"
+            },
+            "fromNumber": {
+              "type": "string",
+              "description": "The Twilio number (E.164) calls come from and to"
+            },
+            "publicUrl": {
+              "type": "string",
+              "description": "Where Twilio reaches this line's routes, which the gateway serves at /otacon-voice/twilio/<id>, e.g. https://host.ts.net/otacon-voice/twilio/<id>"
+            }
           },
-          "phoneId": {
-            "type": "string",
-            "description": "host phone id, e.g. phone-r5ct60sd"
-          },
-          "takeover": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "url",
-          "phoneId"
-        ]
+          "required": [
+            "id",
+            "provider"
+          ]
+        }
+      },
+      "defaultLine": {
+        "type": "string",
+        "description": "The line calls go out on unless otacon_call names one (default: the first)"
       },
       "agentId": {
         "type": "string"
@@ -286,7 +337,7 @@
       }
     },
     "required": [
-      "otacon"
+      "lines"
     ]
   }
 }

@@ -208,7 +208,7 @@ export class FakeDetector implements SpeechDetectorLike {
 }
 
 export function config(extra: Record<string, unknown> = {}): OtaconVoiceConfig {
-  const { config } = parseConfig({ otacon: { url: "https://otacon.test:8080", phoneId: "phone-test" }, ...extra });
+  const { config } = parseConfig({ lines: [{ id: "sim", provider: "otacon", url: "https://otacon.test:8080", phoneId: "phone-test" }], ...extra });
   return config!;
 }
 

@@ -2,12 +2,13 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { parseConfig } from "../src/config.js";
 
-const base = { otacon: { url: "https://pi.example:8080/", phoneId: "phone-x" } };
+const base = { lines: [{ id: "sim", provider: "otacon", url: "https://pi.example:8080/", phoneId: "phone-x" }] };
 
 test("defaults", () => {
   const { config, errors } = parseConfig(base);
   assert.deepEqual(errors, []);
-  assert.equal(config!.otacon.url, "https://pi.example:8080");
+  assert.deepEqual(config!.lines, [{ id: "sim", provider: "otacon", url: "https://pi.example:8080", phoneId: "phone-x", takeover: false, number: undefined }]);
+  assert.equal(config!.defaultLine, "sim");
   assert.equal(config!.inboundPolicy, "disabled");
   assert.equal(config!.toolPolicy, "safe-read-only");
   assert.equal(config!.holdCapSeconds, 300);
@@ -16,7 +17,8 @@ test("defaults", () => {
 });
 
 test("required and invalid fields", () => {
-  assert.deepEqual(parseConfig({}).errors, ["otacon.url is required", "otacon.phoneId is required"]);
+  assert.deepEqual(parseConfig({}).errors, ["lines: at least one line is required"]);
+  assert.deepEqual(parseConfig({ lines: [{ id: "sim", provider: "otacon" }] }).errors, ["lines[0] (sim).url is required", "lines[0] (sim).phoneId is required"]);
   const r = parseConfig({ ...base, allowFrom: ["5551234"], contacts: { a: { number: "123" } } });
   assert.equal(r.config, undefined);
   assert.ok(r.errors.some((e) => e.includes("allowFrom")));
@@ -71,4 +73,21 @@ test("agent context: off by default, voice-call's files and size when on", () =>
   assert.equal(parseConfig(base).config!.realtime.agentContext.enabled, false);
   const c = parseConfig({ ...base, realtime: { agentContext: { enabled: true } } }).config!.realtime.agentContext;
   assert.deepEqual(c, { enabled: true, includeIdentity: true, includeWorkspaceFiles: true, files: ["SOUL.md", "IDENTITY.md", "USER.md"], maxChars: 6000 });
+});
+
+test("lines: otacon and Twilio, the default, and their errors", () => {
+  const tw = { id: "tw", provider: "twilio", accountSid: "AC1", authToken: { source: "store", provider: "default", id: "T" }, fromNumber: "+15550009999", publicUrl: "https://gw.example/otacon-voice/twilio/tw/" };
+  const c = parseConfig({ lines: [base.lines[0], tw], defaultLine: "tw" }).config!;
+  assert.equal(c.defaultLine, "tw");
+  assert.deepEqual(c.lines[1], { ...tw, publicUrl: "https://gw.example/otacon-voice/twilio/tw", number: "+15550009999" });
+  assert.deepEqual(parseConfig({ lines: [base.lines[0]], defaultLine: "nope" }).errors, ["defaultLine: no line nope"]);
+  assert.deepEqual(parseConfig({ lines: [base.lines[0], base.lines[0]] }).errors, ["lines[1] (sim): duplicate id"]);
+  const bad = parseConfig({ lines: [{ id: "tw", provider: "twilio", fromNumber: "555", publicUrl: "http://x" }, { id: "x", provider: "sip" }] }).errors;
+  assert.deepEqual(bad, [
+    "lines[0] (tw).accountSid is required",
+    "lines[0] (tw).authToken is required",
+    "lines[0] (tw).fromNumber must be E.164",
+    "lines[0] (tw).publicUrl must be an https URL",
+    'lines[1] (x).provider must be "otacon" or "twilio"',
+  ]);
 });

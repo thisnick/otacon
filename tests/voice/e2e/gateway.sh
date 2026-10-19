@@ -14,6 +14,12 @@
 # The plugin uses phone-2 unless OTACON_VOICE_PHONE names another fleet phone
 # (set it for `init`; run.sh reads it too). A live gateway may hold phone-2's
 # voice socket, and then the test gateway can't connect to it.
+#
+# OTACON_VOICE_LINES picks the plugin's lines, comma-separated: "phone" (the
+# fleet phone above, line id "sim"), "twilio" (line id "tw": the number,
+# account and public URL in fleet.local.json's twilioLine; its auth token in
+# the store, `gateway.sh secrets`). Default: "phone". The first is the
+# default line.
 set -eu
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../../.." && pwd)"
@@ -33,11 +39,21 @@ init() {
 import json, os, sys
 sys.path.insert(0, os.path.join(os.environ["HERE_DIR"], ".."))
 import fleet
+lines = []
+for name in os.environ.get("OTACON_VOICE_LINES", "phone").split(","):
+    if name == "phone":
+        lines.append({"id": "sim", "provider": "otacon", "url": f"https://{fleet.HOST}",
+                      "phoneId": fleet.host_id(os.environ.get("OTACON_VOICE_PHONE", "phone-2")), "takeover": True})
+    elif name == "twilio":
+        tl = fleet.F["twilioLine"]
+        lines.append({"id": "tw", "provider": "twilio", "accountSid": fleet.secret("TWILIO_ACCOUNT_SID"),
+                      "authToken": {"source": "store", "provider": "default", "id": "OTACON_VOICE_TWILIO_AUTH_TOKEN"},
+                      "fromNumber": tl["number"], "publicUrl": tl["publicUrl"]})
 cfg = {
   "gateway": {"mode": "local", "bind": "loopback", "port": 28789, "auth": {"mode": "token"}},
   "agents": {"defaults": {"model": {"primary": "openai/gpt-6-luna"}}},
   "plugins": {"allow": ["otacon-voice"], "entries": {"otacon-voice": {"enabled": True, "config": {
-    "otacon": {"url": f"https://{fleet.HOST}", "phoneId": fleet.host_id(os.environ.get("OTACON_VOICE_PHONE", "phone-2"))},
+    "lines": lines,
     "ownerName": "Nick", "assistantName": "Nick's assistant",
     "inboundPolicy": "allowlist", "allowFrom": [fleet.number("phone-3"), fleet.number("phone-pixel4"), fleet.F["ownerNumber"]],
     "toolPolicy": "safe-read-only",
@@ -84,20 +100,12 @@ install() {
   (cd "$REPO/src/openclaw-voice" && rm -f ./*.tgz && npm pack --ignore-scripts >/dev/null 2>&1) || exit 1
   cp "$REPO"/src/openclaw-voice/otacon-fleet-openclaw-otacon-voice-*.tgz "$T/home/otacon-voice.tgz"
   stop
-  # OpenClaw checks the config against the plugin installed now, which may
-  # not know newer config keys yet: install without the keys its schema
-  # lacks, then write the config back (init).
-  python3 - "$T/home/.openclaw/openclaw.json" "$T/home/.openclaw/extensions/otacon-voice/openclaw.plugin.json" <<'PY'
-import json, os, sys
-p, manifest = sys.argv[1], sys.argv[2]
-if os.path.exists(manifest):
-    known = json.load(open(manifest))["configSchema"]["properties"].keys()
-    c = json.load(open(p))
-    cfg = c.get("plugins", {}).get("entries", {}).get("otacon-voice", {}).get("config", {})
-    for k in [k for k in cfg if k not in known]:
-        del cfg[k]
-    json.dump(c, open(p, "w"), indent=2)
-PY
+  # OpenClaw checks the config against both the installed plugin's schema
+  # and the new one's, so a version that changes the schema (3.0's lines)
+  # can't install over the old one: uninstall first (its config is valid
+  # for it), install (it stays off until configured), then write the config
+  # (init) and enable it.
+  run_cli plugins uninstall otacon-voice --force >/dev/null 2>&1 || true
   # install needs the gateway's state lease, which lapses a few seconds after a stop.
   for attempt in $(seq 1 12); do
     out=$(run_cli plugins install /home/node/otacon-voice.tgz --force --accept-capabilities 2>&1 | sed -E 's/\x1b\[[0-9;]*m//g')
@@ -113,19 +121,23 @@ PY
 
 # The OpenRouter key goes into the gateway's own secret store, read from stdin
 # (never a file or an argument), as in production.
-secrets() {
-  stop
+store() { # <store entry> <fleet secret>
   for attempt in $(seq 1 12); do
-    if python3 "$HERE/../fleet.py" secret OPENROUTER_API_KEY |
+    if python3 "$HERE/../fleet.py" secret "$2" |
       docker run --rm -i --network host -u "$(id -u):$(id -g)" -v "$T/home:/home/node" -e HOME=/home/node \
-        --entrypoint node "$IMAGE" /app/dist/index.js secrets store set OTACON_VOICE_OPENROUTER_API_KEY --kind secret --value-file - >/dev/null 2>&1; then
-      echo "stored OTACON_VOICE_OPENROUTER_API_KEY (attempt $attempt)"
+        --entrypoint node "$IMAGE" /app/dist/index.js secrets store set "$1" --kind secret --value-file - >/dev/null 2>&1; then
+      echo "stored $1 (attempt $attempt)"
       return 0
     fi
     sleep 5
   done
-  echo "could not store the key" >&2
+  echo "could not store $1" >&2
   return 1
+}
+
+secrets() {
+  stop
+  store OTACON_VOICE_OPENROUTER_API_KEY OPENROUTER_API_KEY && store OTACON_VOICE_TWILIO_AUTH_TOKEN TWILIO_AUTH_TOKEN
 }
 
 case "${1:-}" in

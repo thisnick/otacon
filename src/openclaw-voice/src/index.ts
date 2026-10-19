@@ -1,12 +1,19 @@
 import { definePluginEntry, type PluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import { jsonResult } from "openclaw/plugin-sdk/tool-results";
-import { isE164, parseConfig, type Contact } from "./config.js";
+import { isE164, parseConfig, type Contact, type OtaconVoiceConfig } from "./config.js";
+import type { IncomingMessage } from "node:http";
 import { realtimeSdk } from "./realtime.js";
 import { OtaconVoiceRuntime } from "./runtime.js";
 
 const TOOL_NAME = "otacon_call";
 
-const toolParameters = (config: { holdCapSeconds: number; maxCallSeconds: number }) => ({
+const describeLine = (l: OtaconVoiceConfig["lines"][number]) =>
+  `${l.id}${l.number ? ` (${l.number})` : ""}: ${l.provider === "otacon" ? "a phone with a SIM" : "a Twilio number"}`;
+
+/** Where the Twilio lines' routes live in the gateway: <prefix>/<line id>/<answer|status|stream>. */
+const TWILIO_ROUTES = "/otacon-voice/twilio";
+
+const toolParameters = (config: OtaconVoiceConfig) => ({
   type: "object",
   additionalProperties: false,
   properties: {
@@ -45,6 +52,15 @@ const toolParameters = (config: { holdCapSeconds: number; maxCallSeconds: number
       type: "number",
       description: `call: how long to wait on hold before hanging up, in minutes (default ${minutes(config.holdCapSeconds)}; at most ${minutes(config.maxCallSeconds)}, the limit for the whole call). Holds are timed until a person answers.`,
     },
+    ...(config.lines.length > 1
+      ? {
+          line: {
+            type: "string",
+            enum: config.lines.map((l) => l.id),
+            description: `call: the line to call from (default ${config.defaultLine}). ${config.lines.map(describeLine).join("; ")}`,
+          },
+        }
+      : {}),
     callId: { type: "string", description: "end: the call id returned by call" },
   },
   required: ["action"],
@@ -60,7 +76,7 @@ function agentFromSessionKey(key?: string): string | undefined {
 export default definePluginEntry({
   id: "otacon-voice",
   name: "Otacon Voice",
-  description: "Phone calls through an otacon phone, run by a realtime voice model.",
+  description: "Phone calls through otacon phones and Twilio numbers, run by a realtime voice model.",
   configSchema: {
     parse(value: unknown) {
       const { config, errors } = parseConfig(value);
@@ -85,6 +101,7 @@ export default definePluginEntry({
       requesterSessionKey?: string;
       sessionKey?: string;
       holdLimitMinutes?: number;
+      line?: string;
     }) => {
       if (!runtime) throw new Error("otacon-voice is not running in this process");
       const hold = args.holdLimitMinutes;
@@ -103,6 +120,7 @@ export default definePluginEntry({
         requesterSessionKey: args.requesterSessionKey,
         sessionKey: args.sessionKey,
         holdLimitSeconds: hold === undefined ? undefined : hold * 60,
+        line: args.line,
       });
     };
 
@@ -123,6 +141,7 @@ export default definePluginEntry({
               contacts: p.contacts,
               sessionKey: p.sessionKey,
               holdLimitMinutes: p.holdLimitMinutes,
+              line: p.line,
               agentId: ctx.agentId,
               requesterSessionKey: ctx.sessionKey,
             });
@@ -163,6 +182,38 @@ export default definePluginEntry({
       { scope: "operator.read" },
     );
 
+    // Twilio lines: their webhooks and media streams, on the gateway. Twilio
+    // signs what it sends; the routes check that themselves (auth "plugin").
+    if (config.lines.some((l) => l.provider === "twilio")) {
+      const route = (req: IncomingMessage) => {
+        const url = new URL(req.url ?? "/", "http://gateway");
+        const m = url.pathname.match(new RegExp(`^${TWILIO_ROUTES}/([^/]+)/([a-z]+)$`));
+        const line = m ? runtime?.twilio(m[1]) : undefined;
+        return line && m ? { line, path: m[2], query: url.search } : undefined;
+      };
+      api.registerHttpRoute({
+        path: TWILIO_ROUTES,
+        match: "prefix",
+        auth: "plugin",
+        handler: async (req, res) => {
+          const r = route(req);
+          if (!r || r.path === "stream") {
+            res.statusCode = r ? 426 : 404;
+            res.end();
+            return true;
+          }
+          await r.line.handleHttp(r.path, r.query, req, res);
+          return true;
+        },
+        handleUpgrade: (req, socket, head) => {
+          const r = route(req);
+          if (!r || r.path !== "stream") return false;
+          r.line.handleUpgrade(req, socket, head);
+          return true;
+        },
+      });
+    }
+
     api.registerService({
       id: "otacon-voice",
       async start(ctx) {
@@ -171,7 +222,7 @@ export default definePluginEntry({
         runtime = new OtaconVoiceRuntime(api, config, realtimeSdk);
         try {
           await runtime.start();
-          api.logger.info(`[otacon-voice] running on ${config.otacon.phoneId}`);
+          api.logger.info(`[otacon-voice] running on ${runtime.lines.map((l) => l.label).join(", ")}`);
         } catch (err) {
           ctx.serviceHealth?.reportFailure(err);
         }

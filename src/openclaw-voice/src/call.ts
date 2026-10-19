@@ -1,8 +1,9 @@
 // One call "mission": a realtime voice session that talks on an otacon phone,
 // across every line it has (the first party, and anyone it brings in).
 //
-// Audio: otacon downlink (16 kHz) -> resample -> realtime model (24 kHz);
-// model audio -> resample -> otacon uplink. Barge-in clears otacon's queue.
+// Audio: the line's downlink (16 kHz) -> resample -> realtime model (24 kHz);
+// model audio -> resample -> the line's uplink. Barge-in clears the line's
+// queue. The line is an otacon phone or a Twilio number (line.ts).
 // On calls an agent places, while the phone-menu navigator listens: after
 // 10 s without speech (hold music) the model stops hearing the line until
 // someone speaks, and the navigator times the hold and hangs up past the
@@ -25,7 +26,7 @@ import { buildAgentContext, type AgentContextSdk } from "./context.js";
 import { MenuNavigator, type DecisionClient, type HangUpReason } from "./navigator.js";
 import { callSessionKey, type SessionKeySdk } from "./session.js";
 import type { Transcriber } from "./transcriber.js";
-import { OtaconCommandError, type OtaconCall, type OtaconLink } from "./otacon.js";
+import { LineError, type LineCall, type LineLink } from "./line.js";
 
 /** The parts of the realtime-voice SDK a call uses (see realtime.ts); tests pass fakes. */
 export interface RealtimeSdk {
@@ -106,7 +107,7 @@ interface Line {
   n: number;
   callId: string;
   party: Party;
-  state: OtaconCall["state"];
+  state: LineCall["state"];
 }
 
 export interface MissionReport {
@@ -124,12 +125,16 @@ export interface MissionReport {
   /** The session the call ran in */
   sessionKey: string;
   agentId: string;
+  /** The line the call was on */
+  line: { id: string; number?: string };
 }
 
 export interface MissionOptions {
   api: PluginApi;
   config: OtaconVoiceConfig;
-  link: OtaconLink;
+  link: LineLink;
+  /** The line the call is on */
+  line: { id: string; number?: string };
   sdk: RealtimeSdk;
   detector: SpeechDetectorLike | null;
   direction: "outbound" | "inbound";
@@ -264,7 +269,7 @@ export class CallMission {
     }
   }
 
-  private addLine(call: OtaconCall, party: Party): Line {
+  private addLine(call: LineCall, party: Party): Line {
     const line = { n: this.lines.length + 1, callId: call.id, party, state: call.state };
     this.lines.push(line);
     return line;
@@ -400,6 +405,7 @@ export class CallMission {
       requesterSessionKey: this.o.requesterSessionKey,
       sessionKey: this.sessionKey,
       agentId: this.o.agentId,
+      line: this.o.line,
     };
   }
 
@@ -782,7 +788,7 @@ export class CallMission {
           return reply({ error: `unknown tool ${ev.name}` });
       }
     } catch (err) {
-      const msg = err instanceof OtaconCommandError ? err.message : String(err);
+      const msg = err instanceof LineError ? err.message : String(err);
       this.debug(`tool ${ev.name} failed: ${msg}`);
       return reply({ error: msg });
     }
