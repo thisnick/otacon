@@ -55,8 +55,6 @@ export interface OtaconVoiceConfig {
   consultThinkingLevel?: ThinkingLevel;
   /** Run consults in the provider's fast mode */
   consultFastMode?: boolean;
-  /** What the voice model says while a consult runs (default "Checking.") */
-  consultFiller: string;
   responseTimeoutMs: number;
   realtime: {
     provider?: string;
@@ -188,7 +186,6 @@ export function parseConfig(raw: unknown): { config?: OtaconVoiceConfig; errors:
       responseModel: str(c.responseModel),
       consultThinkingLevel: c.consultThinkingLevel as ThinkingLevel | undefined,
       consultFastMode: typeof c.consultFastMode === "boolean" ? c.consultFastMode : undefined,
-      consultFiller: typeof c.consultFiller === "string" ? c.consultFiller.trim() : "Checking.",
       responseTimeoutMs: num(c.responseTimeoutMs, 60_000, 5_000, 600_000),
       realtime: {
         provider: str(realtime.provider),

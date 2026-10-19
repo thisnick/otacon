@@ -123,8 +123,10 @@ navigator off.
 When the voice model consults the agent, the agent answers with
 `responseModel` (default: the agent's model). `consultThinkingLevel` (for
 example `"low"`) and `consultFastMode: true` keep those answers quick while
-the other party waits. Meanwhile the voice model says `consultFiller`
-("Checking." by default).
+the other party waits. The voice model introduces the lookup in its own
+words; while the agent works, its result for the consult says the answer
+is coming, so if the other party talks meanwhile the model tells them it's
+still checking.
 
 ## Third-party
 

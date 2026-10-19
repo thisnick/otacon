@@ -128,9 +128,6 @@
       "consultFastMode": {
         "type": "boolean"
       },
-      "consultFiller": {
-        "type": "string"
-      },
       "responseTimeoutMs": {
         "type": "number"
       },
