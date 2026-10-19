@@ -70,7 +70,10 @@ export interface OtaconVoiceConfig {
   contacts: Contact[];
   /** The phone-menu navigator on calls an agent places (navigator.ts) */
   menu: MenuConfig;
-  /** Longest wait on hold before hanging up and reporting (seconds) */
+  /**
+   * Longest hold before the phone-menu navigator hangs up and reports
+   * (seconds). Holds after it hands off to the voice model aren't timed.
+   */
   holdCapSeconds: number;
   maxCallSeconds: number;
   ringTimeoutSeconds: number;

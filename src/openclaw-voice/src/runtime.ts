@@ -22,6 +22,8 @@ export interface StartCall {
   requesterSessionKey?: string;
   /** The session to run the call in (default: config.sessionScope) */
   sessionKey?: string;
+  /** Longest hold before the navigator hangs up (default: config.holdCapSeconds; at most maxCallSeconds) */
+  holdLimitSeconds?: number;
 }
 
 export class OtaconVoiceRuntime {
@@ -56,7 +58,7 @@ export class OtaconVoiceRuntime {
     this.home = new AsyncResource("otacon-voice.call");
     this.menu ??= await this.buildMenu();
     this.detector = await this.createDetector().catch(() => null);
-    if (!this.detector) this.api.logger.warn("[otacon-voice] speech detector unavailable (onnxruntime-node); hold detection falls back to the model");
+    if (!this.detector) this.api.logger.warn("[otacon-voice] speech detector unavailable (onnxruntime-node); the phone-menu navigator won't time holds");
     this.link.on("call", (msg) => this.onCall(msg));
     this.link.start();
   }
@@ -143,6 +145,8 @@ export class OtaconVoiceRuntime {
       agentId: req.agentId,
       requesterSessionKey: req.requesterSessionKey,
       sessionKey: req.sessionKey,
+      holdLimitSeconds:
+        req.holdLimitSeconds === undefined ? undefined : Math.min(Math.max(10, Math.round(req.holdLimitSeconds)), this.config.maxCallSeconds),
       menu: this.menu,
     });
     this.home ? this.home.runInAsyncScope(() => mission.start()) : mission.start();
@@ -163,6 +167,7 @@ export class OtaconVoiceRuntime {
     agentId: string;
     requesterSessionKey?: string;
     sessionKey?: string;
+    holdLimitSeconds?: number;
     menu?: MenuDeps;
     inboundCallId?: string;
   }) {

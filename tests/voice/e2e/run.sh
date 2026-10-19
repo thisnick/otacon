@@ -2,6 +2,7 @@
 # otacon-voice end-to-end scenarios, run through the test gateway (gateway.sh).
 #
 #   tests/voice/e2e/run.sh ivr       # agent books a table through the Twilio test menu (hold included)
+#   tests/voice/e2e/run.sh ivr-hold-limit  # same, but the agent gives up after 1 min on hold (outcome hold_cap)
 #   tests/voice/e2e/run.sh handoff   # agent reschedules with a persona "business", brings in persona "Nick"
 #   tests/voice/e2e/run.sh inbound   # persona "Nick" calls phone-2; the plugin answers and consults the agent
 #   tests/voice/e2e/run.sh call-me   # the agent calls the owner (ownerNumber), a real person, to hear the voice
@@ -55,6 +56,9 @@ case "$1" in
   ivr)
     ask_agent "Please call Luigi's Trattoria at $(fleet get twilioIvr.number) and book a table for 2 people tonight at 7:30 PM under the name Nick. Their phone menu has a reservations option. Let me know how it goes."
     ;;
+  ivr-hold-limit)
+    ask_agent "Please call Luigi's Trattoria at $(fleet get twilioIvr.number) and book a table for 2 people tonight at 7:30 PM under the name Nick. Their phone menu has a reservations option. Don't wait on hold for more than 1 minute. Let me know how it goes."
+    ;;
   handoff)
     py "$HERE/persona.py" --phone phone-pixel4 --persona dental --voice marin --hangup-on-goodbye \
       --arm-goodbye-on "this is nick|nick here|it's nick" --log "$RUN/personas.jsonl" > "$RUN/dental.log" 2>&1 &
@@ -81,7 +85,7 @@ case "$1" in
   call-me)
     ask_agent "Please call me at $(fleet get ownerNumber). It's a test call so I can hear how your voice sounds on the phone: say hi, tell me in a few sentences what you can do on calls for me, ask whether I can hear you clearly, and chat until I say goodbye."
     ;;
-  *) echo "usage: $0 ivr|handoff|inbound|call-me|consult" >&2; kill $REC; exit 2 ;;
+  *) echo "usage: $0 ivr|ivr-hold-limit|handoff|inbound|call-me|consult" >&2; kill $REC; exit 2 ;;
 esac
 kill $REC 2>/dev/null; wait $REC 2>/dev/null
 docker logs --since 20m ov-gateway 2>&1 | sed -E 's/\x1b\[[0-9;]*m//g' | grep "otacon-voice" > "$RUN/plugin.log"

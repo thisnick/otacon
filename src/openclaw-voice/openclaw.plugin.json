@@ -274,7 +274,8 @@
         }
       },
       "holdCapSeconds": {
-        "type": "number"
+        "type": "number",
+        "description": "Longest hold on a call an agent places before the phone-menu navigator hangs up (seconds); otacon_call's holdLimitMinutes overrides it per call"
       },
       "maxCallSeconds": {
         "type": "number"

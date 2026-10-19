@@ -1,16 +1,21 @@
 // The phone-menu navigator. On a call an agent places, a decision model
 // (OpenRouter's Decisions API) reads the live transcript of the line every
-// few seconds, beside the voice model, and decides one of:
+// few seconds, beside the voice model, with what the line plays (speech,
+// music or silence, linesound.ts), and decides one of:
 //   - press a menu option ("for directions, press 2")
 //   - hang up: no person is on the line and the goal is done, or there's no
-//     way to reach it (a loop with no fitting option, closed, not in service)
-//   - hand off: a person is speaking. The navigator stops for the rest of the
+//     way to reach it (a loop with no fitting option, closed, not in service),
+//     or the hold has run past its limit
+//   - hand off: the line waits for a spoken answer (someone asks how they can
+//     help, or just says hello). The navigator stops for the rest of the
 //     call and the voice model carries on alone.
 //   - wait
 // It never speaks and never types in information (a phone number, a date of
 // birth): that's the voice model's job, which keeps its keypad throughout.
 // Each side sees the other's key presses: the navigator in its transcript,
 // the voice model through notes (call.ts).
+
+import { LineSound } from "./linesound.js";
 
 export interface TranscriptEntry {
   /** Seconds since the call was answered */
@@ -74,12 +79,12 @@ export const QUESTIONS: Record<string, ChoiceQuestion> = {
   action: {
     type: "choice",
     instructions:
-      "You navigate automated phone menus for an assistant making this call; the assistant talks to people and types in or says any information. Act as soon as you can. What should you do right now?",
+      "You navigate automated phone menus for an assistant making this call; the assistant talks to people and types in or says any information. line_audio is what the line has been playing: speech (a person or a recording), music, or silence; seconds_on_hold counts from when it went to music or silence after the last key press. Act as soon as you can. What should you do right now?",
     criteria: {
-      wait: "Nothing to do now: no option that fits the goal has been offered yet; or the key for the fitting option was already pressed and the line hasn't answered it yet; or it's hold music or a hold message; or the line asks for information to be typed in or said (the assistant does that).",
+      wait: "Nothing to do now: no option that fits the goal has been offered yet; or the key for the fitting option was already pressed and the line hasn't answered it yet; or the line has only greeted, welcomed or given information so far; or the call is on hold (hold music, silence, or a recorded hold message) for no longer than hold_limit_seconds; or the line asks for information to be typed in (the assistant does that).",
       press: "An automated menu has offered an option that fits the goal, and its key hasn't been pressed yet. Press it right away, without waiting for the rest of the menu.",
-      hand_off: "A live person is on the line: someone greets, answers or asks the assistant something, or goes back and forth with it. (Automated voices read menus, prompts and recorded messages, and don't respond to what the assistant says.)",
-      hang_up: "No person is on the line, only an automated system or recording, and either what it said already achieves the goal, or the goal clearly can't be achieved on this call: the menu keeps repeating with no option that fits, the business is closed, or the number is not in service.",
+      hand_off: "The line is waiting for the assistant to speak: it asks a question or wants a spoken answer (\"How can I help you?\", \"Who am I speaking with?\", \"Please tell me the reason for your call\"), or someone just says \"Hello?\" and nothing else follows, or it answers what the assistant said. Be certain. A welcome or greeting (\"Thanks for calling …\"), information, or options to press a key don't count, even when they sound like a person.",
+      hang_up: "No person is on the line, only an automated system, a recording, hold music or silence, and either what it said already achieves the goal; or the goal clearly can't be achieved on this call: the menu keeps repeating with no option that fits, the business is closed, or the number is not in service; or the call has been on hold for longer than hold_limit_seconds (seconds_on_hold is more).",
     },
   },
   key: {
@@ -93,27 +98,35 @@ export const QUESTIONS: Record<string, ChoiceQuestion> = {
     criteria: {
       goal_done: "What the line said already achieves the goal.",
       no_way: "The goal can't be reached on this call (the menu loops with no fitting option, closed, not in service).",
+      hold_limit: "The call has been on hold for longer than hold_limit_seconds.",
       neither: "The call shouldn't end.",
     },
   },
 };
 
+export type HangUpReason = "goal_done" | "no_way" | "hold_limit";
+
 export interface NavigatorOptions {
   goal: string;
   checkEverySeconds: number;
+  /** Longest hold before the navigator hangs up (seconds) */
+  holdLimitSeconds: number;
   /** Probability the chosen action (and, to press, the key) needs */
   threshold: number;
   client: DecisionClient;
   /** Milliseconds; the call's answer time is t = 0 */
   now(): number;
-  press(keys: string): Promise<void>;
-  hangUp(reason: "goal_done" | "no_way"): void;
+  /** Resolves false when the press failed */
+  press(keys: string): Promise<boolean>;
+  hangUp(reason: HangUpReason): void;
   handOff(): void;
   log(msg: string): void;
 }
 
 /** The transcript sent with each check: the latest of the call, bounded. */
 const MAX_TRANSCRIPT_CHARS = 4000;
+/** With nothing new said, a look this often while the line plays music or silence */
+const QUIET_CHECK_MS = 15_000;
 
 export class MenuNavigator {
   private entries: TranscriptEntry[] = [];
@@ -121,8 +134,7 @@ export class MenuNavigator {
   private partial = "";
   private partialAt = 0;
   private presses: KeyPress[] = [];
-  private holding = false;
-  private holdSince = 0;
+  private sound = new LineSound(() => this.o.now() / 1000);
   private timer?: NodeJS.Timeout;
   private inFlight = false;
   private lastAction?: string;
@@ -130,6 +142,9 @@ export class MenuNavigator {
   private seenChars = 0;
   private pressedAtChars = -1;
   private totalChars = 0;
+  /** The quiet stretch (music or silence) at the last check, and when that was */
+  private checkedQuietSince?: number;
+  private lastCheckAt = 0;
   stopped = false;
 
   constructor(private o: NavigatorOptions) {}
@@ -178,9 +193,12 @@ export class MenuNavigator {
     if (by === "navigator") this.pressedAtChars = this.totalChars;
   }
 
-  hold(on: boolean) {
-    this.holding = on;
-    this.holdSince = on ? this.o.now() : 0;
+  /**
+   * One speech-detector window of the line: speech probability and loudness
+   * (RMS). Returns the second's sound when the window completes one.
+   */
+  lineSound(prob: number, rms: number) {
+    return this.stopped ? undefined : this.sound.window(prob, rms);
   }
 
   private flushPartial() {
@@ -197,23 +215,30 @@ export class MenuNavigator {
       transcript.unshift(all[i]);
       used += all[i].text.length;
     }
+    const lineAudio = this.sound.summary(this.presses.at(-1)?.t);
     return {
       goal: this.o.goal,
       seconds_into_call: this.t(),
-      on_hold: this.holding,
-      seconds_on_hold: this.holding ? Math.round((this.o.now() - this.holdSince) / 1000) : 0,
       transcript,
-      keys_pressed: this.presses,
+      keys_pressed: [...this.presses],
+      ...(lineAudio ? { line_audio: lineAudio } : {}),
+      hold_limit_seconds: this.o.holdLimitSeconds,
     };
   }
 
   /** One look at the call; exported for tests. */
   async check() {
     if (this.stopped || this.inFlight) return;
-    // Only when the line said something new, and after our own press only
-    // once the menu has answered it.
-    if (this.totalChars === this.seenChars || this.totalChars === this.pressedAtChars) return;
+    // When the line said something new (after our own press, only once the
+    // menu has answered it); or, while it plays music or silence, when that
+    // began and every QUIET_CHECK_MS, so a hold is timed.
+    const said = this.totalChars !== this.seenChars && this.totalChars !== this.pressedAtChars;
+    const quiet = this.sound.quietSince();
+    const holding = quiet !== undefined && (quiet !== this.checkedQuietSince || this.o.now() - this.lastCheckAt >= QUIET_CHECK_MS);
+    if (!said && !holding) return;
     this.seenChars = this.totalChars;
+    this.checkedQuietSince = quiet;
+    this.lastCheckAt = this.o.now();
     this.inFlight = true;
     try {
       const a = await this.o.client.decide(this.state(), QUESTIONS);
@@ -230,8 +255,9 @@ export class MenuNavigator {
         this.stop();
         return this.o.handOff();
       }
-      if (action === "hang_up" && p("action", "hang_up") >= this.o.threshold && !this.holding) {
-        const reason = p("hang_up_reason", "goal_done") >= p("hang_up_reason", "no_way") ? "goal_done" : "no_way";
+      if (action === "hang_up" && p("action", "hang_up") >= this.o.threshold) {
+        const reasons: HangUpReason[] = ["goal_done", "no_way", "hold_limit"];
+        const reason = reasons.reduce((a, b) => (p("hang_up_reason", b) > p("hang_up_reason", a) ? b : a));
         this.o.log(`navigator: hanging up, ${reason} (${p("action", "hang_up").toFixed(2)})`);
         this.stop();
         return this.o.hangUp(reason);
@@ -239,13 +265,20 @@ export class MenuNavigator {
       const key = a.key?.choice;
       if (action === "press" && p("action", "press") >= this.o.threshold && key && KEYS.includes(key) && p("key", key) >= this.o.threshold) {
         this.o.log(`navigator: pressing ${key} (${p("action", "press").toFixed(2)}/${p("key", key).toFixed(2)})`);
+        const at = this.presses.length;
         this.pressed("navigator", key);
-        await this.o.press(key);
+        if (!(await this.o.press(key))) {
+          // A failed press isn't one: forget it, and look again next time.
+          this.presses.splice(at, 1);
+          this.pressedAtChars = -1;
+          this.seenChars = -1;
+        }
       }
     } catch (err) {
       this.o.log(`navigator: check failed: ${err instanceof Error ? err.message : String(err)}`);
-      // Try again at the next check, even with no new text.
+      // Try again at the next check, even with nothing new.
       this.seenChars = -1;
+      this.checkedQuietSince = undefined;
     } finally {
       this.inFlight = false;
     }

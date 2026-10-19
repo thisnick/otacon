@@ -6,7 +6,7 @@ import { OtaconVoiceRuntime } from "./runtime.js";
 
 const TOOL_NAME = "otacon_call";
 
-const toolParameters = {
+const toolParameters = (config: { holdCapSeconds: number; maxCallSeconds: number }) => ({
   type: "object",
   additionalProperties: false,
   properties: {
@@ -41,10 +41,16 @@ const toolParameters = {
       description:
         "call: the OpenClaw session the call runs in (its consults, so what the agent remembers of it). Default: one session per phone number, shared by every call with that number",
     },
+    holdLimitMinutes: {
+      type: "number",
+      description: `call: how long to wait on hold before hanging up, in minutes (default ${minutes(config.holdCapSeconds)}; at most ${minutes(config.maxCallSeconds)}, the limit for the whole call). Holds are timed until a person answers.`,
+    },
     callId: { type: "string", description: "end: the call id returned by call" },
   },
   required: ["action"],
-};
+});
+
+const minutes = (seconds: number) => String(Math.round((seconds / 60) * 10) / 10);
 
 function agentFromSessionKey(key?: string): string | undefined {
   const m = key?.match(/^agent:([^:]+):/);
@@ -78,8 +84,11 @@ export default definePluginEntry({
       agentId?: string;
       requesterSessionKey?: string;
       sessionKey?: string;
+      holdLimitMinutes?: number;
     }) => {
       if (!runtime) throw new Error("otacon-voice is not running in this process");
+      const hold = args.holdLimitMinutes;
+      if (hold !== undefined && !(typeof hold === "number" && hold > 0)) throw new Error("`holdLimitMinutes` must be a positive number");
       const contacts: Contact[] = [];
       for (const [i, c] of (args.contacts ?? []).entries()) {
         if (!isE164(c.number)) throw new Error(`contact ${c.name}: number must be E.164`);
@@ -93,6 +102,7 @@ export default definePluginEntry({
         agentId: args.agentId ?? config.agentId ?? agentFromSessionKey(args.requesterSessionKey) ?? "main",
         requesterSessionKey: args.requesterSessionKey,
         sessionKey: args.sessionKey,
+        holdLimitSeconds: hold === undefined ? undefined : hold * 60,
       });
     };
 
@@ -101,7 +111,7 @@ export default definePluginEntry({
       label: "Phone call",
       description:
         "Place a phone call that a voice assistant carries out on the user's behalf: it navigates phone menus, waits on hold, talks to people, and can bring in one of the given contacts. Returns at once with a callId. The outcome (summary and transcript) is delivered to this session automatically as a system message when the call ends, which can take many minutes: do not poll `status` or sleep waiting for it. Tell the user the call is under way and end your turn.",
-      parameters: toolParameters,
+      parameters: toolParameters(config),
       async execute(_id: string, p: any) {
         try {
           if (p.action === "call") {
@@ -112,6 +122,7 @@ export default definePluginEntry({
               brief: p.brief,
               contacts: p.contacts,
               sessionKey: p.sessionKey,
+              holdLimitMinutes: p.holdLimitMinutes,
               agentId: ctx.agentId,
               requesterSessionKey: ctx.sessionKey,
             });

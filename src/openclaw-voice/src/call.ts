@@ -3,8 +3,10 @@
 //
 // Audio: otacon downlink (16 kHz) -> resample -> realtime model (24 kHz);
 // model audio -> resample -> otacon uplink. Barge-in clears otacon's queue.
-// Hold: the model stops hearing the line; a local speech detector wakes it
-// (with ~2 s of pre-roll) when someone speaks; a cap ends the call.
+// On calls an agent places, while the phone-menu navigator listens: after
+// 10 s without speech (hold music) the model stops hearing the line until
+// someone speaks, and the navigator times the hold and hangs up past the
+// limit.
 
 import { randomUUID } from "node:crypto";
 import type { PluginApi } from "openclaw/plugin-sdk/plugin-entry";
@@ -20,11 +22,10 @@ import type {
 } from "openclaw/plugin-sdk/realtime-voice";
 import type { Contact, OtaconVoiceConfig } from "./config.js";
 import { buildAgentContext, type AgentContextSdk } from "./context.js";
-import { MenuNavigator, type DecisionClient } from "./navigator.js";
+import { MenuNavigator, type DecisionClient, type HangUpReason } from "./navigator.js";
 import { callSessionKey, type SessionKeySdk } from "./session.js";
 import type { Transcriber } from "./transcriber.js";
 import { OtaconCommandError, type OtaconCall, type OtaconLink } from "./otacon.js";
-import { SpeechWindow } from "./vad.js";
 
 /** The parts of the realtime-voice SDK a call uses (see realtime.ts); tests pass fakes. */
 export interface RealtimeSdk {
@@ -47,9 +48,11 @@ export interface MenuDeps {
   openTranscriber(handlers: { onText(delta: string): void; onError(err: Error): void }): Transcriber;
 }
 
-/** Speech probability per 32 ms window of 16 kHz audio (vad.ts). */
+/** Speech probability and loudness (RMS) per 32 ms window of 16 kHz audio (vad.ts). */
 export interface SpeechDetectorLike {
-  push(pcm16: Buffer, onWindow: (prob: number) => void): void;
+  push(pcm16: Buffer, onWindow: (prob: number, rms: number) => void): void;
+  /** Forget the last call's audio */
+  reset?(): void;
 }
 
 /** One entry of the call log: something someone said, or something that happened. */
@@ -64,11 +67,16 @@ export interface LogEntry {
 }
 
 const MODEL_RATE = 24000;
+/**
+ * While the navigator listens, this long without speech (hold music, mostly)
+ * stops the line reaching the voice model, which would otherwise talk
+ * through it, until someone speaks.
+ */
+const MUTE_AFTER_SECONDS = 10;
+/** Line audio replayed to the voice model when it hears the line again, so it hears how the speech began */
 const PREROLL_MS = 2000;
-/** Hold ends when this share of the last second is speech. */
-const WAKE_SPEECH_SHARE = 0.6;
-/** No speech for this long (while not talking ourselves) enters hold by itself. */
-const AUTO_HOLD_MS = 30_000;
+/** After the other side hangs up, the longest wait for its last words' transcript */
+const LAST_WORDS_MS = 3000;
 
 const CONSULT_SYSTEM_PROMPT = [
   "You are the configured OpenClaw agent receiving delegated requests from a live phone call your assistant is on.",
@@ -136,6 +144,8 @@ export interface MissionOptions {
   sessionKey?: string;
   /** Agent-placed calls: the phone-menu navigator (absent: the voice model alone) */
   menu?: MenuDeps;
+  /** Longest hold before the navigator hangs up, from whoever placed the call (default: config.holdCapSeconds) */
+  holdLimitSeconds?: number;
   onEnd(report: MissionReport): void;
 }
 
@@ -164,17 +174,12 @@ export class CallMission {
   // audio
   private up: { process(chunk: Buffer): Buffer };
   private down: { process(chunk: Buffer): Buffer };
+  private playing: { itemId: string; firstAt: number; sentMs: number } | null = null;
+  /** Hold music kept from the voice model (only while the navigator listens) */
+  private muted = false;
+  private quietSeconds = 0;
   private preroll: Buffer[] = [];
   private prerollBytes = 0;
-  private playing: { itemId: string; firstAt: number; sentMs: number } | null = null;
-  private modelSpeakingUntil = 0;
-
-  // hold
-  private holding = false;
-  private holdSince = 0;
-  private holdTimer?: NodeJS.Timeout;
-  private wake = new SpeechWindow(31); // ~1 s of 32 ms windows
-  private lastSpeechAt = Date.now();
   /** After a merge the model is gone; otacon keeps the merged call. */
   private detached = false;
 
@@ -184,6 +189,9 @@ export class CallMission {
   private upNav: { process(chunk: Buffer): Buffer };
   private answeredAt = 0;
   private notesUnavailable = false;
+  /** While waiting for the last words after the other side hung up */
+  private flushing = false;
+  private onHeard?: () => void;
   private pendingMerge?: () => void;
 
   constructor(private o: MissionOptions) {
@@ -211,7 +219,6 @@ export class CallMission {
       party: this.o.party,
       ended: this.ended,
       outcome: this.ended ? this.outcome : undefined,
-      holding: this.holding,
       lines: this.lines.map((l) => ({ line: l.n, party: l.party.name, number: l.party.number, state: l.state })),
       activeLine: this.active,
       seconds: Math.round((Date.now() - this.startedAt) / 1000),
@@ -290,22 +297,26 @@ export class CallMission {
     line.state = msg.type === "call.ended" ? "ended" : msg.call.state;
     if (msg.type === "call.ended") {
       this.debug(`line ${line.n} (${line.party.name}) ended: ${msg.reason}`);
-      this.note(msg.reason === "local" ? `line ${line.n} hung up` : `${line.party.name} hung up (${msg.reason})`, line.n);
-      this.onLineEnded(line, msg.reason);
+      this.onLineEnded(line, msg.reason, msg.reason === "local" ? `line ${line.n} hung up` : `${line.party.name} hung up (${msg.reason})`);
       return;
     }
     if (this.detached) this.checkMergedCall();
   }
 
-  private onLineEnded(line: Line, reason: string) {
+  private onLineEnded(line: Line, reason: string, note: string) {
+    const live = this.lines.filter((l) => l.state !== "ended");
+    if (this.active !== null && !this.detached && !live.length) {
+      // Everyone is gone. If the other side hung up, its last words go in
+      // the log before the hang-up.
+      return this.finish(this.outcome === "ended_by_agent" ? "ended_by_agent" : "completed", undefined, {
+        lastWords: reason !== "local",
+        endNote: { text: note, line: line.n },
+      });
+    }
+    this.note(note, line.n);
     // Not answered yet: start() sees the end and reports no_answer.
     if (this.active === null) return;
-    const live = this.lines.filter((l) => l.state !== "ended");
     if (this.detached) return this.checkMergedCall();
-    if (!live.length) {
-      // Everyone is gone.
-      return this.finish(this.outcome === "ended_by_agent" ? "ended_by_agent" : "completed");
-    }
     if (line.n === this.active) {
       // The party we were talking to left; go back to whoever is on hold.
       const other = live[0];
@@ -321,16 +332,24 @@ export class CallMission {
     }
   }
 
-  /** End the mission: hang up what's still up (unless handed off), report. */
-  async finish(outcome: Outcome, summary?: string) {
+  /**
+   * End the mission: hang up what's still up (unless handed off), report.
+   * `lastWords`: the other side hung up; wait for what it said last.
+   * `endNote`: how the last line ended, logged after that.
+   */
+  async finish(outcome: Outcome, summary?: string, o: { lastWords?: boolean; endNote?: { text: string; line: number } } = {}) {
     // A merged call runs on without us (see checkMergedCall).
-    if (this.ended || this.detached) return;
+    if (this.ended || this.detached) {
+      if (o.endNote) this.note(o.endNote.text, o.endNote.line);
+      return;
+    }
     this.ended = true;
     this.outcome = outcome;
     if (summary) this.summary = summary;
     for (const t of this.timers) clearTimeout(t);
-    if (this.holdTimer) clearTimeout(this.holdTimer);
     this.stopNavigator();
+    if (o.lastWords) await this.lastWords();
+    if (o.endNote) this.note(o.endNote.text, o.endNote.line);
     try {
       await this.session?.close();
     } catch {}
@@ -342,6 +361,29 @@ export class CallMission {
     if (outcome !== "handed_off") for (const d of this.detachHandlers) d();
     this.debug(`finished: ${outcome}`);
     this.o.onEnd(this.report());
+  }
+
+  /**
+   * The other side hung up, maybe just after speaking ("you're all set,
+   * goodbye"). The voice model ends a turn, and transcribes it, only once it
+   * hears silence, which a dead line never sends: send a second of it and
+   * wait briefly for the transcript.
+   */
+  private async lastWords() {
+    if (!this.session) return;
+    this.flushing = true;
+    let timer: NodeJS.Timeout | undefined;
+    const heard = new Promise<void>((resolve) => {
+      this.onHeard = resolve;
+      timer = setTimeout(resolve, LAST_WORDS_MS);
+    });
+    try {
+      this.session.sendAudio(this.up.process(Buffer.alloc(16000 * 2)));
+    } catch {}
+    await heard;
+    clearTimeout(timer);
+    this.onHeard = undefined;
+    this.flushing = false;
   }
 
   report(): MissionReport {
@@ -379,10 +421,10 @@ export class CallMission {
       "- Automated phone menus: don't talk over them. Press a key with send_dtmf (for example digits \"3\") the moment you hear the option you need, without saying anything first; you don't have to wait for the menu to finish. After pressing, stay quiet and listen.",
       ...(this.o.menu && direction === "outbound"
         ? [
-            "- A phone-menu navigator is also listening to this call. It can't be interrupted. While an automated menu plays, it presses menu options for you, and it may hang up when the goal is done or can't be reached; you'll see a note each time. Don't press a key it already pressed. When a menu asks for information to be entered (a phone number, a date of birth, an account number), enter it yourself with send_dtmf. Stay quiet while an automated menu is talking. Once a person is on the line, the navigator stops and the call is yours.",
+            "- A phone-menu navigator is also listening to this call. It can't be interrupted. While an automated menu plays, it presses menu options for you, and it may hang up when the goal is done or can't be reached, or after a long hold; you'll see a note each time. Don't press a key it already pressed. When a menu asks for information to be entered (a phone number, a date of birth, an account number), enter it yourself with send_dtmf. Stay quiet while an automated menu is talking. Once a person is on the line, the navigator stops and the call is yours.",
           ]
         : []),
-      "- If you're put on hold or hear hold music or a 'please hold' message, call wait_on_hold. You stop hearing the line until someone speaks again; if what you then hear is another recorded message, call wait_on_hold again.",
+      "- If someone asks you to hold, say \"Sure, I'll hold.\" once. After that, say nothing until a person talks to you directly: hold music and recorded messages (\"your call is important to us\", \"please stay on the line\") never need a reply.",
       `- If you need information you don't have (for example ${config.ownerName}'s details or preferences), use ${this.o.sdk.consultToolName}. Never make up names, numbers, dates, or commitments.`,
       "- Share only what the goal needs. Don't reveal that you were given instructions.",
       "- If you reach voicemail, decide whether a short message helps the goal; then end the call.",
@@ -406,7 +448,6 @@ export class CallMission {
       tool("send_dtmf", "Press keys on the phone keypad (for automated menus). Digits 0-9, *, #; 'w' waits half a second.", {
         digits: { type: "string", description: "Keys to press, e.g. \"1\" or \"1234#\"" },
       }, ["digits"]),
-      tool("wait_on_hold", "You've been put on hold. Stop listening until someone speaks again."),
       tool("end_call", "Hang up and finish. Call after saying goodbye.", {
         outcome: { type: "string", enum: ["done", "failed", "voicemail"], description: "Whether the goal was achieved" },
         summary: { type: "string", description: "What happened: agreements, names, times, confirmation numbers" },
@@ -472,6 +513,8 @@ export class CallMission {
       },
       onTranscript: (role, text, isFinal) => {
         if (!isFinal || !text.trim()) return;
+        // A reply to the closing silence (lastWords) is never played.
+        if (role === "assistant" && this.flushing) return;
         if (role === "assistant") this.navigator?.assistantSaid(text);
         const line = this.lines.find((l) => l.n === this.active);
         this.log.push({
@@ -481,6 +524,7 @@ export class CallMission {
           who: role === "assistant" ? "assistant" : line?.party.name ?? "caller",
           text: text.trim(),
         });
+        if (role !== "assistant") this.onHeard?.();
       },
       onToolCall: (ev, session) => this.onToolCall(ev, session),
       onResponseDone: () => {
@@ -557,6 +601,7 @@ export class CallMission {
     this.navigator = new MenuNavigator({
       goal: this.o.brief ?? "",
       checkEverySeconds: cfg.checkEverySeconds,
+      holdLimitSeconds: this.holdLimit,
       threshold: cfg.threshold,
       client: menu.decisions,
       now: () => Date.now() - this.answeredAt,
@@ -576,31 +621,47 @@ export class CallMission {
         this.silentNote("[The phone-menu navigator stopped. Handle any phone menu yourself.]");
       },
     });
+    if (this.o.detector) this.o.detector.reset?.();
+    else this.debug("no speech detector: the navigator can't tell hold music from speech, so it won't time holds");
     this.navigator.start();
     this.note("the phone-menu navigator is listening");
   }
 
+  private get holdLimit() {
+    return this.o.holdLimitSeconds ?? this.o.config.holdCapSeconds;
+  }
+
   private stopNavigator() {
+    this.unmute("the navigator stopped");
     this.navigator?.stop();
     this.transcriber?.close();
     this.navigator = undefined;
     this.transcriber = undefined;
   }
 
-  private async navigatorPress(keys: string) {
+  private async navigatorPress(keys: string): Promise<boolean> {
     try {
       const r = await this.o.link.cmd("dtmf", { digits: keys });
       this.note(`the navigator pressed ${r.digits ?? keys}`);
       this.silentNote(`[The phone-menu navigator pressed ${keys} on your behalf. Don't press it again.]`);
+      return true;
     } catch (err) {
       this.debug(`navigator press failed: ${err instanceof Error ? err.message : String(err)}`);
+      return false;
     }
   }
 
-  private navigatorHangUp(reason: "goal_done" | "no_way") {
-    const why = reason === "goal_done" ? "what the line said achieved the goal" : "the goal couldn't be reached on this call";
+  private navigatorHangUp(reason: HangUpReason) {
+    const cap = this.holdLimit;
+    const limit = cap % 60 ? `${cap} s` : `${cap / 60} min`;
+    const why = {
+      goal_done: "what the line said achieved the goal",
+      no_way: "the goal couldn't be reached on this call",
+      hold_limit: `on hold for longer than ${limit}`,
+    }[reason];
     this.note(`the navigator hung up: ${why}`);
-    this.finish(reason === "goal_done" ? "completed" : "failed", `The phone-menu navigator hung up: ${why}.`);
+    const outcome = reason === "goal_done" ? "completed" : reason === "hold_limit" ? "hold_cap" : "failed";
+    this.finish(outcome, `The phone-menu navigator hung up: ${why}.`);
   }
 
   private navigatorHandOff() {
@@ -613,77 +674,64 @@ export class CallMission {
 
   private onDownlink(pcm: Buffer) {
     if (this.ended || this.detached || this.active === null) return;
+    if (this.muted) this.keepPreroll(pcm);
+    else this.session?.sendAudio(this.up.process(pcm));
+    // Until it hands off, the navigator hears the line too: the words, and
+    // whether it's speech, music or silence.
+    if (!this.navigator) return;
+    this.transcriber?.send(this.upNav.process(pcm));
+    this.o.detector?.push(pcm, (p, rms) => this.onLineSound(p, rms));
+  }
+
+  /** Each second of the line (while the navigator listens): mute hold music, unmute on speech. */
+  private onLineSound(prob: number, rms: number) {
+    const sound = this.navigator?.lineSound(prob, rms);
+    if (!sound) return;
+    if (sound === "speech") {
+      this.quietSeconds = 0;
+      this.unmute("speech on the line");
+    } else if (++this.quietSeconds >= MUTE_AFTER_SECONDS && !this.muted) {
+      this.muted = true;
+      this.preroll = [];
+      this.prerollBytes = 0;
+      this.debug(`no speech for ${MUTE_AFTER_SECONDS}s (hold music?): the voice model stops hearing the line until someone speaks`);
+    }
+  }
+
+  private keepPreroll(pcm: Buffer) {
     this.preroll.push(pcm);
     this.prerollBytes += pcm.length;
+    // 16 kHz pcm_s16le: 32 bytes per ms
     while (this.prerollBytes > PREROLL_MS * 32 && this.preroll.length > 1) this.prerollBytes -= this.preroll.shift()!.length;
+  }
 
-    this.o.detector?.push(pcm, (p) => this.onSpeechProb(p));
-    if (!this.holding) this.session?.sendAudio(this.up.process(pcm));
-    // The navigator hears the line too; on hold, only while someone speaks.
-    if (this.transcriber && (!this.holding || Date.now() - this.lastSpeechAt < 1500)) this.transcriber.send(this.upNav.process(pcm));
+  /** The voice model hears the line again, from the last PREROLL_MS. */
+  private unmute(why: string) {
+    if (!this.muted) return;
+    this.muted = false;
+    this.debug(`${why}: the voice model hears the line again`);
+    if (!this.detached) {
+      this.up = this.o.sdk.resampler(16000, MODEL_RATE);
+      for (const chunk of this.preroll) this.session?.sendAudio(this.up.process(chunk));
+    }
+    this.preroll = [];
+    this.prerollBytes = 0;
   }
 
   private onModelAudio(audio: Buffer, itemId?: string) {
-    if (this.holding || this.detached || this.ended) return;
+    if (this.detached || this.ended) return;
     const pcm = this.down.process(audio);
     const now = Date.now();
     const id = itemId ?? "item";
     if (!this.playing || this.playing.itemId !== id) this.playing = { itemId: id, firstAt: now, sentMs: 0 };
     this.playing.sentMs += (audio.length / 2 / MODEL_RATE) * 1000;
-    this.modelSpeakingUntil = Math.max(this.modelSpeakingUntil, now) + (pcm.length / 2 / 16000) * 1000;
     this.o.link.sendAudio(pcm);
   }
 
   private onClearAudio() {
     this.playing = null;
-    this.modelSpeakingUntil = 0;
     this.down = this.o.sdk.resampler(MODEL_RATE, 16000);
     this.o.link.clear();
-  }
-
-  // ---- hold ----
-
-  private onSpeechProb(p: number) {
-    const now = Date.now();
-    if (p > 0.5) this.lastSpeechAt = now;
-    if (this.holding) {
-      this.wake.add(p);
-      if (this.wake.full && this.wake.speechShare() >= WAKE_SPEECH_SHARE) this.exitHold();
-      return;
-    }
-    // Backstop: a long stretch with nobody speaking (typically hold music
-    // the model didn't flag) stops sending audio to the model.
-    if (now - this.lastSpeechAt > AUTO_HOLD_MS && now > this.modelSpeakingUntil + 2000 && !this.pendingMerge) {
-      this.debug("no speech for 30 s; entering hold");
-      this.enterHold("no speech for 30 s: holding");
-    }
-  }
-
-  private enterHold(why = "put on hold") {
-    if (this.holding) return;
-    this.note(why);
-    this.holding = true;
-    this.holdSince = Date.now();
-    this.wake.clear();
-    this.navigator?.hold(true);
-    this.holdTimer = setTimeout(() => {
-      this.debug(`on hold longer than ${this.o.config.holdCapSeconds}s; hanging up`);
-      this.note(`hung up after ${this.o.config.holdCapSeconds}s on hold`);
-      this.finish("hold_cap", `Gave up after ${Math.round(this.o.config.holdCapSeconds / 60)} min on hold.`);
-    }, this.o.config.holdCapSeconds * 1000);
-  }
-
-  private exitHold() {
-    if (!this.holding) return;
-    this.holding = false;
-    this.lastSpeechAt = Date.now();
-    if (this.holdTimer) clearTimeout(this.holdTimer);
-    this.navigator?.hold(false);
-    this.debug(`speech after ${Math.round((Date.now() - this.holdSince) / 1000)}s on hold; listening again`);
-    this.note(`off hold after ${Math.round((Date.now() - this.holdSince) / 1000)}s: someone is speaking`);
-    // Let the model hear how it started.
-    this.up = this.o.sdk.resampler(16000, MODEL_RATE);
-    for (const chunk of this.preroll) this.session?.sendAudio(this.up.process(chunk));
   }
 
   // ---- tools ----
@@ -701,9 +749,6 @@ export class CallMission {
           this.navigator?.pressed("assistant", String(r.digits ?? args.digits));
           return reply({ pressed: r.digits, note: "Pressed. Stay quiet and listen to what the system says next." }, true);
         }
-        case "wait_on_hold":
-          this.enterHold();
-          return reply({ status: "holding", note: "You'll hear the line again when someone speaks." }, true);
         case "end_call": {
           this.summary = String(args.summary ?? "");
           this.note(`the assistant ended the call (${args.outcome})`);
