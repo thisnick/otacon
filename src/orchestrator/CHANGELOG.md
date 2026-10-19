@@ -1,5 +1,11 @@
 # orchestrator
 
+## 3.0.0
+
+### Patch Changes
+
+- Changes since 2.1.0 with no changeset of their own: pnpm-lock.yaml, src/openclaw-voice/package.json.
+
 ## 2.1.0
 
 ### Patch Changes
