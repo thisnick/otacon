@@ -577,20 +577,22 @@ export class CallMission {
     }
   }
 
-  /** The interim result a consult gets while the agent works ("Checking."). */
+  /**
+   * The interim result a consult gets while the agent works. It's
+   * information, not something to say: the bridge holds the model's reply
+   * until the answer, and the model reads this only then, or when the other
+   * party talks before it (OpenAI replies to them on its own).
+   */
   private consultWorking(): unknown {
     let continues = false;
     try {
       continues = Boolean(this.session?.bridge?.supportsToolResultContinuation);
     } catch {}
     if (!continues) return undefined;
-    const filler = this.o.config.consultFiller;
     return {
       status: "working",
       tool: this.o.sdk.consultToolName,
-      message: filler
-        ? `Say only "${filler}" and nothing else, then wait for the result before answering.`
-        : "Tell them briefly that you are checking, then wait for the result before answering.",
+      message: "The agent is still working on this; its answer comes next, as this call's result. If they talk before it arrives, tell them briefly you're still checking.",
     };
   }
 

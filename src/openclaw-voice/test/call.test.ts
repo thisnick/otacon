@@ -365,13 +365,14 @@ test("navigator: never on incoming calls", async () => {
   await m.finish("completed");
 });
 
-test("consults get the working response first: the voice model says the filler while the agent works", async () => {
-  const { s, m } = await connected({ cfg: { consultFiller: "One moment." } });
+test("consults get a working result first: the answer is coming, nothing to say unless they talk", async () => {
+  const { s, m } = await connected();
   await s.tool("openclaw_agent_consult", { question: "What time works?" });
   const [working, final] = s.toolResults.slice(-2);
   assert.equal(working.options?.willContinue, true);
   assert.equal(working.result.status, "working");
-  assert.match(working.result.message, /Say only "One moment\."/);
+  assert.match(working.result.message, /If they talk before it arrives, tell them briefly you're still checking/);
+  assert.doesNotMatch(working.result.message, /Checking\./);
   assert.deepEqual(final.result, { text: "Nick prefers 7:30." });
   await m.finish("completed");
 
