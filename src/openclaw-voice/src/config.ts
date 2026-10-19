@@ -17,16 +17,45 @@ export type ToolPolicy = "safe-read-only" | "owner" | "none";
 const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "adaptive", "max", "ultra"] as const;
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
+/** A phone line on an otacon phone. */
+export interface OtaconLineConfig {
+  /** What the agent picks with otacon_call's `line` */
+  id: string;
+  provider: "otacon";
+  /** Host base URL, e.g. https://otacon-pi.example.ts.net:8080 */
+  url: string;
+  /** Host phone id (e.g. phone-r5ct60sd), not the registry id */
+  phoneId: string;
+  /** Take control of the phone's voice socket from another client */
+  takeover: boolean;
+  /** The phone's number, for the agent (optional) */
+  number?: string;
+}
+
+/** A phone line on a Twilio number. */
+export interface TwilioLineConfig {
+  id: string;
+  provider: "twilio";
+  accountSid: string;
+  /** A string or a SecretRef */
+  authToken: unknown;
+  /** The Twilio number calls come from and go to (E.164) */
+  fromNumber: string;
+  /**
+   * Where Twilio reaches this line's routes, which the gateway serves at
+   * /otacon-voice/twilio/<id>: e.g. https://host.ts.net/otacon-voice/twilio/<id>
+   */
+  publicUrl: string;
+  number: string;
+}
+
+export type LineConfig = OtaconLineConfig | TwilioLineConfig;
+
 export interface OtaconVoiceConfig {
   enabled: boolean;
-  otacon: {
-    /** Host base URL, e.g. https://otacon-pi.example.ts.net:8080 */
-    url: string;
-    /** Host phone id (e.g. phone-r5ct60sd), not the registry id */
-    phoneId: string;
-    /** Take control of the phone's voice socket from another client */
-    takeover: boolean;
-  };
+  lines: LineConfig[];
+  /** The line calls go out on unless otacon_call names one (default: the first) */
+  defaultLine: string;
   /** Agent the calls belong to (default: the requester's, else "main") */
   agentId?: string;
   /**
@@ -135,11 +164,37 @@ function oneOf<T extends string>(v: unknown, allowed: readonly T[], def: T): T {
 export function parseConfig(raw: unknown): { config?: OtaconVoiceConfig; errors: string[] } {
   const c = obj(raw);
   const errors: string[] = [];
-  const otacon = obj(c.otacon);
-  const url = str(otacon.url)?.replace(/\/+$/, "");
-  const phoneId = str(otacon.phoneId);
-  if (!url) errors.push("otacon.url is required");
-  if (!phoneId) errors.push("otacon.phoneId is required");
+  const lines: LineConfig[] = [];
+  const rawLines = Array.isArray(c.lines) ? c.lines : [];
+  if (!rawLines.length) errors.push("lines: at least one line is required");
+  for (const [i, v] of rawLines.entries()) {
+    const l = obj(v);
+    const id = str(l.id);
+    const where = `lines[${i}]${id ? ` (${id})` : ""}`;
+    if (!id || !/^[a-z0-9][a-z0-9_-]*$/i.test(id)) errors.push(`${where}.id is required (letters, digits, - and _)`);
+    else if (lines.some((x) => x.id === id)) errors.push(`${where}: duplicate id`);
+    const number = str(l.number);
+    if (number && !isE164(number)) errors.push(`${where}.number must be E.164`);
+    if (l.provider === "otacon") {
+      const url = str(l.url)?.replace(/\/+$/, "");
+      const phoneId = str(l.phoneId);
+      if (!url) errors.push(`${where}.url is required`);
+      if (!phoneId) errors.push(`${where}.phoneId is required`);
+      if (id && url && phoneId) lines.push({ id, provider: "otacon", url, phoneId, takeover: l.takeover === true, number });
+    } else if (l.provider === "twilio") {
+      const accountSid = str(l.accountSid);
+      const fromNumber = str(l.fromNumber);
+      const publicUrl = str(l.publicUrl)?.replace(/\/+$/, "");
+      if (!accountSid) errors.push(`${where}.accountSid is required`);
+      if (!l.authToken) errors.push(`${where}.authToken is required`);
+      if (!isE164(fromNumber)) errors.push(`${where}.fromNumber must be E.164`);
+      if (!publicUrl || !/^https:\/\//.test(publicUrl)) errors.push(`${where}.publicUrl must be an https URL`);
+      if (id && accountSid && l.authToken && isE164(fromNumber) && publicUrl?.startsWith("https://"))
+        lines.push({ id, provider: "twilio", accountSid, authToken: l.authToken, fromNumber, publicUrl, number: fromNumber });
+    } else errors.push(`${where}.provider must be "otacon" or "twilio"`);
+  }
+  const defaultLine = str(c.defaultLine) ?? lines[0]?.id ?? "";
+  if (lines.length && !lines.some((l) => l.id === defaultLine)) errors.push(`defaultLine: no line ${defaultLine}`);
 
   const allowFrom = Array.isArray(c.allowFrom) ? c.allowFrom.filter((n) => typeof n === "string") : [];
   for (const n of allowFrom) if (!isE164(n)) errors.push(`allowFrom: ${n} is not E.164`);
@@ -179,7 +234,8 @@ export function parseConfig(raw: unknown): { config?: OtaconVoiceConfig; errors:
     errors,
     config: {
       enabled: c.enabled !== false,
-      otacon: { url: url!, phoneId: phoneId!, takeover: otacon.takeover === true },
+      lines,
+      defaultLine,
       agentId: str(c.agentId),
       sessionScope: oneOf(c.sessionScope, ["per-phone", "per-call", "main"] as const, "per-phone"),
       ownerName: str(c.ownerName) ?? "my principal",

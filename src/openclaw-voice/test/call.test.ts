@@ -36,6 +36,7 @@ function setup(o: { direction?: "outbound" | "inbound"; contacts?: Contact[]; cf
     api,
     config: config({ holdCapSeconds: 60, ringTimeoutSeconds: 20, ...o.cfg }),
     link,
+    line: { id: "sim" },
     sdk,
     detector,
     direction: o.direction ?? "outbound",

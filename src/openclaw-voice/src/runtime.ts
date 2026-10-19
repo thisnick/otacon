@@ -1,12 +1,15 @@
-// The plugin's long-lived side: one otacon control socket for the configured
-// phone, the active call mission, inbound call screening, and reporting call
-// outcomes back to the agent session that asked for the call.
+// The plugin's long-lived side: the configured phone lines (otacon phones,
+// Twilio numbers), each with at most one call mission at a time, inbound
+// call screening, and reporting call outcomes back to the agent session
+// that asked for the call.
 
 import { AsyncResource } from "node:async_hooks";
 import type { PluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import { CallMission, type MenuDeps, type MissionReport, type Party, type RealtimeSdk, type SpeechDetectorLike } from "./call.js";
-import { isE164, type Contact, type OtaconVoiceConfig } from "./config.js";
+import { isE164, type Contact, type LineConfig, type OtaconVoiceConfig } from "./config.js";
+import type { LineLink } from "./line.js";
 import { OtaconLink } from "./otacon.js";
+import { TwilioLine } from "./twilio.js";
 import { openRouterDecisions } from "./navigator.js";
 import { formatReport } from "./report.js";
 import { openAiLiveTranscriber } from "./transcriber.js";
@@ -24,11 +27,20 @@ export interface StartCall {
   sessionKey?: string;
   /** Longest hold before the navigator hangs up (default: config.holdCapSeconds; at most maxCallSeconds) */
   holdLimitSeconds?: number;
+  /** The line to call from (default: config.defaultLine) */
+  line?: string;
+}
+
+/** One configured line: its link, its speech detector, its call. */
+interface Slot {
+  config: LineConfig;
+  link?: LineLink;
+  detector: SpeechDetectorLike | null;
+  mission?: CallMission;
 }
 
 export class OtaconVoiceRuntime {
-  readonly link: OtaconLink;
-  private mission?: CallMission;
+  private slots = new Map<string, Slot>();
   /**
    * The plugin service's async context, from start(). A call an agent places
    * runs in it, not in the agent turn that called the tool: OpenClaw closes
@@ -36,18 +48,49 @@ export class OtaconVoiceRuntime {
    * would then fail ("Async work scope is closed").
    */
   private home?: AsyncResource;
-  private detector: SpeechDetectorLike | null = null;
   private recent: MissionReport[] = [];
 
   constructor(
     private api: PluginApi,
     private config: OtaconVoiceConfig,
     private sdk: RealtimeSdk,
-    deps: { link?: OtaconLink; createDetector?: () => Promise<SpeechDetectorLike | null>; menu?: MenuDeps } = {},
+    /** Tests pass links by line id */
+    private deps: { links?: Record<string, LineLink>; createDetector?: () => Promise<SpeechDetectorLike | null>; menu?: MenuDeps } = {},
   ) {
-    this.link = deps.link ?? new OtaconLink({ ...config.otacon, logger: api.logger });
+    for (const line of config.lines) this.slots.set(line.id, { config: line, detector: null });
     this.createDetector = deps.createDetector ?? (() => SpeechDetector.create());
     this.menu = deps.menu;
+  }
+
+  /** A line's link (tests, the Twilio routes). */
+  link(id = this.config.defaultLine): LineLink | undefined {
+    return this.slots.get(id)?.link;
+  }
+
+  /** The Twilio line with this id, for its routes. */
+  twilio(id: string): TwilioLine | undefined {
+    const link = this.slots.get(id)?.link;
+    return link instanceof TwilioLine ? link : undefined;
+  }
+
+  private async createLink(line: LineConfig): Promise<LineLink | undefined> {
+    const given = this.deps.links?.[line.id];
+    if (given) return given;
+    if (line.provider === "otacon") return new OtaconLink({ url: line.url, phoneId: line.phoneId, takeover: line.takeover, logger: this.api.logger });
+    const authToken = await this.secret(line.authToken);
+    if (!authToken) {
+      this.api.logger.warn(`[otacon-voice] line ${line.id}: no Twilio auth token (authToken); the line is off`);
+      return undefined;
+    }
+    return new TwilioLine({
+      id: line.id,
+      accountSid: line.accountSid,
+      authToken,
+      fromNumber: line.fromNumber,
+      publicUrl: line.publicUrl,
+      ringTimeoutSeconds: this.config.ringTimeoutSeconds,
+      logger: this.api.logger,
+    });
   }
 
   private createDetector: () => Promise<SpeechDetectorLike | null>;
@@ -57,10 +100,29 @@ export class OtaconVoiceRuntime {
   async start() {
     this.home = new AsyncResource("otacon-voice.call");
     this.menu ??= await this.buildMenu();
-    this.detector = await this.createDetector().catch(() => null);
-    if (!this.detector) this.api.logger.warn("[otacon-voice] speech detector unavailable (onnxruntime-node); the phone-menu navigator won't time holds");
-    this.link.on("call", (msg) => this.onCall(msg));
-    this.link.start();
+    for (const slot of this.slots.values()) {
+      // One detector per line: it keeps state, and lines can have calls at once.
+      slot.detector = await this.createDetector().catch(() => null);
+      slot.link = await this.createLink(slot.config);
+      if (!slot.link) continue;
+      slot.link.screen = (number) => this.takes(slot, number);
+      const home = this.home;
+      if (slot.link.runIn) slot.link.runIn = (fn) => home.runInAsyncScope(fn);
+      slot.link.on("call", (msg) => this.onCall(slot, msg));
+      slot.link.start();
+    }
+    if ([...this.slots.values()].some((s) => !s.detector))
+      this.api.logger.warn("[otacon-voice] speech detector unavailable (onnxruntime-node); the phone-menu navigator won't time holds");
+  }
+
+  /** The lines, for logs and the tool description. */
+  get lines(): { id: string; provider: string; number?: string; label: string }[] {
+    return [...this.slots.values()].map((s) => ({
+      id: s.config.id,
+      provider: s.config.provider,
+      number: s.config.number,
+      label: s.link?.label ?? s.config.id,
+    }));
   }
 
   /**
@@ -116,28 +178,40 @@ export class OtaconVoiceRuntime {
   }
 
   stop() {
-    this.mission?.finish("ended_by_agent", "The gateway stopped.");
-    this.link.stop();
+    for (const slot of this.slots.values()) {
+      slot.mission?.finish("ended_by_agent", "The gateway stopped.");
+      slot.link?.stop();
+    }
   }
 
-  get busy() {
-    return Boolean(this.mission && !this.mission.status.ended);
+  private busy(slot: Slot) {
+    return Boolean(slot.mission && !slot.mission.status.ended);
+  }
+
+  /** Missions under way, newest first. */
+  private live(): CallMission[] {
+    return [...this.slots.values()].flatMap((s) => (s.mission && this.busy(s) ? [s.mission] : [])).reverse();
   }
 
   status(missionId?: string) {
-    if (this.mission && (!missionId || this.mission.id === missionId)) return this.mission.status;
+    const all = [...this.slots.values()].flatMap((s) => (s.mission ? [s.mission] : []));
+    const m = missionId ? all.find((x) => x.id === missionId) : (this.live()[0] ?? all.at(-1));
+    if (m) return m.status;
     const r = this.recent.find((r) => r.missionId === missionId);
     return r ? { missionId: r.missionId, ended: true, outcome: r.outcome, summary: r.summary } : null;
   }
 
   async startCall(req: StartCall): Promise<{ missionId: string }> {
-    if (!this.link.open) throw new Error("not connected to the otacon phone");
-    if (this.busy) throw new Error("a call is already in progress on this phone");
+    const id = req.line ?? this.config.defaultLine;
+    const slot = this.slots.get(id);
+    if (!slot) throw new Error(`no line ${id}; lines: ${[...this.slots.keys()].join(", ")}`);
+    if (!slot.link?.open) throw new Error(`line ${id} isn't connected`);
+    if (this.busy(slot)) throw new Error(`a call is already in progress on line ${id}`);
     if (!isE164(req.to)) throw new Error("`to` must be an E.164 number like +15551234567");
     const contacts = [...this.config.contacts, ...(req.contacts ?? [])];
     const known = contacts.find((c) => c.number === req.to);
     const party: Party = { name: req.name?.trim() || known?.name || req.to, number: req.to, role: "primary" };
-    const mission = this.newMission({
+    const mission = this.newMission(slot, {
       direction: "outbound",
       party,
       brief: req.brief,
@@ -154,12 +228,14 @@ export class OtaconVoiceRuntime {
   }
 
   endCall(missionId?: string) {
-    if (!this.mission || (missionId && this.mission.id !== missionId)) return false;
-    this.mission.finish("ended_by_agent", "Ended at the agent's request.");
+    const live = this.live();
+    const m = missionId ? live.find((x) => x.id === missionId) : live.length === 1 ? live[0] : undefined;
+    if (!m) return false;
+    m.finish("ended_by_agent", "Ended at the agent's request.");
     return true;
   }
 
-  private newMission(o: {
+  private newMission(slot: Slot, o: {
     direction: "outbound" | "inbound";
     party: Party;
     brief?: string;
@@ -174,31 +250,37 @@ export class OtaconVoiceRuntime {
     const mission = new CallMission({
       api: this.api,
       config: this.config,
-      link: this.link,
+      link: slot.link!,
+      line: { id: slot.config.id, number: slot.config.number },
       sdk: this.sdk,
-      detector: this.detector,
+      detector: slot.detector,
       ...o,
       onEnd: (report) => this.onMissionEnd(report),
     });
-    this.mission = mission;
+    slot.mission = mission;
     return mission;
   }
 
-  /** Inbound: answer allowlisted callers; leave everyone else ringing. */
-  private onCall(msg: any) {
+  /** Whether a line takes an incoming call now. */
+  private takes(slot: Slot, number: string | null) {
+    return this.config.inboundPolicy === "allowlist" && Boolean(number) && this.config.allowFrom.includes(number!) && !this.busy(slot);
+  }
+
+  /** Inbound: answer allowlisted callers; leave everyone else ringing (a Twilio line rejects them). */
+  private onCall(slot: Slot, msg: any) {
     if (msg.type !== "call.incoming" || this.config.inboundPolicy !== "allowlist") return;
     const number: string | null = msg.call?.number ?? null;
     if (!number || !this.config.allowFrom.includes(number)) {
-      this.api.logger.info(`[otacon-voice] ignoring incoming call from ${number ?? "an unknown number"} (not allowlisted)`);
+      this.api.logger.info(`[otacon-voice] line ${slot.config.id}: ignoring incoming call from ${number ?? "an unknown number"} (not allowlisted)`);
       return;
     }
-    if (this.busy) {
-      this.api.logger.info(`[otacon-voice] ignoring incoming call from ${number}: already on a call`);
+    if (this.busy(slot)) {
+      this.api.logger.info(`[otacon-voice] line ${slot.config.id}: ignoring incoming call from ${number}: already on a call`);
       return;
     }
     const known = this.config.contacts.find((c) => c.number === number);
-    this.api.logger.info(`[otacon-voice] answering ${known?.name ?? number}`);
-    const mission = this.newMission({
+    this.api.logger.info(`[otacon-voice] line ${slot.config.id}: answering ${known?.name ?? number}`);
+    const mission = this.newMission(slot, {
       direction: "inbound",
       party: { name: known?.name ?? number, number, role: "primary" },
       contacts: this.config.contacts,

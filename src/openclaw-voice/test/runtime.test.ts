@@ -22,7 +22,7 @@ function setup(extra: Record<string, unknown> = {}) {
     return {};
   };
   const rt = new OtaconVoiceRuntime(api, config({ inboundPolicy: "allowlist", allowFrom: [ALLOWED], ...extra }), sdk, {
-    link,
+    links: { sim: link },
     createDetector: async () => null,
   });
   return { rt, link, sdk, sessions, events, wakes, consults };
@@ -51,7 +51,7 @@ test("inbound: allowlisted callers are answered, and the call is reported to mai
   await settle();
   assert.equal(events.length, 1);
   assert.equal(events[0].sessionKey, "agent:main:main");
-  assert.match(events[0].text, /Incoming call from \+15555550102 ended \(completed/);
+  assert.match(events[0].text, /Incoming call from \+15555550102 to sim ended \(completed/);
   assert.match(events[0].text, /\+15555550102: Hi, it's me/);
   assert.equal(wakes.length, 1, "the agent is woken to read it");
 });
@@ -111,13 +111,13 @@ test("outbound: one call at a time; the report goes to the requesting session", 
     holdLimitSeconds: 99_999,
   });
   await settle();
-  assert.equal((rt as any).mission.o.holdLimitSeconds, 1800, "a hold limit is capped by the call's");
+  assert.equal((rt as any).slots.get("sim").mission.o.holdLimitSeconds, 1800, "a hold limit is capped by the call's");
   await assert.rejects(rt.startCall({ to: "+15555550100", brief: "again", agentId: "main" }), /already in progress/);
   await assert.rejects(rt.startCall({ to: "5551234", brief: "x", agentId: "main" }).catch((e) => Promise.reject(e)), /already in progress|E.164/);
   link.call("call.ended", { id: "o1" }, "failed");
   await settle();
   assert.equal(events[0].sessionKey, "agent:main:chat-1");
-  assert.match(events[0].text, /placed to Luigi's \(\+15555550100\) has ended \(no_answer/);
+  assert.match(events[0].text, /placed to Luigi's \(\+15555550100\) from sim has ended \(no_answer/);
   assert.equal(rt.status(missionId)?.ended, true);
 });
 
@@ -137,4 +137,41 @@ test("the phone-menu navigator: on with an OpenRouter key (a SecretRef) and the 
   await off.rt.start();
   assert.ok(logs.some((l) => /navigator off: no OpenRouter key/.test(l)));
   off.rt.stop();
+});
+
+test("lines: calls go out on the default line or the one named, one call per line, at once", async () => {
+  const sim = new FakeLink();
+  const other = new FakeLink();
+  for (const [l, id] of [[sim, "s1"], [other, "o1"]] as const)
+    l.handler = (type, f) => {
+      if (type !== "dial") return {};
+      l.call("call.state", { id, number: f.to, state: "dialing" });
+      return { call: l.calls.get(id) };
+    };
+  const { sdk } = fakeSdk();
+  const { api } = fakeApi();
+  const cfg = config({
+    lines: [
+      { id: "sim", provider: "otacon", url: "https://otacon.test:8080", phoneId: "phone-test" },
+      { id: "other", provider: "otacon", url: "https://otacon.test:8080", phoneId: "phone-other", number: "+15550008888" },
+    ],
+    defaultLine: "other",
+  });
+  const rt = new OtaconVoiceRuntime(api, cfg, sdk, { links: { sim, other }, createDetector: async () => null });
+  await rt.start();
+  try {
+    await rt.startCall({ to: "+15555550100", brief: "x", agentId: "main" });
+    await settle();
+    assert.equal(other.cmds[0]?.type, "dial", "the default line");
+    await assert.rejects(rt.startCall({ to: "+15555550100", brief: "x", agentId: "main" }), /already in progress on line other/);
+    await rt.startCall({ to: "+15555550101", brief: "x", agentId: "main", line: "sim" });
+    await settle();
+    assert.equal(sim.cmds[0]?.type, "dial", "a second call on the other line, at the same time");
+    await assert.rejects(rt.startCall({ to: "+15555550100", brief: "x", agentId: "main", line: "nope" }), /no line nope; lines: sim, other/);
+    assert.deepEqual(rt.lines.map((l) => [l.id, l.number]), [["sim", undefined], ["other", "+15550008888"]]);
+  } finally {
+    sim.call("call.ended", { id: "s1" }, "failed");
+    other.call("call.ended", { id: "o1" }, "failed");
+    await settle();
+  }
 });

@@ -12,6 +12,7 @@ const base = {
   endedAt: 65_000,
   sessionKey: "agent:main:voice:15550001111",
   agentId: "main",
+  line: { id: "twilio", number: "+15550009999" },
 };
 
 test("report: the whole call log, timestamped, with events", () => {
@@ -25,7 +26,7 @@ test("report: the whole call log, timestamped, with events", () => {
       { t: 230_500, line: 1, kind: "say", who: "assistant", text: "Two, at 7:30." },
     ],
   });
-  assert.match(text, /placed to Luigi's \(\+15550001111\) has ended \(completed, 65s\)/);
+  assert.match(text, /placed to Luigi's \(\+15550001111\) from twilio \(\+15550009999\) has ended \(completed, 65s\)/);
   assert.match(text, /The assistant's note: Booked for 2 at 7:30/);
   assert.match(text, /\[00:11\] \[line 1\] — pressed 3/);
   assert.match(text, /\[03:44\] \[line 1\] Luigi's: How many people\?/);

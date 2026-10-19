@@ -1,7 +1,9 @@
 # otacon-voice (OpenClaw plugin)
 
-Phone calls through an [otacon](../../README.md) phone, carried out by a
-realtime voice model, with the OpenClaw agent behind it.
+Phone calls through [otacon](../../README.md) phones and Twilio numbers,
+carried out by a realtime voice model, with the OpenClaw agent behind it.
+Each configured line (a phone or a number) takes incoming calls and can
+place calls; the agent picks the line, or the default one is used.
 
 - **Agent tool `otacon_call`**: place a call with a goal (`brief`); it runs in
   the background, and when it ends the whole call log (both sides,
@@ -10,9 +12,12 @@ realtime voice model, with the OpenClaw agent behind it.
   summarize and act on. When the other side hangs up, the report waits up to
   3 s for its last words.
 - `otacon_call` takes `holdLimitMinutes` to set how long that call waits on
-  hold (default `holdCapSeconds`, 300 s; at most `maxCallSeconds`, 1800 s).
-- **On the call** the voice model can press keys (`send_dtmf`, sent over
-  Bluetooth HFP as `AT+VTS`), consult the agent (`openclaw_agent_consult`), end the call with a summary, and, when
+  hold (default `holdCapSeconds`, 300 s; at most `maxCallSeconds`, 1800 s),
+  and, with more than one line, `line` (default `defaultLine`). Each line
+  has at most one call at a time; different lines can have calls at once.
+- **On the call** the voice model can press keys (`send_dtmf`: over
+  Bluetooth HFP as `AT+VTS` on a phone, a `<Play digits>` redirect on
+  Twilio), consult the agent (`openclaw_agent_consult`), end the call with a summary, and, when
   contacts are allowed, bring a person in on a second line and join the
   lines (`call_party`, `switch_line`, `connect_lines`, `drop_line`).
 - **Hold**: asked to hold, the voice model says "Sure, I'll hold." Holds are
@@ -23,18 +28,30 @@ realtime voice model, with the OpenClaw agent behind it.
   person has answered, and on incoming calls, aren't handled: `maxCallSeconds`
   ends the call.
 - **Inbound**: with `inboundPolicy: "allowlist"`, calls from `allowFrom` are
-  answered; all others are left ringing. The voice model speaks first, its
+  answered; all others are left ringing (a Twilio line rejects them). The
+  voice model speaks first, its
   first words including `inboundGreeting` (default "Hello! How can I help
   you today?", as voice-call; `""`: it waits for the caller).
 
-It talks to otacon's `ws/voice/control` socket for one phone (see
-`docs/voice-ws.md`), which the plugin holds for as long as it runs.
+A phone line talks to otacon's `ws/voice/control` socket for its phone (see
+`docs/voice-ws.md`), which the plugin holds for as long as it runs. A Twilio
+line is described under [Twilio lines](#twilio-lines).
 
 ## Config (`plugins.entries.otacon-voice.config`)
 
 ```json
 {
-  "otacon": { "url": "https://otacon-pi.<tailnet>.ts.net:8080", "phoneId": "phone-r5ct60sd" },
+  "lines": [
+    { "id": "sim", "provider": "otacon", "url": "https://otacon-pi.<tailnet>.ts.net:8080", "phoneId": "phone-r5ct60sd", "number": "+15550003333" },
+    {
+      "id": "twilio", "provider": "twilio",
+      "accountSid": "AC…",
+      "authToken": { "source": "store", "provider": "default", "id": "TWILIO_AUTH_TOKEN" },
+      "fromNumber": "+15550004444",
+      "publicUrl": "https://<host>.<tailnet>.ts.net/otacon-voice/twilio/twilio"
+    }
+  ],
+  "defaultLine": "sim",
   "ownerName": "Nick",
   "assistantName": "Nick's assistant",
   "inboundPolicy": "allowlist",
@@ -45,6 +62,10 @@ It talks to otacon's `ws/voice/control` socket for one phone (see
   "holdCapSeconds": 300
 }
 ```
+
+`id` is what the agent picks; the tool's description lists each line with
+its `number` (a Twilio line's is `fromNumber`). `defaultLine` defaults to
+the first line.
 
 The realtime API key comes from `realtime.providers.openai.apiKey` (a
 SecretRef), an OpenAI auth profile, or `OPENAI_API_KEY`.
@@ -129,6 +150,50 @@ the other party waits. The voice model introduces the lookup in its own
 words; while the agent works, its result for the consult says the answer
 is coming, so if the other party talks meanwhile the model tells them it's
 still checking.
+
+## Twilio lines
+
+A Twilio line places calls through Twilio's REST API and carries their audio
+over bidirectional Media Streams (8 kHz µ-law, converted to the plugin's
+16 kHz). The gateway serves its routes, under
+`/otacon-voice/twilio/<line id>/`:
+
+- `answer`: the number's voice URL (POST). Allowlisted callers get the
+  stream; everyone else, or anyone while the line is busy, gets `<Reject/>`.
+- `status`: call status callbacks (POST). Calls the line places set it
+  themselves; set it on the number too, so incoming calls report their end.
+- `stream`: the media stream (WebSocket).
+
+Twilio has to reach them: expose the path publicly (for example
+`tailscale funnel --bg --set-path /otacon-voice/twilio https+insecure://127.0.0.1:18789/otacon-voice/twilio`)
+and set `publicUrl` to the public URL of the line's routes. Webhooks are
+checked with `X-Twilio-Signature` against `publicUrl`, so it must be exactly
+what Twilio calls; streams carry a token of their own. On the Twilio number,
+set the voice URL to `<publicUrl>/answer` and the status callback to
+`<publicUrl>/status`, both POST.
+
+How a phone's features map onto Twilio:
+
+- Key presses: Twilio can't send them over a media stream, so a press
+  redirects the call to `<Play digits>` and then a new stream. The voice
+  model's session carries on; the audio pauses briefly while the stream is replaced.
+- Hold, swap, a second line: each call has its own stream, and the line
+  routes the voice model to the active one. A held call hears silence.
+- Joining two lines (`connect_lines`): both calls are redirected into a
+  Twilio conference that ends when either leaves; the assistant drops off.
+
+## Upgrading from 2.x
+
+3.0 replaces the `otacon` block with `lines`. OpenClaw checks the config
+against both the installed and the new plugin's schema, so install over a
+2.x plugin fails whichever shape the config has. With the gateway stopped:
+
+1. `openclaw plugins uninstall otacon-voice --force` (its 2.x config is still valid);
+2. `openclaw plugins install @otacon-fleet/openclaw-otacon-voice@3 --force --accept-capabilities`
+   (it stays off until configured);
+3. write the config with `lines` (the old `otacon` block becomes
+   `{ "id": …, "provider": "otacon", "url": …, "phoneId": … }`), then
+   `openclaw plugins enable otacon-voice`.
 
 ## Third-party
 

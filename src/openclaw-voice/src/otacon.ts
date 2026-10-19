@@ -2,25 +2,11 @@
 // otacon repo): commands with ids and acks, call events, marks, clear, and
 // full-duplex call audio (pcm_s16le, mono, 16 kHz on the Bluetooth backend).
 
-import { EventEmitter } from "node:events";
 import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
+import { LineBase, LineError, type LineCall, type LineLink } from "./line.js";
 
-export interface OtaconCall {
-  id: string;
-  number: string | null;
-  numberSource?: "hfp" | "kiosk";
-  direction: "outgoing" | "incoming";
-  state: "dialing" | "alerting" | "incoming" | "active" | "held" | "ended";
-  conference: boolean;
-  startedAt: number;
-  answeredAt?: number;
-}
-
-export class OtaconCommandError extends Error {
-  constructor(public code: string, message: string) {
-    super(`${code}: ${message}`);
-  }
-}
+export type OtaconCall = LineCall;
+export { LineError as OtaconCommandError };
 
 interface Pending {
   resolve(v: any): void;
@@ -32,23 +18,24 @@ interface Pending {
  * Events: "hello" (msg), "call" (msg: call.incoming / call.state /
  * call.ended), "audio" (Buffer), "link" (up: boolean), "open", "close".
  */
-export class OtaconLink extends EventEmitter {
+export class OtaconLink extends LineBase implements LineLink {
   private ws?: WebSocket;
   private stopped = false;
   private next = 0;
   private pending = new Map<string, Pending>();
   private marks = new Map<string, (cleared: boolean) => void>();
   private retryMs = 1000;
-  readonly calls = new Map<string, OtaconCall>();
   sampleRate = 16000;
   hfpConnected = false;
-  open = false;
 
   constructor(
     private opts: { url: string; phoneId: string; takeover: boolean; logger: PluginLogger },
   ) {
     super();
-    this.setMaxListeners(50);
+  }
+
+  get label() {
+    return this.opts.phoneId;
   }
 
   start() {
@@ -83,7 +70,7 @@ export class OtaconLink extends EventEmitter {
       this.open = false;
       for (const [, p] of this.pending) {
         clearTimeout(p.timer);
-        p.reject(new OtaconCommandError("disconnected", "the otacon socket closed"));
+        p.reject(new LineError("disconnected", "the otacon socket closed"));
       }
       this.pending.clear();
       for (const [, done] of this.marks) done(true);
@@ -128,7 +115,7 @@ export class OtaconLink extends EventEmitter {
         this.pending.delete(msg.id);
         clearTimeout(p.timer);
         if (msg.type === "ack") p.resolve(msg.result ?? {});
-        else p.reject(new OtaconCommandError(msg.code, msg.message));
+        else p.reject(new LineError(msg.code, msg.message));
         return;
       }
       case "mark": {
@@ -158,12 +145,12 @@ export class OtaconLink extends EventEmitter {
   /** Run a command; resolves with `ack.result`. */
   cmd(type: string, fields: Record<string, unknown> = {}, timeoutMs = 45_000): Promise<any> {
     const ws = this.ws;
-    if (!ws || !this.open) return Promise.reject(new OtaconCommandError("disconnected", "not connected to otacon"));
+    if (!ws || !this.open) return Promise.reject(new LineError("disconnected", "not connected to otacon"));
     const id = String(++this.next);
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new OtaconCommandError("timeout", `${type}: no reply from otacon`));
+        reject(new LineError("timeout", `${type}: no reply from otacon`));
       }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
       ws.send(JSON.stringify({ ...fields, type, id }));
@@ -193,25 +180,5 @@ export class OtaconLink extends EventEmitter {
     } catch {
       return 0;
     }
-  }
-
-  /** Wait for a call to reach a state (or end). */
-  waitFor(callId: string, states: OtaconCall["state"][], timeoutMs: number): Promise<OtaconCall | null> {
-    const now = this.calls.get(callId);
-    if (now && states.includes(now.state)) return Promise.resolve(now);
-    return new Promise((resolve) => {
-      const done = (v: OtaconCall | null) => {
-        clearTimeout(timer);
-        this.off("call", onCall);
-        resolve(v);
-      };
-      const onCall = (msg: any) => {
-        if (msg.call?.id !== callId) return;
-        if (msg.type === "call.ended") return done({ ...msg.call, state: "ended" });
-        if (states.includes(msg.call.state)) done(msg.call);
-      };
-      const timer = setTimeout(() => done(this.calls.get(callId) ?? null), timeoutMs);
-      this.on("call", onCall);
-    });
   }
 }

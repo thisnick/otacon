@@ -70,9 +70,11 @@ case "$1" in
     wait $D $N 2>/dev/null
     ;;
   inbound)
-    PLUGIN_PHONE="${OTACON_VOICE_PHONE:-phone-2}"
+    # The plugin's first line: its fleet phone, or the Twilio number.
+    PLUGIN_PHONE="${OTACON_VOICE_PHONE:-phone-2}"; DIAL="$PLUGIN_PHONE"
+    case "${OTACON_VOICE_LINES:-phone}" in twilio*) DIAL="$(fleet get twilioLine.number)"; PLUGIN_PHONE=none ;; esac
     CALLER=phone-3; [ "$PLUGIN_PHONE" = phone-3 ] && CALLER=phone-pixel4
-    py "$HERE/persona.py" --phone "$CALLER" --persona nick-calls --voice cedar --dial "$PLUGIN_PHONE" --hangup-on-goodbye \
+    py "$HERE/persona.py" --phone "$CALLER" --persona nick-calls --voice cedar --dial "$DIAL" --hangup-on-goodbye \
       --log "$RUN/personas.jsonl" > "$RUN/nick.log" 2>&1
     sleep 30
     ;;

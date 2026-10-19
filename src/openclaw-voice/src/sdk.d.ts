@@ -69,6 +69,18 @@ declare module "openclaw/plugin-sdk/plugin-entry" {
       start(ctx: ServiceContext): void | Promise<void>;
       stop?(ctx: ServiceContext): void | Promise<void>;
     }): void;
+    /** HTTP routes on the gateway; auth "plugin": the plugin checks requests itself. */
+    registerHttpRoute(params: {
+      path: string;
+      auth: "gateway" | "plugin";
+      match?: "exact" | "prefix";
+      handler: (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => Promise<boolean | void> | boolean | void;
+      handleUpgrade?: (
+        req: import("node:http").IncomingMessage,
+        socket: import("node:stream").Duplex,
+        head: Buffer,
+      ) => Promise<boolean | void> | boolean | void;
+    }): void;
   }
   export function definePluginEntry(opts: {
     id: string;

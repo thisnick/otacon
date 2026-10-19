@@ -20,10 +20,12 @@ export function formatLogEntry(e: LogEntry): string {
 export function formatReport(r: MissionReport): string {
   const secs = Math.round((r.endedAt - r.startedAt) / 1000);
   const who = r.party.name === r.party.number ? r.party.number : `${r.party.name} (${r.party.number})`;
+  // "[line 1]" in the log is a call leg; the phone line is named here.
+  const ours = r.line ? `${r.line.id}${r.line.number ? ` (${r.line.number})` : ""}` : "";
   const head =
     r.direction === "outbound"
-      ? `[otacon-voice] The phone call you placed to ${who} has ended (${r.outcome}, ${secs}s).`
-      : `[otacon-voice] Incoming call from ${who} ended (${r.outcome}, ${secs}s).`;
+      ? `[otacon-voice] The phone call you placed to ${who}${ours ? ` from ${ours}` : ""} has ended (${r.outcome}, ${secs}s).`
+      : `[otacon-voice] Incoming call from ${who}${ours ? ` to ${ours}` : ""} ended (${r.outcome}, ${secs}s).`;
   const out = [head];
   if (r.brief) out.push(`Goal: ${r.brief}`);
   if (r.summary) out.push(`The assistant's note: ${r.summary}`);
