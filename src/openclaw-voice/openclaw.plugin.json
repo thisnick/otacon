@@ -8,7 +8,8 @@
   },
   "contracts": {
     "tools": [
-      "otacon_call"
+      "otacon_call",
+      "otacon_listen"
     ]
   },
   "configContracts": {
