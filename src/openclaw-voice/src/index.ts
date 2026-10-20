@@ -182,6 +182,45 @@ export default definePluginEntry({
       { scope: "operator.read" },
     );
 
+    // Listen-in: only when configured, with a line that can place the extra call.
+    if (config.listen) {
+      api.registerTool(() => ({
+        name: "otacon_listen",
+        label: "Listen in on a call",
+        description:
+          "Let the user listen in on a phone call in progress: start places a call to the user's configured number that plays both sides of the call (listen-only); stop hangs that up. Hanging up the listening call never ends the call itself, and the user can ask to listen again. Use it when the user asks to listen to a call.",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            action: { type: "string", enum: ["start", "stop"], description: "start: call the user to listen; stop: hang up the listening call" },
+            callId: { type: "string", description: "the call id from otacon_call (default: the call in progress)" },
+          },
+          required: ["action"],
+        },
+        async execute(_id: string, p: any) {
+          try {
+            if (!runtime) return jsonResult({ error: "otacon-voice is not running in this process" });
+            return jsonResult(await runtime.listen(p.action === "stop" ? "stop" : "start", p.callId));
+          } catch (err) {
+            return jsonResult({ error: err instanceof Error ? err.message : String(err) });
+          }
+        },
+      }));
+      api.registerGatewayMethod(
+        "otaconvoice.listen",
+        async ({ params, respond }) => {
+          try {
+            if (!runtime) throw new Error("otacon-voice is not running in this process");
+            respond(true, await runtime.listen(params?.action === "stop" ? "stop" : "start", params?.callId));
+          } catch (err) {
+            respond(false, undefined, { code: "INVALID_REQUEST", message: err instanceof Error ? err.message : String(err) });
+          }
+        },
+        { scope: "operator.write" },
+      );
+    }
+
     // Twilio lines: their webhooks and media streams, on the gateway. Twilio
     // signs what it sends; the routes check that themselves (auth "plugin").
     if (config.lines.some((l) => l.provider === "twilio")) {

@@ -91,3 +91,12 @@ test("lines: otacon and Twilio, the default, and their errors", () => {
     'lines[1] (x).provider must be "otacon" or "twilio"',
   ]);
 });
+
+test("listen: a number to call, and a Twilio line to call from", () => {
+  const tw = { id: "tw", provider: "twilio", accountSid: "AC1", authToken: "t", fromNumber: "+15550009999", publicUrl: "https://gw.example/x" };
+  assert.deepEqual(parseConfig({ lines: [base.lines[0], tw], listen: { to: "+15550004444" } }).config!.listen, { to: "+15550004444", line: undefined });
+  assert.deepEqual(parseConfig({ lines: [base.lines[0]], listen: { to: "+15550004444" } }).errors, ["listen needs a Twilio line to dial from"]);
+  assert.deepEqual(parseConfig({ lines: [base.lines[0], tw], listen: { to: "+15550004444", line: "sim" } }).errors, ["listen.line: sim isn't a Twilio line"]);
+  assert.deepEqual(parseConfig({ lines: [base.lines[0], tw], listen: { to: "555" } }).errors, ["listen.to must be E.164"]);
+  assert.equal(parseConfig({ lines: [base.lines[0], tw] }).config!.listen, undefined);
+});

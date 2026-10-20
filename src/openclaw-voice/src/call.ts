@@ -26,7 +26,8 @@ import { buildAgentContext, type AgentContextSdk } from "./context.js";
 import { MenuNavigator, type DecisionClient, type HangUpReason } from "./navigator.js";
 import { callSessionKey, type SessionKeySdk } from "./session.js";
 import type { Transcriber } from "./transcriber.js";
-import { LineError, type LineCall, type LineLink } from "./line.js";
+import { LineError, type LineCall, type LineLink, type Listener } from "./line.js";
+import { CallMix } from "./mix.js";
 
 /** The parts of the realtime-voice SDK a call uses (see realtime.ts); tests pass fakes. */
 export interface RealtimeSdk {
@@ -196,6 +197,9 @@ export class CallMission {
   private notesUnavailable = false;
   /** While waiting for the last words after the other side hung up */
   private flushing = false;
+  /** People listening in (listen-in calls), and the mix they hear */
+  private listeners = new Map<string, { who: string; listener: Listener }>();
+  private mix = new CallMix();
   /** How lines ended, held while finish() waits for the last words */
   private endNotes?: { text: string; line: number }[];
   private onHeard?: () => void;
@@ -228,6 +232,7 @@ export class CallMission {
       outcome: this.ended ? this.outcome : undefined,
       lines: this.lines.map((l) => ({ line: l.n, party: l.party.name, number: l.party.number, state: l.state })),
       activeLine: this.active,
+      listening: [...this.listeners.values()].map((l) => l.who),
       seconds: Math.round((Date.now() - this.startedAt) / 1000),
     };
   }
@@ -359,6 +364,7 @@ export class CallMission {
     if (summary) this.summary = summary;
     for (const t of this.timers) clearTimeout(t);
     this.stopNavigator();
+    this.stopListeners();
     this.endNotes = o.endNote ? [o.endNote] : [];
     if (outcome !== "handed_off") {
       for (const l of this.lines.filter((l) => l.state !== "ended").reverse()) {
@@ -399,6 +405,30 @@ export class CallMission {
     clearTimeout(timer);
     this.onHeard = undefined;
     this.flushing = false;
+  }
+
+  // ---- listen-in ----
+
+  /** Someone listens in: they hear both sides from now on, until either call ends. */
+  addListener(who: string, listener: Listener) {
+    if (this.ended || this.detached) {
+      void listener.hangUp();
+      return;
+    }
+    if (!this.listeners.size) this.mix.clear();
+    this.listeners.set(listener.id, { who, listener });
+    this.note(`${who} started listening`);
+    this.debug(`${who} is listening (${listener.id})`);
+    listener.onEnd(() => {
+      if (!this.listeners.delete(listener.id)) return;
+      if (!this.ended) this.note(`${who} stopped listening`);
+      this.debug(`${who} stopped listening`);
+    });
+  }
+
+  /** Hang up the listen-in calls (the call itself carries on). */
+  stopListeners() {
+    for (const { listener } of [...this.listeners.values()]) void listener.hangUp();
   }
 
   report(): MissionReport {
@@ -694,6 +724,10 @@ export class CallMission {
 
   private onDownlink(pcm: Buffer) {
     if (this.ended || this.detached || this.active === null) return;
+    if (this.listeners.size) {
+      const mixed = this.mix.line(pcm);
+      for (const l of this.listeners.values()) l.listener.send(mixed);
+    }
     if (this.muted) this.keepPreroll(pcm);
     else this.session?.sendAudio(this.up.process(pcm));
     // Until it hands off, the navigator hears the line too: the words, and
@@ -746,10 +780,12 @@ export class CallMission {
     if (!this.playing || this.playing.itemId !== id) this.playing = { itemId: id, firstAt: now, sentMs: 0 };
     this.playing.sentMs += (audio.length / 2 / MODEL_RATE) * 1000;
     this.o.link.sendAudio(pcm);
+    if (this.listeners.size) this.mix.model(pcm);
   }
 
   private onClearAudio() {
     this.playing = null;
+    this.mix.clear();
     this.down = this.o.sdk.resampler(MODEL_RATE, 16000);
     this.o.link.clear();
   }
@@ -928,6 +964,7 @@ export class CallMission {
           this.debug("lines merged; leaving the call");
           this.note(`joined ${other.party.name} and ${current.party.name} into one call; the assistant left`);
           this.detached = true;
+          this.stopListeners();
           for (const t of this.timers) clearTimeout(t);
           this.timers = [];
           this.summary ??= `Connected ${other.party.name} with ${current.party.name}.`;

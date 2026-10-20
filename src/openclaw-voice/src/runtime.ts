@@ -227,6 +227,29 @@ export class OtaconVoiceRuntime {
     return { missionId: mission.id };
   }
 
+  /**
+   * Listen-in: call config.listen.to from a line that can (Twilio) and play
+   * the call into it; "stop" hangs that up. The call itself carries on.
+   */
+  async listen(action: "start" | "stop", missionId?: string): Promise<{ listening: boolean; note: string }> {
+    const live = this.live();
+    const m = missionId ? live.find((x) => x.id === missionId) : live[0];
+    if (!m) throw new Error(missionId ? `no call ${missionId} in progress` : "no call in progress");
+    if (action === "stop") {
+      m.stopListeners();
+      return { listening: false, note: "Hung up the listening call; the call carries on." };
+    }
+    const cfg = this.config.listen;
+    if (!cfg) throw new Error("listen-in isn't configured (listen.to)");
+    const slot = [...this.slots.values()].find((s) => (cfg.line ? s.config.id === cfg.line : true) && s.link?.listen && s.link.open);
+    if (!slot?.link?.listen) throw new Error("no line can place the listening call right now");
+    const status = m.status;
+    const intro = `Listening to the call with ${status.party.name}.`;
+    const listener = await (this.home ? this.home.runInAsyncScope(() => slot.link!.listen!(cfg.to, intro)) : slot.link.listen(cfg.to, intro));
+    m.addListener(this.config.ownerName, listener);
+    return { listening: true, note: `Calling ${this.config.ownerName} to listen in. Hanging up ends only the listening call.` };
+  }
+
   endCall(missionId?: string) {
     const live = this.live();
     const m = missionId ? live.find((x) => x.id === missionId) : live.length === 1 ? live[0] : undefined;

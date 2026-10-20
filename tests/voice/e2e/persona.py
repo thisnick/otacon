@@ -47,6 +47,9 @@ PERSONAS = {
         "'Can you check whether I have anything on my calendar tomorrow?' Listen to the answer, react briefly, thank it, "
         "and say goodbye. Keep it short and natural."
     ),
+    "listener": (
+        "You are listening in on a phone call. Never speak: say nothing at all, whatever you hear."
+    ),
     "nick": (
         "You are Nick. You just answered your phone. Say 'Hello?' once, then listen. Your assistant may ask you to "
         "join a call with your dentist's office: agree, saying something like 'Sure, put me through.' "

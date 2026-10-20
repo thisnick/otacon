@@ -19,7 +19,8 @@
 # fleet phone above, line id "sim"), "twilio" (line id "tw": the number,
 # account and public URL in fleet.local.json's twilioLine; its auth token in
 # the store, `gateway.sh secrets`). Default: "phone". The first is the
-# default line.
+# default line. OTACON_VOICE_LISTEN_TO (a fleet phone) turns on listen-in to
+# that phone.
 set -eu
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../../.." && pwd)"
@@ -54,6 +55,7 @@ cfg = {
   "agents": {"defaults": {"model": {"primary": "openai/gpt-6-luna"}}},
   "plugins": {"allow": ["otacon-voice"], "entries": {"otacon-voice": {"enabled": True, "config": {
     "lines": lines,
+    **({"listen": {"to": fleet.number(os.environ["OTACON_VOICE_LISTEN_TO"])}} if os.environ.get("OTACON_VOICE_LISTEN_TO") else {}),
     "ownerName": "Nick", "assistantName": "Nick's assistant",
     "inboundPolicy": "allowlist", "allowFrom": [fleet.number("phone-3"), fleet.number("phone-pixel4"), fleet.F["ownerNumber"]],
     "toolPolicy": "safe-read-only",

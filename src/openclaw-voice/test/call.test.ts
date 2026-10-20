@@ -418,3 +418,26 @@ test("agent context: the agent's identity and workspace files reach the voice mo
   assert.doesNotMatch(off.s.params.instructions, /agent voice context/);
   await off.m.finish("completed");
 });
+
+test("listen-in: a listener hears both sides, paced by the line; leaving doesn't end the call; the call's end hangs them up", async () => {
+  const { m, s, link, reports } = await connected();
+  const sent: Buffer[] = [];
+  let hungUp = 0;
+  let end: ((r: string) => void) | undefined;
+  m.addListener("Nick", { id: "L1", send: (b) => void sent.push(b), hangUp: async () => void (hungUp++, end?.("local")), onEnd: (fn) => void (end = fn) });
+  s.speak(Buffer.alloc(960)); // the voice model talks (24 kHz -> 16 kHz)
+  link.emit("audio", frame());
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].length, frame().length, "one line chunk, mixed");
+  assert.match(m.report().log.at(-1)!.text, /Nick started listening/);
+  assert.deepEqual(m.status.listening, ["Nick"]);
+  end!("remote"); // they hang up the listening call
+  link.emit("audio", frame());
+  assert.equal(sent.length, 1);
+  assert.equal(reports.length, 0, "the call carries on");
+  assert.match(m.report().log.at(-1)!.text, /Nick stopped listening/);
+
+  m.addListener("Nick", { id: "L2", send: () => {}, hangUp: async () => void hungUp++, onEnd: () => {} });
+  await m.finish("completed");
+  assert.equal(hungUp, 1, "the call's end hangs up the listening call");
+});
