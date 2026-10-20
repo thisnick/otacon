@@ -1,5 +1,11 @@
 # @otacon-fleet/openclaw-otacon-voice
 
+## 3.2.1
+
+### Patch Changes
+
+- 288ed6e: Declare `otacon_listen` in the manifest's `contracts.tools`. OpenClaw drops tools a plugin doesn't declare, so the agent never saw it.
+
 ## 3.2.0
 
 ### Minor Changes
