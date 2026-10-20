@@ -100,3 +100,12 @@ test("listen: a number to call, and a Twilio line to call from", () => {
   assert.deepEqual(parseConfig({ lines: [base.lines[0], tw], listen: { to: "555" } }).errors, ["listen.to must be E.164"]);
   assert.equal(parseConfig({ lines: [base.lines[0], tw] }).config!.listen, undefined);
 });
+
+test("the manifest declares every tool the plugin registers (OpenClaw drops undeclared ones)", async () => {
+  const fs = await import("node:fs");
+  const src = fs.readFileSync(new URL("../../src/index.ts", import.meta.url), "utf8");
+  const manifest = JSON.parse(fs.readFileSync(new URL("../../openclaw.plugin.json", import.meta.url), "utf8"));
+  const registered = new Set([...src.matchAll(/name: "(otacon_[a-z_]+)"/g)].map((m) => m[1]));
+  registered.add("otacon_call"); // registered through TOOL_NAME
+  assert.deepEqual([...registered].sort(), [...manifest.contracts.tools].sort());
+});
