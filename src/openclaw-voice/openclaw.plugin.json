@@ -108,6 +108,24 @@
         "type": "string",
         "description": "The line calls go out on unless otacon_call names one (default: the first)"
       },
+      "listen": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Listen-in (otacon_listen): the number a call may be played to, and the Twilio line that dials it (default: the first Twilio line)",
+        "properties": {
+          "to": {
+            "type": "string",
+            "description": "E.164 number to call for listen-in (the owner's)"
+          },
+          "line": {
+            "type": "string",
+            "description": "Id of the Twilio line that places the listening call"
+          }
+        },
+        "required": [
+          "to"
+        ]
+      },
       "agentId": {
         "type": "string"
       },

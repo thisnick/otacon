@@ -26,6 +26,16 @@ export class LineError extends Error {
   }
 }
 
+/** A one-way call that plays another call's audio to someone (listen-in). */
+export interface Listener {
+  id: string;
+  /** pcm_s16le, mono, 16 kHz */
+  send(pcm: Buffer): void;
+  hangUp(): Promise<void>;
+  /** Called once when the listening call is over (they hung up, or we did) */
+  onEnd(fn: (reason: string) => void): void;
+}
+
 export interface LineLink extends EventEmitter {
   /** Ready to place and take calls */
   readonly open: boolean;
@@ -53,6 +63,13 @@ export interface LineLink extends EventEmitter {
    * async context, not in a request's (which OpenClaw closes).
    */
   runIn?: <T>(fn: () => T) => T;
+  /**
+   * Lines that can place an extra call while others are up (Twilio) offer
+   * this: call `to`, say `intro`, then play what's sent. The call isn't one
+   * of the line's calls: it never gets the voice model or call events, and
+   * what the listener says is dropped.
+   */
+  listen?(to: string, intro: string): Promise<Listener>;
 }
 
 /** The call bookkeeping every line shares. */

@@ -182,6 +182,19 @@ How a phone's features map onto Twilio:
 - Joining two lines (`connect_lines`): both calls are redirected into a
   Twilio conference that ends when either leaves; the assistant drops off.
 
+## Listen-in
+
+With `listen: { "to": "+1…" }` the agent gets `otacon_listen`. `start`
+calls that number (only that one) from a Twilio line and plays both sides of
+a call in progress into it: the other party and the voice model, mixed at
+the line's pace, with a short spoken intro. It's listen-only: what the
+listener says is dropped, and the voice model and the navigator don't know
+about it. `stop`, or the listener hanging up, ends only the listening call;
+the call carries on, and listening can start again. When the call ends, the
+listening call is hung up. Calls on any line can be listened to; the
+listening call needs a line that can place an extra call (`listen.line`,
+default the first Twilio line), so it's off without one.
+
 ## Upgrading from 2.x
 
 3.0 replaces the `otacon` block with `lines`. OpenClaw checks the config

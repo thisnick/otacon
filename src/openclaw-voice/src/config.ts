@@ -56,6 +56,12 @@ export interface OtaconVoiceConfig {
   lines: LineConfig[];
   /** The line calls go out on unless otacon_call names one (default: the first) */
   defaultLine: string;
+  /**
+   * Listen-in (otacon_listen): the only number a call may be played to,
+   * and the line that dials it (default: the first line that can, a Twilio
+   * line). Off without `to`.
+   */
+  listen?: { to: string; line?: string };
   /** Agent the calls belong to (default: the requester's, else "main") */
   agentId?: string;
   /**
@@ -195,6 +201,17 @@ export function parseConfig(raw: unknown): { config?: OtaconVoiceConfig; errors:
   }
   const defaultLine = str(c.defaultLine) ?? lines[0]?.id ?? "";
   if (lines.length && !lines.some((l) => l.id === defaultLine)) errors.push(`defaultLine: no line ${defaultLine}`);
+  const listenRaw = obj(c.listen);
+  let listen: OtaconVoiceConfig["listen"];
+  if (c.listen !== undefined) {
+    const to = str(listenRaw.to);
+    const line = str(listenRaw.line);
+    if (!isE164(to)) errors.push("listen.to must be E.164");
+    // Only lines that can place an extra call while others are up.
+    else if (line && lines.find((l) => l.id === line)?.provider !== "twilio") errors.push(`listen.line: ${line} isn't a Twilio line`);
+    else if (!line && !lines.some((l) => l.provider === "twilio")) errors.push("listen needs a Twilio line to dial from");
+    else listen = { to, line };
+  }
 
   const allowFrom = Array.isArray(c.allowFrom) ? c.allowFrom.filter((n) => typeof n === "string") : [];
   for (const n of allowFrom) if (!isE164(n)) errors.push(`allowFrom: ${n} is not E.164`);
@@ -236,6 +253,7 @@ export function parseConfig(raw: unknown): { config?: OtaconVoiceConfig; errors:
       enabled: c.enabled !== false,
       lines,
       defaultLine,
+      listen,
       agentId: str(c.agentId),
       sessionScope: oneOf(c.sessionScope, ["per-phone", "per-call", "main"] as const, "per-phone"),
       ownerName: str(c.ownerName) ?? "my principal",

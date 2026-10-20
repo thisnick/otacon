@@ -233,3 +233,32 @@ test("incoming: rejected unless screened in; answered once the stream is up; our
   assert.equal(events.at(-1).type, "call.ended");
   assert.equal(events.at(-1).reason, "local");
 });
+
+test("listen: a one-way call that says the intro and plays what's sent; never one of the line's calls", async () => {
+  const { l, tw, events } = line();
+  await ready(l);
+  const listener = await l.listen("+15550004444", "Listening to the call with Luigi's.");
+  const req = tw.requests.at(-1)!;
+  assert.equal(req.form.get("To"), "+15550004444");
+  assert.match(req.form.get("Twiml")!, /^<Response><Say>Listening to the call with Luigi&#39;s\.<\/Say><Connect><Stream /);
+  assert.equal(l.calls.size, 0);
+  const ws = stream(l, listener.id);
+  const heard: Buffer[] = [];
+  l.on("audio", (b) => heard.push(b));
+  ws.twilio({ event: "media", media: { track: "inbound", payload: Buffer.alloc(160).toString("base64") } });
+  assert.equal(heard.length, 0, "what the listener says goes nowhere");
+  listener.send(Buffer.alloc(640));
+  assert.equal(ws.sent.filter((m) => m.event === "media").length, 1);
+  assert.equal(events.length, 0, "no call events");
+
+  const ended: string[] = [];
+  listener.onEnd((r) => ended.push(r));
+  await webhook(l, "status", { CallSid: listener.id, CallStatus: "completed" });
+  assert.deepEqual(ended, ["remote"]);
+  const again = await l.listen("+15550004444", "x");
+  const why: string[] = [];
+  again.onEnd((r) => why.push(r));
+  await again.hangUp();
+  assert.equal(tw.requests.at(-1)!.form.get("Status"), "completed");
+  assert.deepEqual(why, ["local"]);
+});

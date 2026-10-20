@@ -23,7 +23,7 @@ import type { Duplex } from "node:stream";
 import type { PluginLogger } from "openclaw/plugin-sdk/plugin-entry";
 import { WebSocketServer, type WebSocket } from "ws";
 import { MuLawToPcm16k, Pcm16kToMuLaw } from "./g711.js";
-import { LineBase, LineError, type LineCall, type LineLink } from "./line.js";
+import { LineBase, LineError, type LineCall, type LineLink, type Listener } from "./line.js";
 
 export interface TwilioLineOptions {
   id: string;
@@ -67,8 +67,19 @@ const END_REASON: Record<string, string> = {
 
 const xml = (s: string) => s.replace(/[<>&"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
+/** A listen-in call: one way, outside the line's calls. */
+interface ListenLeg {
+  sid: string;
+  ws?: WebSocket;
+  streamSid?: string;
+  down: Pcm16kToMuLaw;
+  ended: boolean;
+  onEnd: ((reason: string) => void)[];
+}
+
 export class TwilioLine extends LineBase implements LineLink {
   private legs = new Map<string, Leg>();
+  private listenLegs = new Map<string, ListenLeg>();
   private wss = new WebSocketServer({ noServer: true });
   /** Proves a media stream is one we asked for */
   private streamToken = randomBytes(18).toString("base64url");
@@ -96,6 +107,7 @@ export class TwilioLine extends LineBase implements LineLink {
     this.stopped = true;
     this.open = false;
     for (const leg of this.legs.values()) leg.ws?.close();
+    for (const l of this.listenLegs.values()) l.ws?.close();
     this.wss.close();
   }
 
@@ -306,6 +318,45 @@ export class TwilioLine extends LineBase implements LineLink {
     }
   }
 
+  // ---- listen-in ----
+
+  async listen(to: string, intro: string): Promise<Listener> {
+    if (!this.open) throw new LineError("disconnected", `Twilio line ${this.o.id} isn't ready`);
+    const r = await this.api("POST", `/Accounts/${this.o.accountSid}/Calls.json`, {
+      To: to,
+      From: this.o.fromNumber,
+      Twiml: this.streamTwiml(`<Say>${xml(intro)}</Say>`),
+      Timeout: String(this.o.ringTimeoutSeconds + 5),
+      StatusCallback: `${this.o.publicUrl}/status`,
+      StatusCallbackMethod: "POST",
+      StatusCallbackEvent: ["completed"],
+    });
+    const leg: ListenLeg = { sid: r.sid, down: new Pcm16kToMuLaw(), ended: false, onEnd: [] };
+    this.listenLegs.set(leg.sid, leg);
+    return {
+      id: leg.sid,
+      send: (pcm) => {
+        if (leg.ended || !leg.ws || !leg.streamSid || !pcm.length) return;
+        const payload = leg.down.process(pcm);
+        if (payload.length) leg.ws.send(JSON.stringify({ event: "media", streamSid: leg.streamSid, media: { payload: payload.toString("base64") } }));
+      },
+      hangUp: async () => {
+        if (leg.ended) return;
+        await this.api("POST", this.callUrl(leg.sid), { Status: "completed" }).catch(() => undefined);
+        this.listenerEnded(leg, "local");
+      },
+      onEnd: (fn) => void leg.onEnd.push(fn),
+    };
+  }
+
+  private listenerEnded(leg: ListenLeg, reason: string) {
+    if (leg.ended) return;
+    leg.ended = true;
+    this.listenLegs.delete(leg.sid);
+    leg.ws?.close();
+    for (const f of leg.onEnd.splice(0)) f(reason);
+  }
+
   // ---- audio ----
 
   sendAudio(pcm: Buffer) {
@@ -388,9 +439,14 @@ export class TwilioLine extends LineBase implements LineLink {
   }
 
   private onStatus(params: URLSearchParams) {
+    const status = params.get("CallStatus") ?? "";
+    const listener = this.listenLegs.get(params.get("CallSid") ?? "");
+    if (listener) {
+      if (status === "completed" || END_REASON[status]) this.listenerEnded(listener, status === "completed" ? "remote" : END_REASON[status]);
+      return;
+    }
     const leg = this.legs.get(params.get("CallSid") ?? "");
     if (!leg) return;
-    const status = params.get("CallStatus") ?? "";
     if (status === "completed") return this.ended(leg, "remote");
     if (END_REASON[status]) return this.ended(leg, END_REASON[status]);
     const state = STATUS[status];
@@ -418,6 +474,13 @@ export class TwilioLine extends LineBase implements LineLink {
       switch (msg.event) {
         case "start": {
           const token = String(msg.start?.customParameters?.token ?? "");
+          const listener = this.listenLegs.get(String(msg.start?.callSid ?? ""));
+          if (listener && token === this.streamToken) {
+            listener.ws = ws;
+            listener.streamSid = String(msg.streamSid ?? msg.start?.streamSid ?? "");
+            ws.on("close", () => this.listenerEnded(listener, "remote"));
+            return;
+          }
           leg = this.legs.get(String(msg.start?.callSid ?? ""));
           if (token !== this.streamToken || !leg) {
             this.o.logger.warn(`[otacon-voice] Twilio line ${this.o.id}: closing a stream it didn't ask for`);
