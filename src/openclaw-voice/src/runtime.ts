@@ -231,7 +231,7 @@ export class OtaconVoiceRuntime {
     const live = this.live();
     const m = missionId ? live.find((x) => x.id === missionId) : live.length === 1 ? live[0] : undefined;
     if (!m) return false;
-    m.finish("ended_by_agent", "Ended at the agent's request.");
+    m.finish("ended_by_agent", "Ended at the agent's request.", { lastWords: true });
     return true;
   }
 

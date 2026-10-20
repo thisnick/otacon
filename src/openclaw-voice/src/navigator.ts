@@ -12,15 +12,16 @@
 //   - wait
 // It never speaks and never types in information (a phone number, a date of
 // birth): that's the voice model's job, which keeps its keypad throughout.
-// Each side sees the other's key presses: the navigator in its transcript,
-// the voice model through notes (call.ts).
+// Key presses, by either side, are in the navigator's transcript where they
+// happened; the voice model sees the navigator's through notes (call.ts).
 
 import { LineSound } from "./linesound.js";
 
 export interface TranscriptEntry {
   /** Seconds since the call was answered */
   t: number;
-  who: "line" | "assistant";
+  /** "keypad": a key press, by the navigator or the assistant */
+  who: "line" | "assistant" | "keypad";
   text: string;
 }
 
@@ -79,10 +80,10 @@ export const QUESTIONS: Record<string, ChoiceQuestion> = {
   action: {
     type: "choice",
     instructions:
-      "You navigate automated phone menus for an assistant making this call; the assistant talks to people and types in or says any information. line_audio is what the line has been playing: speech (a person or a recording), music, or silence; seconds_on_hold counts from when it went to music or silence after the last key press. Act as soon as you can. What should you do right now?",
+      "You navigate automated phone menus for an assistant making this call; the assistant talks to people and types in or says any information. The transcript is the call in order: what the line said, what the assistant said, and keypad entries for keys pressed (by you or the assistant). line_audio is what the line has been playing: speech (a person or a recording), music, or silence; seconds_on_hold counts from when it went to music or silence after the last key press. Act as soon as you can. What should you do right now?",
     criteria: {
-      wait: "Nothing to do now: no option that fits the goal has been offered yet; or the key for the fitting option was already pressed and the line hasn't answered it yet; or the line has only greeted, welcomed or given information so far; or the call is on hold (hold music, silence, or a recorded hold message) for no longer than hold_limit_seconds; or the line asks for information to be typed in (the assistant does that).",
-      press: "An automated menu has offered an option that fits the goal, and its key hasn't been pressed yet. Press it right away, without waiting for the rest of the menu.",
+      wait: "Nothing to do yet: the line is still talking and hasn't offered an option that fits the goal, or you need to hear more of it before you can decide; or the line has only greeted, welcomed or given information so far; or the call is on hold (hold music, silence, or a recorded hold message) for no longer than hold_limit_seconds; or the line asks for information to be typed in (the assistant does that).",
+      press: "An automated menu has offered an option that fits the goal, and the transcript shows no key pressed since that option was offered. Press it right away, without waiting for the rest of the menu.",
       hand_off: "The line is waiting for the assistant to speak: it asks a question or wants a spoken answer (\"How can I help you?\", \"Who am I speaking with?\", \"Please tell me the reason for your call\"), or someone just says \"Hello?\" and nothing else follows, or it answers what the assistant said. Be certain. A welcome or greeting (\"Thanks for calling …\"), information, or options to press a key don't count, even when they sound like a person.",
       hang_up: "No person is on the line, only an automated system, a recording, hold music or silence, and either what it said already achieves the goal; or the goal clearly can't be achieved on this call: the menu keeps repeating with no option that fits, the business is closed, or the number is not in service; or the call has been on hold for longer than hold_limit_seconds (seconds_on_hold is more).",
     },
@@ -190,6 +191,9 @@ export class MenuNavigator {
   pressed(by: KeyPress["by"], keys: string) {
     if (this.stopped) return;
     this.presses.push({ t: this.t(), by, keys });
+    // In the transcript where it happened: after what the line said so far.
+    this.flushPartial();
+    this.entries.push({ t: this.t(), who: "keypad", text: `pressed ${keys} (${by === "navigator" ? "you" : "the assistant"})` });
     if (by === "navigator") this.pressedAtChars = this.totalChars;
   }
 
@@ -220,7 +224,6 @@ export class MenuNavigator {
       goal: this.o.goal,
       seconds_into_call: this.t(),
       transcript,
-      keys_pressed: [...this.presses],
       ...(lineAudio ? { line_audio: lineAudio } : {}),
       hold_limit_seconds: this.o.holdLimitSeconds,
     };
@@ -267,9 +270,11 @@ export class MenuNavigator {
         this.o.log(`navigator: pressing ${key} (${p("action", "press").toFixed(2)}/${p("key", key).toFixed(2)})`);
         const at = this.presses.length;
         this.pressed("navigator", key);
+        const entry = this.entries.at(-1);
         if (!(await this.o.press(key))) {
           // A failed press isn't one: forget it, and look again next time.
           this.presses.splice(at, 1);
+          this.entries = this.entries.filter((e) => e !== entry);
           this.pressedAtChars = -1;
           this.seenChars = -1;
         }
