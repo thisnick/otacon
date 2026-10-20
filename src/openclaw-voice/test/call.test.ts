@@ -105,7 +105,11 @@ test("end_call waits for the goodbye to play, hangs up, reports the note", async
   const { link, s, reports } = await connected();
   s.transcript("user", "You're all set for Thursday.");
   s.transcript("assistant", "Thanks, bye!");
-  await s.tool("end_call", { outcome: "done", summary: "Moved to Thursday 2 PM" });
+  const ended = s.tool("end_call", { outcome: "done", summary: "Moved to Thursday 2 PM" });
+  await settle();
+  assert.match(s.notes.at(-1)!, /The call has ended/, "told the call is over, then given time for its last transcript");
+  mock.timers.tick(10_000);
+  await ended;
   await settle();
   assert.ok(link.markCount >= 1, "waited for playback");
   assert.deepEqual(link.cmds.at(-1), { type: "hangup", fields: { call: "c1" } });
@@ -137,7 +141,10 @@ test("the other side hanging up with nothing left to say: reported after a short
   const { link, reports } = await connected();
   link.call("call.ended", { id: "c1" }, "remote");
   await settle();
-  mock.timers.tick(3000);
+  mock.timers.tick(9_000);
+  await settle();
+  assert.equal(reports.length, 0, "up to 10 s for the last transcript");
+  mock.timers.tick(1_000);
   await settle();
   assert.equal(reports[0].outcome, "completed");
 });
@@ -268,8 +275,8 @@ test("navigator: hears the line, presses menu options and tells the voice model,
   await s.tool("send_dtmf", { digits: "5551234" });
   await navigatorCheck();
   assert.deepEqual(
-    decisions.states.at(-1).keys_pressed.map((k: any) => `${k.by}:${k.keys}`),
-    ["navigator:3", "assistant:5551234"],
+    decisions.states.at(-1).transcript.filter((e: any) => e.who === "keypad").map((e: any) => e.text),
+    ["pressed 3 (you)", "pressed 5551234 (the assistant)"],
   );
   assert.ok(m.report().log.some((e) => e.text === "the navigator pressed 3"));
   await m.finish("completed");
@@ -300,7 +307,12 @@ test("navigator: hangs up when the goal is done, and reports why", async () => {
   transcriber.say("We are at 1 2 3 Main Street in Oakland. ");
   await navigatorCheck();
   await settle();
+  // We hung up mid-recording: the voice model still transcribes it.
+  assert.equal(reports.length, 0);
+  s.transcript("user", "We are at 1 2 3 Main Street in Oakland.");
+  await settle();
   assert.equal(reports.length, 1);
+  assert.ok(reports[0].log.some((e) => e.kind === "hear" && /1 2 3 Main Street/.test(e.text)));
   assert.equal(reports[0].outcome, "completed");
   assert.match(reports[0].summary!, /navigator hung up: what the line said achieved the goal/);
   assert.equal(s.closed, true);
@@ -315,6 +327,8 @@ test("navigator: hears hold music too, and hangs up past the hold limit", async 
   assert.equal(transcriber.audio.length, 31 * 6, "hold music is transcribed");
   decisions.answer = { action: "hang_up", p: 0.95, reason: "hold_limit" };
   await navigatorCheck();
+  await settle();
+  mock.timers.tick(10_000);
   await settle();
   const st = decisions.states.at(-1);
   assert.equal(st.line_audio.now, "music");

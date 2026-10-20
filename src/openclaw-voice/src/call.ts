@@ -76,8 +76,8 @@ const MODEL_RATE = 24000;
 const MUTE_AFTER_SECONDS = 10;
 /** Line audio replayed to the voice model when it hears the line again, so it hears how the speech began */
 const PREROLL_MS = 2000;
-/** After the other side hangs up, the longest wait for its last words' transcript */
-const LAST_WORDS_MS = 3000;
+/** After a hang-up, the longest wait for the voice model's last transcript */
+const LAST_WORDS_MS = 10_000;
 
 const CONSULT_SYSTEM_PROMPT = [
   "You are the configured OpenClaw agent receiving delegated requests from a live phone call your assistant is on.",
@@ -196,6 +196,8 @@ export class CallMission {
   private notesUnavailable = false;
   /** While waiting for the last words after the other side hung up */
   private flushing = false;
+  /** How lines ended, held while finish() waits for the last words */
+  private endNotes?: { text: string; line: number }[];
   private onHeard?: () => void;
   private pendingMerge?: () => void;
 
@@ -239,7 +241,7 @@ export class CallMission {
   async start(): Promise<void> {
     const { link, config } = this.o;
     this.watchLink();
-    this.timers.push(setTimeout(() => this.finish("max_duration"), config.maxCallSeconds * 1000));
+    this.timers.push(setTimeout(() => this.finish("max_duration", undefined, { lastWords: true }), config.maxCallSeconds * 1000));
     try {
       if (this.o.direction === "outbound") {
         this.note(`dialing ${this.o.party.number}`, 1);
@@ -314,7 +316,7 @@ export class CallMission {
       // Everyone is gone. If the other side hung up, its last words go in
       // the log before the hang-up.
       return this.finish(this.outcome === "ended_by_agent" ? "ended_by_agent" : "completed", undefined, {
-        lastWords: reason !== "local",
+        lastWords: true,
         endNote: { text: note, line: line.n },
       });
     }
@@ -339,13 +341,17 @@ export class CallMission {
 
   /**
    * End the mission: hang up what's still up (unless handed off), report.
-   * `lastWords`: the other side hung up; wait for what it said last.
-   * `endNote`: how the last line ended, logged after that.
+   * `lastWords`: wait for the voice model's transcript of what was said
+   * last (any hang-up, ours or theirs).
+   * `endNote`: how the last line ended, logged after those last words.
    */
   async finish(outcome: Outcome, summary?: string, o: { lastWords?: boolean; endNote?: { text: string; line: number } } = {}) {
     // A merged call runs on without us (see checkMergedCall).
     if (this.ended || this.detached) {
-      if (o.endNote) this.note(o.endNote.text, o.endNote.line);
+      if (o.endNote) {
+        if (this.endNotes) this.endNotes.push(o.endNote);
+        else this.note(o.endNote.text, o.endNote.line);
+      }
       return;
     }
     this.ended = true;
@@ -353,30 +359,34 @@ export class CallMission {
     if (summary) this.summary = summary;
     for (const t of this.timers) clearTimeout(t);
     this.stopNavigator();
-    if (o.lastWords) await this.lastWords();
-    if (o.endNote) this.note(o.endNote.text, o.endNote.line);
-    try {
-      await this.session?.close();
-    } catch {}
+    this.endNotes = o.endNote ? [o.endNote] : [];
     if (outcome !== "handed_off") {
       for (const l of this.lines.filter((l) => l.state !== "ended").reverse()) {
         await this.o.link.cmd("hangup", { call: l.callId }).catch(() => undefined);
       }
     }
+    if (o.lastWords) await this.lastWords();
+    for (const n of this.endNotes) this.note(n.text, n.line);
+    this.endNotes = undefined;
+    try {
+      await this.session?.close();
+    } catch {}
     if (outcome !== "handed_off") for (const d of this.detachHandlers) d();
     this.debug(`finished: ${outcome}`);
     this.o.onEnd(this.report());
   }
 
   /**
-   * The other side hung up, maybe just after speaking ("you're all set,
-   * goodbye"). The voice model ends a turn, and transcribes it, only once it
-   * hears silence, which a dead line never sends: send a second of it and
-   * wait briefly for the transcript.
+   * The call is over, maybe mid-sentence ("you're all set, goodbye", or a
+   * recording the navigator hung up on). The voice model ends a turn, and
+   * transcribes it, only once it hears silence, which a dead line never
+   * sends: tell it the call has ended, send a second of silence, and wait up
+   * to LAST_WORDS_MS for the transcript.
    */
   private async lastWords() {
     if (!this.session) return;
     this.flushing = true;
+    this.silentNote("[The call has ended: the line hung up and nobody can hear you. Don't say anything.]");
     let timer: NodeJS.Timeout | undefined;
     const heard = new Promise<void>((resolve) => {
       this.onHeard = resolve;
@@ -671,7 +681,7 @@ export class CallMission {
     }[reason];
     this.note(`the navigator hung up: ${why}`);
     const outcome = reason === "goal_done" ? "completed" : reason === "hold_limit" ? "hold_cap" : "failed";
-    this.finish(outcome, `The phone-menu navigator hung up: ${why}.`);
+    this.finish(outcome, `The phone-menu navigator hung up: ${why}.`, { lastWords: true });
   }
 
   private navigatorHandOff() {
@@ -766,7 +776,7 @@ export class CallMission {
           reply({ status: "ending" }, true);
           // Let the goodbye finish playing first.
           await Promise.race([this.o.link.mark(), new Promise((r) => setTimeout(r, 8000))]);
-          return this.finish(this.outcome, this.summary);
+          return this.finish(this.outcome, this.summary, { lastWords: true });
         }
         case this.o.sdk.consultToolName: {
           this.note(`asked the agent: ${String(args.question ?? "").slice(0, 300)}`);
@@ -889,7 +899,7 @@ export class CallMission {
     this.note(`hung up on ${target.party.name}`, n);
     const other = this.lines.find((l) => l.state !== "ended");
     if (!other) {
-      this.finish("completed");
+      this.finish("completed", undefined, { lastWords: true });
       return { status: "dropped" };
     }
     if (n === this.active) {

@@ -41,9 +41,10 @@ test("presses an offered option once, then waits for the line to answer", async 
   n.lineText("Please hold while I connect you.");
   await n.check();
   assert.equal(decisions.states.length, 2);
+  // The press is in the transcript, between the menu and what came after.
   assert.deepEqual(
-    decisions.states[1].keys_pressed.map((k: any) => `${k.by}:${k.keys}`),
-    ["navigator:3"],
+    decisions.states[1].transcript.map((e: any) => `${e.who}: ${e.text}`),
+    ["line: For reservations, press three.", "keypad: pressed 3 (you)", "line: Please hold while I connect you."],
   );
   assert.deepEqual(acts, ["press 3"]);
 });
@@ -56,7 +57,7 @@ test("a failed press is forgotten and tried again at the next check", async () =
   works = true;
   await n.check(); // nothing new said, but the press failed
   assert.deepEqual(acts, ["press 3", "press 3"]);
-  assert.deepEqual(decisions.states[1].keys_pressed, [], "the failed press isn't in the state");
+  assert.ok(!decisions.states[1].transcript.some((e: any) => e.who === "keypad"), "the failed press isn't in the transcript");
 });
 
 test("below the threshold nothing is pressed", async () => {
@@ -102,9 +103,8 @@ test("each check sees both sides in order, every key press, and what the line pl
   assert.equal(st.goal, "Book a table for 2 at 7:30");
   assert.deepEqual(
     st.transcript.map((e: any) => `${e.who}: ${e.text}`),
-    ["line: Thanks for calling Luigi's.", "line: For prices, press 2", "assistant: Hi, I'd like a table."],
+    ["line: Thanks for calling Luigi's.", "line: For prices, press 2", "assistant: Hi, I'd like a table.", "keypad: pressed 1 (the assistant)"],
   );
-  assert.deepEqual(st.keys_pressed.map((k: any) => `${k.by}:${k.keys}`), ["assistant:1"]);
   assert.deepEqual(st.line_audio, {
     now: "music",
     for_seconds: 6,
