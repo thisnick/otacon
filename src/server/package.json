@@ -1,6 +1,6 @@
 {
   "name": "otacon-server",
-  "version": "2.1.0",
+  "version": "3.2.2",
   "private": true,
   "description": "The host server (Rust). Not published: versioned with the repo, see docs/releasing.md."
 }
