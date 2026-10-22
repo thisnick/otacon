@@ -6,10 +6,12 @@ import {
   REALTIME_VOICE_AUDIO_FORMAT_PCM16_24KHZ,
   consultRealtimeVoiceAgent,
   createRealtimeVoiceBridgeSession,
-  createStreamingPcmResampler,
   resolveConfiguredRealtimeVoiceProvider,
   resolveRealtimeVoiceAgentConsultToolsAllow,
 } from "openclaw/plugin-sdk/realtime-voice";
+// realtime-voice stopped re-exporting the resampler in 2026.10.6; the provider
+// subpath has exported it since at least 2026.10.3.
+import { createStreamingPcmResampler } from "openclaw/plugin-sdk/realtime-voice-provider";
 import { normalizeAgentId, parseAgentSessionKey } from "openclaw/plugin-sdk/routing";
 import { resolveAgentIdentity, resolveAgentWorkspaceDir } from "openclaw/plugin-sdk/agent-runtime";
 import { resolveSecretRefValues } from "openclaw/plugin-sdk/secret-ref-runtime";

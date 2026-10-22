@@ -205,7 +205,9 @@ declare module "openclaw/plugin-sdk/realtime-voice" {
   export function consultRealtimeVoiceAgent(p: Record<string, unknown>): Promise<{ text: string; yielded?: true }>;
   export function resolveRealtimeVoiceAgentConsultToolsAllow(policy: string): string[] | undefined;
   export function buildRealtimeVoiceAgentConsultWorkingResponse(audience: string): unknown;
+}
 
+declare module "openclaw/plugin-sdk/realtime-voice-provider" {
   export function createStreamingPcmResampler(
     inRate: number,
     outRate: number,
