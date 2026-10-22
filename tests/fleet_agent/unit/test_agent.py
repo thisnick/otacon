@@ -129,6 +129,40 @@ class TestRunMaintenanceTick:
         assert agent.status.health['bt_bonded_phone'] is False
 
 
+class TestConnectionRecovery:
+    def test_repeated_disconnects_preserve_existing_bond(self, phone_agent):
+        with patch('fleet_agent.phone.heal.heal_bt_connected', return_value=False), \
+             patch('fleet_agent.phone.health.check_bt_bonded',
+                   return_value=BtBondedDetail(pi=True, phone=True)), \
+             patch('fleet_agent.phone.heal.heal_bt_bonded') as repair:
+            for _ in range(6):
+                phone_agent._run_heal('bt_connected')
+
+        repair.assert_not_called()
+        assert phone_agent.status.heals['bt_connected'].last_result == 'failed'
+
+    def test_repeated_disconnects_repair_missing_bond(self, phone_agent):
+        with patch('fleet_agent.phone.heal.heal_bt_connected', return_value=False), \
+             patch('fleet_agent.phone.health.check_bt_bonded',
+                   return_value=BtBondedDetail(pi=True, phone=False)), \
+             patch('fleet_agent.phone.heal.heal_bt_bonded',
+                   return_value=(None, None, None, None)) as repair:
+            for _ in range(3):
+                phone_agent._run_heal('bt_connected')
+
+        repair.assert_called_once()
+
+    def test_successful_reconnect_resets_failure_count(self, phone_agent):
+        with patch('fleet_agent.phone.heal.heal_bt_connected',
+                   side_effect=[False, False, True]):
+            for _ in range(3):
+                phone_agent._run_heal('bt_connected')
+
+        hs = phone_agent.status.heals['bt_connected']
+        assert hs.consecutive_failures == 0
+        assert hs.last_result == 'ok'
+
+
 class TestRunSingleCheck:
     def test_valid_check(self, phone_agent):
         with patch('fleet_agent.phone.health.check_wifi_connected', return_value=True):
@@ -142,6 +176,14 @@ class TestRunSingleCheck:
 
 
 class TestRunSingleStep:
+    def test_manual_pair_forces_repair(self, phone_agent):
+        with patch('fleet_agent.phone.agent.allocate_and_pair_bluetooth') as pair:
+            phone_agent.run_single_step('pair')
+
+        pair.assert_called_once_with(
+            phone_agent.serial, phone_agent.snapshot_url,
+            phone_agent._report_error, force_repair=True)
+
     def test_valid_step(self, phone_agent):
         with patch('fleet_agent.steps.screen.configure_screen') as mock:
             phone_agent.run_single_step('screen')

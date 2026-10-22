@@ -107,8 +107,7 @@ class PhoneAgent:
         replaced_mac = None
         result = self._run_step('allocate_and_pair_bluetooth',
                                  allocate_and_pair_bluetooth,
-                                 self.serial, self.snapshot_url, self._report_error,
-                                 skip_if_connected=True)
+                                 self.serial, self.snapshot_url, self._report_error)
         if result:
             self.adapter_mac, self.adapter_hci, self.phone_bt_mac, replaced_mac = result
 
@@ -274,12 +273,21 @@ class PhoneAgent:
                 if not heal_ok:
                     hs.consecutive_failures += 1
                     if hs.consecutive_failures >= 3:
+                        # A failed connection does not mean the bond is gone.
+                        # Only re-pair when a fresh check finds a missing side;
+                        # otherwise keep retrying without Android visibility UI.
+                        detail = health.check_bt_bonded(
+                            self.adapter_mac, self.phone_bt_mac, serial=self.serial)
+                        if not detail.ok:
+                            self.log.warning(
+                                'bt_connected failed repeatedly and a bond is missing '
+                                '— healing bt_bonded')
+                            hs.consecutive_failures = 0
+                            self._run_heal('bt_bonded')
+                            return
                         self.log.warning(
-                            f'bt_connected failed {hs.consecutive_failures} times consecutively '
-                            f'— escalating to full re-pair (heal_bt_bonded)')
-                        hs.consecutive_failures = 0
-                        self._run_heal('bt_bonded')
-                        return
+                            'bt_connected failed repeatedly but both sides remain bonded '
+                            '— keeping the bond and retrying connection')
                 else:
                     hs.consecutive_failures = 0
             elif name == 'wifi':
@@ -354,7 +362,7 @@ class PhoneAgent:
                 self.serial, self._report_error),
             'wifi': lambda: wifi.connect_wifi(self.serial) if self._wifi_enabled() else None,
             'pair': lambda: allocate_and_pair_bluetooth(
-                self.serial, self.snapshot_url, self._report_error),
+                self.serial, self.snapshot_url, self._report_error, force_repair=True),
             'restrictions': lambda: provisioning.apply_restrictions(self.serial),
         }
         fn = step_map.get(step_name)

@@ -8,6 +8,7 @@ Tests that:
 5. check_bt_silent health check works correctly
 """
 
+import sys
 from unittest.mock import patch, MagicMock, call
 
 import pytest
@@ -220,7 +221,15 @@ class TestPairDiscoverableLifecycle:
 
         mock_run_cmd.side_effect = fake_run_cmd
 
-        _run_bluez_pair('AA:BB:CC:DD:00:01', 'hci0', 'TEST_SERIAL')
+        fake_dbus = MagicMock()
+        fake_dbus.DBusException = RuntimeError
+        fake_dbus.Interface.return_value.Get.return_value = False
+        with patch.dict(sys.modules, {'dbus': fake_dbus}), \
+             patch('fleet_agent.bluetooth.pair.time.sleep'), \
+             patch('fleet_agent.bluetooth.pair._dbus_discover_and_pair',
+                   return_value=(True, True)) as pair:
+            _run_bluez_pair('AA:BB:CC:DD:00:01', 'hci0', 'TEST_SERIAL')
+        pair.assert_called_once()
 
         # Collect all bluetoothctl command strings
         all_cmds = '\n'.join(btctl_outputs)
@@ -263,7 +272,15 @@ class TestPairDiscoverableLifecycle:
         mock_run_cmd.side_effect = fake_run_cmd
 
         # Should not raise even though pair fails
-        _run_bluez_pair('AA:BB:CC:DD:00:01', 'hci0', 'TEST_SERIAL')
+        fake_dbus = MagicMock()
+        fake_dbus.DBusException = RuntimeError
+        fake_dbus.Interface.return_value.Get.return_value = False
+        with patch.dict(sys.modules, {'dbus': fake_dbus}), \
+             patch('fleet_agent.bluetooth.pair.time.sleep'), \
+             patch('fleet_agent.bluetooth.pair._dbus_discover_and_pair',
+                   side_effect=RuntimeError('pair failed')) as pair:
+            _run_bluez_pair('AA:BB:CC:DD:00:01', 'hci0', 'TEST_SERIAL')
+        pair.assert_called_once()
 
         all_cmds = '\n'.join(btctl_outputs)
 

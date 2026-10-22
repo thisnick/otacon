@@ -115,6 +115,11 @@ observation generates events to bring the registry into agreement.
   provision or heal Wi-Fi when that local `wifi_enabled` is false.
 - Registry phone config is fleet policy. Keep Bluetooth pairing policy there:
   CLI path `config`, key `bluetooth_enabled`.
+- A disconnected Bluetooth link is not a missing bond. Automatic setup/healing
+  retains bonds present on both sides and retries connection. Pairing uses
+  Android's direct `createBond()` to the assigned adapter MAC, without phone
+  discoverability prompts. `fleet-cli step run --step pair` explicitly replaces a bond.
+  Try targeted phone-side unpair before the OEM `pm clear` fallback.
 
 ### OpenAPI
 - Both servers use code-first OpenAPI via `utoipa`. Spec served at

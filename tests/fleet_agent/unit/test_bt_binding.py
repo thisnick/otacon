@@ -220,6 +220,99 @@ class TestDiscoveryInProgress:
         device.Pair.assert_not_called()
 
 
+class TestPhoneInitiatedPair:
+    def test_waits_for_bond_without_scanning_or_outbound_pair(self):
+        from fleet_agent.bluetooth.pair import _dbus_discover_and_pair
+        path = '/org/bluez/hci2/dev_4C_2E_5E_D2_D6_00'
+        fake, adapter, device = _fake_pair_dbus(path)
+        manager = fake.Interface(None, 'org.freedesktop.DBus.ObjectManager')
+        manager.GetManagedObjects.side_effect = [
+            {path: {'org.bluez.Device1': {'Address': PHONE_BT, 'Paired': False}}},
+            {path: {'org.bluez.Device1': {'Address': PHONE_BT, 'Paired': True}}},
+        ]
+
+        with patch.dict(sys.modules, {'dbus': fake}), \
+             patch('fleet_agent.bluetooth.pair.time.sleep'):
+            result = _dbus_discover_and_pair('hci2', PHONE_BT, 'SER', phone_initiated=True)
+
+        assert result == (True, True)
+        assert manager.GetManagedObjects.call_count == 2
+        adapter.StartDiscovery.assert_not_called()
+        adapter.StopDiscovery.assert_not_called()
+        device.Pair.assert_not_called()
+
+    def test_unbonded_cached_device_does_not_count_as_paired(self):
+        from fleet_agent.bluetooth.pair import _dbus_discover_and_pair
+        path = '/org/bluez/hci2/dev_4C_2E_5E_D2_D6_00'
+        fake, adapter, device = _fake_pair_dbus(path)
+
+        with patch.dict(sys.modules, {'dbus': fake}), \
+             patch('fleet_agent.bluetooth.pair.time.sleep'):
+            result = _dbus_discover_and_pair(
+                'hci2', PHONE_BT, 'SER', discovery_timeout=2, phone_initiated=True)
+
+        assert result == (False, False)
+        device.Pair.assert_not_called()
+        device.Connect.assert_not_called()
+
+    def test_bluez_flow_never_requests_phone_visibility(self):
+        import threading
+        from fleet_agent.bluetooth.pair import _run_bluez_pair
+        path = '/org/bluez/hci2/dev_4C_2E_5E_D2_D6_00'
+        fake, adapter, device = _fake_pair_dbus(path)
+        ready = threading.Event()
+
+        def wait_for_phone(*args, **kwargs):
+            assert ready.is_set()
+            return True, True
+
+        with patch.dict(sys.modules, {'dbus': fake}), \
+             patch('fleet_agent.bluetooth.pair.time.sleep'), \
+             patch('fleet_agent.bluetooth.pair._btctl', return_value='Controller'), \
+             patch('fleet_agent.bluetooth.pair.adb_shell', return_value=PHONE_BT) as adb, \
+             patch('fleet_agent.bluetooth.pair._dbus_discover_and_pair',
+                   side_effect=wait_for_phone) as wait:
+            _run_bluez_pair(ADAPTER, 'hci2', 'SER', ready)
+
+        wait.assert_called_once_with(
+            'hci2', PHONE_BT, 'SER', discovery_timeout=35, phone_initiated=True)
+        assert all('REQUEST_DISCOVERABLE' not in c.args[1] for c in adb.call_args_list)
+        assert all('bluetooth_manager enable' not in c.args[1] for c in adb.call_args_list)
+
+    def test_missing_adapter_cannot_borrow_another_adapters_bond(self):
+        from fleet_agent.bluetooth.pair import _bluez_is_paired
+        fake = types.ModuleType('dbus')
+        fake.SystemBus = MagicMock()
+        fake.Interface = MagicMock()
+        fake.SystemBus.return_value.get_object.side_effect = RuntimeError('UnknownObject')
+
+        with patch.dict(sys.modules, {'dbus': fake}):
+            assert _bluez_is_paired('hci3', PHONE_BT) is False
+
+        fake.SystemBus.return_value.get_object.assert_called_once_with(
+            'org.bluez', '/org/bluez/hci3/dev_4C_2E_5E_D2_D6_00')
+
+
+class TestClearPhoneBond:
+    def test_pixel_uses_targeted_unpair(self):
+        from fleet_agent.bluetooth.pair import _clear_phone_bond
+        with patch('fleet_agent.bluetooth.pair.adb_shell',
+                   return_value='Row: 0 ok=true, status=removed') as adb, \
+             patch('fleet_agent.bluetooth.pair._nuke_phone_bt_bonds') as nuke:
+            _clear_phone_bond('SER', ADAPTER)
+
+        assert f'bluetooth/unpair?mac={ADAPTER}' in adb.call_args.args[1]
+        nuke.assert_not_called()
+
+    def test_failed_targeted_unpair_falls_back(self):
+        from fleet_agent.bluetooth.pair import _clear_phone_bond
+        with patch('fleet_agent.bluetooth.pair.adb_shell', return_value='Row: 0 ok=false'), \
+             patch('fleet_agent.bluetooth.pair._nuke_phone_bt_bonds') as nuke:
+            _clear_phone_bond('SER', ADAPTER)
+
+        nuke.assert_called_once_with('SER')
+
+
 # ---------------------------------------------------------------------------
 # 4. Assignment recorded before pairing; setup keeps a working bond
 # ---------------------------------------------------------------------------
@@ -243,7 +336,7 @@ def pair_env(monkeypatch):
         patch(p + 'enum_dongles', return_value={ADAPTER: 'hci2'}),
         patch(p + 'adb_shell', side_effect=fake_adb_shell),
         patch(p + 'ensure_screen_on'),
-        patch(p + '_run_bluez_pair'),
+        patch(p + '_run_bluez_pair', side_effect=lambda mac, hci, serial, ready: ready.set()),
         patch(p + '_do_pair_tap_loop'),
         patch(p + 'apply_restrictions'),
         patch(p + 'run_cmd', return_value=MagicMock(stdout='Paired: yes')),
@@ -269,7 +362,7 @@ class TestAllocateAndPair:
         from fleet_agent.bluetooth.pair import allocate_and_pair_bluetooth
         pair_env.connected.return_value = False
 
-        allocate_and_pair_bluetooth('SER', 'http://snap')
+        allocate_and_pair_bluetooth('SER', 'http://snap', force_repair=True)
 
         names = [c[0] for c in pair_env.order.mock_calls]
         assert names.index('save') < names.index('nuke')
@@ -279,23 +372,33 @@ class TestAllocateAndPair:
     def test_setup_keeps_connected_bond(self, pair_env):
         from fleet_agent.bluetooth.pair import allocate_and_pair_bluetooth
 
-        result = allocate_and_pair_bluetooth('SER', 'http://snap', skip_if_connected=True)
+        result = allocate_and_pair_bluetooth('SER', 'http://snap')
 
         assert result == (ADAPTER, 'hci2', PHONE_BT, None)
         pair_env.nuke.assert_not_called()
 
-    def test_setup_repairs_when_not_connected(self, pair_env):
+    def test_setup_keeps_disconnected_bond(self, pair_env):
         from fleet_agent.bluetooth.pair import allocate_and_pair_bluetooth
         pair_env.connected.return_value = False
 
-        allocate_and_pair_bluetooth('SER', 'http://snap', skip_if_connected=True)
+        result = allocate_and_pair_bluetooth('SER', 'http://snap')
+
+        assert result == (ADAPTER, 'hci2', PHONE_BT, None)
+        pair_env.nuke.assert_not_called()
+
+    @pytest.mark.parametrize('pi,phone', [(True, False), (False, True), (False, False)])
+    def test_missing_bond_is_repaired(self, pair_env, pi, phone):
+        from fleet_agent.bluetooth.pair import allocate_and_pair_bluetooth
+        pair_env.bonded.return_value = BtBondedDetail(pi=pi, phone=phone)
+
+        allocate_and_pair_bluetooth('SER', 'http://snap')
 
         pair_env.nuke.assert_called_once_with('SER')
 
-    def test_heal_always_repairs(self, pair_env):
+    def test_explicit_pair_can_replace_existing_bond(self, pair_env):
         from fleet_agent.bluetooth.pair import allocate_and_pair_bluetooth
 
-        allocate_and_pair_bluetooth('SER', 'http://snap')
+        allocate_and_pair_bluetooth('SER', 'http://snap', force_repair=True)
 
         pair_env.nuke.assert_called_once_with('SER')
 

@@ -143,8 +143,22 @@ def disable_discoverable(adapter_mac: str):
     log.info(f'Adapter {adapter_mac} set Discoverable+Pairable=false')
 
 
+def _bluez_is_paired(adapter_hci: str, phone_bt_mac: str) -> bool:
+    """Read only this adapter's bond, even when another adapter is missing."""
+    try:
+        import dbus
+        bus = dbus.SystemBus()
+        path = f'/org/bluez/{adapter_hci}/dev_' + phone_bt_mac.upper().replace(':', '_')
+        props = dbus.Interface(bus.get_object('org.bluez', path),
+                               'org.freedesktop.DBus.Properties')
+        return bool(props.Get('org.bluez.Device1', 'Paired'))
+    except Exception:
+        return False
+
+
 def _dbus_discover_and_pair(adapter_hci: str, phone_bt_mac: str,
                             serial: str, discovery_timeout: int = 20,
+                            phone_initiated: bool = False,
                             ) -> tuple[bool, bool]:
     """Discover, pair, trust and connect a phone via D-Bus.
 
@@ -152,6 +166,10 @@ def _dbus_discover_and_pair(adapter_hci: str, phone_bt_mac: str,
     bluetoothctl registers its own agent on startup which displaces the
     fleet agent's AutoAcceptAgent, causing pair confirmations to be
     silently dropped in non-interactive (piped) mode.
+
+    With phone_initiated, wait for Android's direct createBond request
+    instead of scanning or issuing a competing Pair request. The phone
+    doesn't have to be discoverable for this path.
 
     Returns (paired, connected) booleans.
     """
@@ -163,21 +181,20 @@ def _dbus_discover_and_pair(adapter_hci: str, phone_bt_mac: str,
     device_path = None
 
     # Discovery
-    log.info(f'[{serial}] BlueZ: running discovery on {adapter_hci}')
+    log.info(f'[{serial}] BlueZ: waiting for phone bond on {adapter_hci}' if phone_initiated
+             else f'[{serial}] BlueZ: running discovery on {adapter_hci}')
     adapter = dbus.Interface(
         bus.get_object('org.bluez', adapter_path), 'org.bluez.Adapter1',
     )
-    try:
-        adapter.StartDiscovery()
-    except dbus.DBusException as e:
-        if e.get_dbus_name() != 'org.bluez.Error.InProgress':
-            log.warning(f'[{serial}] D-Bus StartDiscovery error: {e}')
-            return False, False
-        # BlueZ allows one discovery session per D-Bus client, and this
-        # process shares one connection, so an earlier attempt's session is
-        # still ours.  Use it; the finally below stops it.  Bailing out here
-        # instead leaks the session forever and every later attempt fails.
-        log.info(f'[{serial}] BlueZ: discovery already running on {adapter_hci}, reusing it')
+    if not phone_initiated:
+        try:
+            adapter.StartDiscovery()
+        except dbus.DBusException as e:
+            if e.get_dbus_name() != 'org.bluez.Error.InProgress':
+                log.warning(f'[{serial}] D-Bus StartDiscovery error: {e}')
+                return False, False
+            # Reuse our process's earlier session and always stop it below.
+            log.info(f'[{serial}] BlueZ: discovery already running on {adapter_hci}, reusing it')
 
     try:
         for tick in range(discovery_timeout):
@@ -193,19 +210,23 @@ def _dbus_discover_and_pair(adapter_hci: str, phone_bt_mac: str,
                     continue
                 addr = str(ifaces['org.bluez.Device1'].get('Address', ''))
                 if addr.upper() == phone_mac_upper:
+                    if phone_initiated and not ifaces['org.bluez.Device1'].get('Paired', False):
+                        continue
                     device_path = path
                     break
             if device_path:
                 break
     finally:
-        try:
-            adapter.StopDiscovery()
-        except dbus.DBusException:
-            pass
+        if not phone_initiated:
+            try:
+                adapter.StopDiscovery()
+            except dbus.DBusException:
+                pass
 
     if not device_path:
-        log.warning(f'[{serial}] BlueZ: {phone_bt_mac} not found after '
-                    f'{discovery_timeout}s discovery on {adapter_hci}')
+        log.warning(f'[{serial}] BlueZ: {phone_bt_mac} not '
+                    f'{"bonded" if phone_initiated else "found"} after '
+                    f'{discovery_timeout}s on {adapter_hci}')
         return False, False
 
     log.info(f'[{serial}] BlueZ: found {phone_bt_mac} at {device_path}')
@@ -219,17 +240,18 @@ def _dbus_discover_and_pair(adapter_hci: str, phone_bt_mac: str,
         'org.freedesktop.DBus.Properties',
     )
 
-    log.info(f'[{serial}] BlueZ: pairing with {phone_bt_mac}')
-    try:
-        dev.Pair()
-    except dbus.DBusException as e:
-        err_name = e.get_dbus_name()
-        if err_name == 'org.bluez.Error.AlreadyExists':
-            log.info(f'[{serial}] BlueZ: already paired')
-        else:
-            log.warning(f'[{serial}] BlueZ Pair() error: {e}')
-            return False, False
-    time.sleep(1)
+    if not phone_initiated:
+        log.info(f'[{serial}] BlueZ: pairing with {phone_bt_mac}')
+        try:
+            dev.Pair()
+        except dbus.DBusException as e:
+            err_name = e.get_dbus_name()
+            if err_name == 'org.bluez.Error.AlreadyExists':
+                log.info(f'[{serial}] BlueZ: already paired')
+            else:
+                log.warning(f'[{serial}] BlueZ Pair() error: {e}')
+                return False, False
+        time.sleep(1)
 
     # Trust
     try:
@@ -257,12 +279,13 @@ def _dbus_discover_and_pair(adapter_hci: str, phone_bt_mac: str,
     return paired, connected
 
 
-def _run_bluez_pair(adapter_mac: str, adapter_hci: str, serial: str):
+def _run_bluez_pair(adapter_mac: str, adapter_hci: str, serial: str,
+                    ready: threading.Event | None = None):
     """Pi-side BlueZ pairing flow (replaces bluetooth-pair.sh).
 
-    Powers on the adapter, runs discovery to populate the BlueZ device
-    cache, then pairs/trusts/connects.  Runs in a thread alongside the
-    phone-side ContentProvider pair request.
+    Prepare the adapter before Android initiates pairing directly to its
+    known MAC, then trust/connect the resulting bond. No phone visibility
+    request is needed. Runs alongside the ContentProvider pair request.
 
     Discoverable is enabled only for this adapter for the duration of
     the pair attempt, and restored to false in a finally block.
@@ -282,70 +305,27 @@ def _run_bluez_pair(adapter_mac: str, adapter_hci: str, serial: str):
         enable_discoverable(adapter_mac, timeout_seconds=120)
 
         try:
-            # Enable BT on phone via ADB
-            adb_shell(serial, 'cmd bluetooth_manager enable', timeout=5)
-            time.sleep(2)
-
             # Get phone BT MAC
             phone_bt_mac = adb_shell(serial, 'settings get secure bluetooth_address').strip()
             if not phone_bt_mac or phone_bt_mac == 'null':
-                log.warning(f'[{serial}] BlueZ pair: could not get phone BT MAC')
-                return
+                phone_bt_mac = get_cached_bt_mac(serial)
+                if not phone_bt_mac:
+                    log.warning(f'[{serial}] BlueZ pair: could not get phone BT MAC')
+                    return
 
-            # Check if already paired — test connection (via D-Bus)
-            import dbus as _dbus
-            _bus = _dbus.SystemBus()
-            _dev_path = (f'/org/bluez/{adapter_hci}/dev_'
-                         + phone_bt_mac.upper().replace(':', '_'))
-            try:
-                _props = _dbus.Interface(
-                    _bus.get_object('org.bluez', _dev_path),
-                    'org.freedesktop.DBus.Properties',
-                )
-                _is_paired = bool(_props.Get('org.bluez.Device1', 'Paired'))
-            except _dbus.DBusException:
-                _is_paired = False
-
-            if _is_paired:
-                log.info(f'[{serial}] Already paired in BlueZ — testing connection')
-                try:
-                    _props.Set('org.bluez.Device1', 'Trusted', True)
-                    _dev = _dbus.Interface(
-                        _bus.get_object('org.bluez', _dev_path),
-                        'org.bluez.Device1',
-                    )
-                    _is_connected = bool(
-                        _props.Get('org.bluez.Device1', 'Connected'))
-                    if not _is_connected:
-                        _dev.Connect()
-                        time.sleep(2)
-                        _is_connected = bool(
-                            _props.Get('org.bluez.Device1', 'Connected'))
-                    if _is_connected:
-                        log.info(f'[{serial}] BlueZ: connected (already paired)')
-                        return
-                except _dbus.DBusException as _e:
-                    log.warning(f'[{serial}] Connect test failed: {_e}')
-
-                log.warning(f'[{serial}] Stale BlueZ bond — removing and re-pairing')
+            # The caller has cleared the phone-side bond, so clear any old
+            # Pi-side key before letting Android create its replacement.
+            if _bluez_is_paired(adapter_hci, phone_bt_mac):
+                log.info(f'[{serial}] Removing old BlueZ key before phone-initiated pairing')
                 _btctl(adapter_mac, f'remove {phone_bt_mac}')
                 time.sleep(1)
 
-            # Make phone discoverable (REQUEST_DISCOVERABLE is more
-            # reliable than just opening BT settings, which may not
-            # broadcast on some devices with restrictions active)
-            adb_shell(serial,
-                      'am start -a android.bluetooth.adapter.action.REQUEST_DISCOVERABLE '
-                      '--ei android.bluetooth.adapter.extra.DISCOVERABLE_DURATION 120',
-                      timeout=5)
-            time.sleep(3)
+            if ready is not None:
+                ready.set()
 
-            # D-Bus discovery + pair + trust + connect
-            # Using D-Bus directly avoids bluetoothctl agent conflicts
-            # (bluetoothctl registers its own agent which displaces our
-            # AutoAcceptAgent, causing pair confirmations to be dropped).
             paired, connected = _dbus_discover_and_pair(
                 adapter_hci, phone_bt_mac, serial,
+                discovery_timeout=35, phone_initiated=True,
             )
             log.info(f'[{serial}] BlueZ pair flow complete: paired={paired} connected={connected}')
 
@@ -440,8 +420,25 @@ def _nuke_phone_bt_bonds(serial: str):
         log.warning(f'[{serial}] Failed to nuke phone BT bonds: {e}')
 
 
+def _clear_phone_bond(serial: str, adapter_mac: str):
+    """Remove the assigned bond first; fall back for OEMs where that fails.
+
+    Clearing the Bluetooth app data alone can leave Pixel bond keys intact,
+    causing createBond to return already_paired forever on a one-sided bond.
+    """
+    result = adb_shell(
+        serial,
+        f"content query --uri 'content://com.otacon.kiosk/bluetooth/unpair?mac={adapter_mac}'",
+        timeout=20,
+    )
+    if 'ok=true' in result:
+        log.info(f'[{serial}] Cleared phone bond with {adapter_mac}')
+        return
+    _nuke_phone_bt_bonds(serial)
+
+
 def allocate_and_pair_bluetooth(serial: str, snapshot_url: str,
-                                 report_error=None, skip_if_connected: bool = False,
+                                 report_error=None, force_repair: bool = False,
                                  ) -> tuple[str | None, str | None, str | None, str | None]:
     """Allocate a BT dongle and pair the phone with it.
 
@@ -449,10 +446,9 @@ def allocate_and_pair_bluetooth(serial: str, snapshot_url: str,
     replaced_mac is the old dongle MAC that was saved but missing at startup,
     or None if no reassignment occurred.
 
-    skip_if_connected keeps an existing bond that is already up on the
-    allocated adapter instead of wiping and re-pairing it.  Setup passes it
-    so a fleet-agent restart doesn't break working phones; heals don't,
-    because they run precisely when the bond is suspect.
+    Keep an existing bond on both sides even when disconnected. Connection
+    recovery must not wipe valid bonds or ask Android to become discoverable.
+    Explicit manual pairing can set force_repair to replace an existing bond.
     """
     if os.environ.get('AUDIO_BACKEND') != 'bluetooth':
         return (None, None, None, None)
@@ -503,8 +499,7 @@ def allocate_and_pair_bluetooth(serial: str, snapshot_url: str,
         if mac.upper() != adapter_mac.upper() and phone_bt_mac:
             # Check if wrong adapter has a Pi-side bond with this phone
             try:
-                info_out = _btctl(mac, f'info {phone_bt_mac}')
-                if 'Paired: yes' in info_out:
+                if _bluez_is_paired(_hci, phone_bt_mac):
                     log.warning(f'[{serial}] Removing cross-dongle Pi-side bond: '
                                 f'{phone_bt_mac} on {mac}')
                     _btctl(mac, f'disconnect {phone_bt_mac}',
@@ -513,18 +508,15 @@ def allocate_and_pair_bluetooth(serial: str, snapshot_url: str,
             except Exception:
                 pass
 
-    if skip_if_connected and phone_bt_mac and not has_wrong_bond:
-        from ..phone.health import check_bt_bonded, check_bt_connected
-        if (check_bt_bonded(adapter_mac, phone_bt_mac, serial=serial).ok
-                and check_bt_connected(adapter_mac, phone_bt_mac)):
-            log.info(f'[{serial}] Already bonded and connected on {adapter_mac}; keeping the bond')
+    if not force_repair and phone_bt_mac and not has_wrong_bond:
+        from ..phone.health import check_bt_bonded
+        if check_bt_bonded(adapter_mac, phone_bt_mac, serial=serial).ok:
+            log.info(f'[{serial}] Already bonded on {adapter_mac}; keeping the bond')
             return (adapter_mac, adapter_hci, phone_bt_mac, replaced_mac)
 
-    # Clear phone-side bonds. On Samsung Android 16+, removeBond() via
-    # reflection silently fails — the API returns true but the native BT
-    # config retains the bond. The only reliable mechanism is to nuke all
-    # phone BT data via `pm clear`, then re-enable.
-    _nuke_phone_bt_bonds(serial)
+    # Use targeted unpair on Pixel; retain the pm-clear fallback for OEMs
+    # where removeBond fails. Only replace keys when a new bond is needed.
+    _clear_phone_bond(serial, adapter_mac)
     time.sleep(2)
 
     pair_result = {}
@@ -542,8 +534,15 @@ def allocate_and_pair_bluetooth(serial: str, snapshot_url: str,
 
     ensure_screen_on(serial)
 
-    pair_script = threading.Thread(target=_run_bluez_pair, args=(adapter_mac, adapter_hci, serial), daemon=True)
+    pair_ready = threading.Event()
+    pair_script = threading.Thread(target=_run_bluez_pair,
+                                   args=(adapter_mac, adapter_hci, serial, pair_ready), daemon=True)
     pair_script.start()
+    if not pair_ready.wait(timeout=45):
+        log.warning(f'[{serial}] BlueZ adapter not ready for phone-initiated pairing')
+        if report_error:
+            report_error('bluetooth.pair_failed', 'BlueZ adapter not ready for pairing')
+        return (adapter_mac, adapter_hci, phone_bt_mac, replaced_mac)
 
     pair_thread = threading.Thread(target=do_pair, daemon=True)
     pair_thread.start()
@@ -562,12 +561,17 @@ def allocate_and_pair_bluetooth(serial: str, snapshot_url: str,
             timeout=10,
         )
         if 'Paired: yes' not in (bluez_check.stdout or ''):
-            log.warning(f'[{serial}] Phone reports already_paired but BlueZ has no record -- nuking bonds and retrying')
-            _nuke_phone_bt_bonds(serial)
+            log.warning(f'[{serial}] Phone reports already_paired but BlueZ has no record -- clearing stale bond and retrying')
+            _clear_phone_bond(serial, adapter_mac)
             pair_result.clear()
             pair_done.clear()
-            retry_script = threading.Thread(target=_run_bluez_pair, args=(adapter_mac, adapter_hci, serial), daemon=True)
+            pair_ready.clear()
+            retry_script = threading.Thread(target=_run_bluez_pair,
+                                            args=(adapter_mac, adapter_hci, serial, pair_ready), daemon=True)
             retry_script.start()
+            if not pair_ready.wait(timeout=45):
+                log.warning(f'[{serial}] BlueZ adapter not ready for pairing retry')
+                return (adapter_mac, adapter_hci, phone_bt_mac, replaced_mac)
             retry_thread = threading.Thread(target=do_pair, daemon=True)
             retry_thread.start()
             _do_pair_tap_loop(serial, snapshot_url, label=' [retry]')
