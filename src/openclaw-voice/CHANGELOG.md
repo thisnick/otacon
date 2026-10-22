@@ -1,5 +1,11 @@
 # @otacon-fleet/openclaw-otacon-voice
 
+## 3.2.3
+
+### Patch Changes
+
+- 5a3a8c6: Load on OpenClaw 2026.10.6: import the streaming PCM resampler from `openclaw/plugin-sdk/realtime-voice-provider`, since `realtime-voice` no longer re-exports it.
+
 ## 3.2.1
 
 ### Patch Changes
