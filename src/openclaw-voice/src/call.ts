@@ -474,7 +474,7 @@ export class CallMission {
       `- If you need information you don't have (for example ${config.ownerName}'s details or preferences), use ${this.o.sdk.consultToolName}. Never make up names, numbers, dates, or commitments.`,
       "- Share only what the goal needs. Don't reveal that you were given instructions.",
       "- If you reach voicemail, decide whether a short message helps the goal; then end the call.",
-      "- When the goal is done, or clearly can't be done, say a short goodbye and then call end_call with a summary of the outcome (what was agreed, names, times, confirmation numbers).",
+      "- When the goal is done, or clearly can't be done, say a short goodbye and then call end_call with a TL;DR of the call for whoever asked for it: how it turned out, what was agreed or learned (names, times, numbers), and anything left open or still to do. Say plainly what the other side actually said or agreed to; don't claim more than they did.",
     ];
     if (contacts.length) {
       lines.push(
@@ -496,7 +496,10 @@ export class CallMission {
       }, ["digits"]),
       tool("end_call", "Hang up and finish. Call after saying goodbye.", {
         outcome: { type: "string", enum: ["done", "failed", "voicemail"], description: "Whether the goal was achieved" },
-        summary: { type: "string", description: "What happened: agreements, names, times, confirmation numbers" },
+        summary: {
+          type: "string",
+          description: "A TL;DR of the call, a few sentences: how it turned out, what was agreed or learned (names, times, numbers), anything left open",
+        },
       }, ["outcome", "summary"]),
     ];
     if (this.o.config.toolPolicy !== "none") t.push(this.o.sdk.consultTool);

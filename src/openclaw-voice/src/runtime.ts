@@ -4,6 +4,8 @@
 // that asked for the call.
 
 import { AsyncResource } from "node:async_hooks";
+import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import type { PluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import { CallMission, type MenuDeps, type MissionReport, type Party, type RealtimeSdk, type SpeechDetectorLike } from "./call.js";
 import { isE164, type Contact, type LineConfig, type OtaconVoiceConfig } from "./config.js";
@@ -11,7 +13,7 @@ import type { LineLink } from "./line.js";
 import { OtaconLink } from "./otacon.js";
 import { TwilioLine } from "./twilio.js";
 import { openRouterDecisions } from "./navigator.js";
-import { formatReport } from "./report.js";
+import { formatReport, formatSavedReport } from "./report.js";
 import { openAiLiveTranscriber } from "./transcriber.js";
 import { SpeechDetector } from "./vad.js";
 
@@ -54,8 +56,13 @@ export class OtaconVoiceRuntime {
     private api: PluginApi,
     private config: OtaconVoiceConfig,
     private sdk: RealtimeSdk,
-    /** Tests pass links by line id */
-    private deps: { links?: Record<string, LineLink>; createDetector?: () => Promise<SpeechDetectorLike | null>; menu?: MenuDeps } = {},
+    /** Tests pass links by line id; transcriptsDir is where finished calls are saved */
+    private deps: {
+      links?: Record<string, LineLink>;
+      createDetector?: () => Promise<SpeechDetectorLike | null>;
+      menu?: MenuDeps;
+      transcriptsDir?: string;
+    } = {},
   ) {
     for (const line of config.lines) this.slots.set(line.id, { config: line, detector: null });
     this.createDetector = deps.createDetector ?? (() => SpeechDetector.create());
@@ -314,13 +321,65 @@ export class OtaconVoiceRuntime {
     mission.start();
   }
 
+  /**
+   * Save the whole report, so the agent can read all of it (otacon_call_log)
+   * whatever happens to the report in its session. Returns the file, or
+   * undefined when there's no directory or the write fails.
+   */
+  private save(report: MissionReport): string | undefined {
+    const dir = this.deps.transcriptsDir;
+    if (!dir) return undefined;
+    const day = new Date(report.startedAt).toISOString().slice(0, 10);
+    const file = join(dir, `${day}-${report.missionId}.txt`);
+    try {
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      writeFileSync(file, `${formatSavedReport(report)}\n`, { mode: 0o600 });
+      return file;
+    } catch (err) {
+      this.api.logger.warn(`[otacon-voice] couldn't save the transcript of ${report.missionId}: ${String(err)}`);
+      return undefined;
+    }
+  }
+
+  /**
+   * A finished call's whole report: TL;DR, goal and the full log. Without a
+   * call id, the most recent call.
+   */
+  callLog(missionId?: string): { callId: string; transcript: string; savedAt?: string } | null {
+    const dir = this.deps.transcriptsDir;
+    let files: string[] = [];
+    try {
+      files = dir ? readdirSync(dir).filter((f) => /^\d{4}-\d{2}-\d{2}-oc_[0-9a-f]+\.txt$/.test(f)) : [];
+    } catch {
+      files = [];
+    }
+    const newest = () => {
+      const byTime = files.map((f) => ({ f, t: statSync(join(dir!, f)).mtimeMs })).sort((a, b) => b.t - a.t);
+      return byTime[0]?.f.slice(11, -4); // "2026-10-30-oc_1234abcd.txt" -> "oc_1234abcd"
+    };
+    const id = missionId ?? this.recent[0]?.missionId ?? newest();
+    if (!id) return null;
+    const name = files.find((f) => f.endsWith(`-${id}.txt`));
+    if (name) {
+      const savedAt = join(dir!, name);
+      try {
+        return { callId: id, transcript: readFileSync(savedAt, "utf8").trimEnd(), savedAt };
+      } catch {
+        // fall back to memory
+      }
+    }
+    const r = this.recent.find((x) => x.missionId === id);
+    return r ? { callId: id, transcript: formatSavedReport(r) } : null;
+  }
+
   private onMissionEnd(report: MissionReport) {
     this.recent.unshift(report);
     this.recent.length = Math.min(this.recent.length, 20);
     const sessionKey = report.requesterSessionKey ?? `agent:${report.agentId}:main`;
-    const text = formatReport(report);
+    const savedAt = this.save(report);
+    const text = formatReport(report, { savedAt });
     this.api.logger.info(
-      `[otacon-voice] ${report.missionId} reported to ${sessionKey}: ${report.outcome}; ${report.log.length} log entries`,
+      `[otacon-voice] ${report.missionId} reported to ${sessionKey}: ${report.outcome}; ${report.log.length} log entries; ${text.length} chars${savedAt ? `; saved at ${savedAt}` : ""}`,
     );
     try {
       this.api.runtime.system.enqueueSystemEvent(text, { sessionKey, contextKey: `otacon-voice:${report.missionId}` });

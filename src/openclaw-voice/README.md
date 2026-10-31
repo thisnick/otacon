@@ -6,18 +6,25 @@ Each configured line (a phone or a number) takes incoming calls and can
 place calls; the agent picks the line, or the default one is used.
 
 - **Agent tool `otacon_call`**: place a call with a goal (`brief`); it runs in
-  the background, and when it ends the whole call log (both sides,
-  timestamped, plus events such as keys pressed and lines joined) is
-  delivered to the requesting session as a system message, for the agent to
-  summarize and act on. When the other side hangs up, the report waits up to
-  3 s for its last words.
+  the background, and when it ends a report is delivered to the requesting
+  session as a system message, for the agent to act on: a TL;DR (the voice
+  model's summary from `end_call`), the goal, and the call log (both sides,
+  timestamped, plus events such as keys pressed and lines joined). The report
+  is kept under 3,000 characters, because OpenClaw shows other sessions a
+  stored message cut at 4,000: a long call's log keeps its end. When the other
+  side hangs up, the report waits up to 10 s for its last words.
+- **Transcripts**: every finished call is also saved whole, as
+  `<OpenClaw state dir>/otacon-voice/calls/<date>-<call id>.txt`
+  (`~/.openclaw/otacon-voice/calls/` by default). The agent reads one with
+  **`otacon_call_log`** (`callId`; without it, the latest call), and operators
+  with the gateway method `otaconvoice.log`.
 - `otacon_call` takes `holdLimitMinutes` to set how long that call waits on
   hold (default `holdCapSeconds`, 300 s; at most `maxCallSeconds`, 1800 s),
   and, with more than one line, `line` (default `defaultLine`). Each line
   has at most one call at a time; different lines can have calls at once.
 - **On the call** the voice model can press keys (`send_dtmf`: over
   Bluetooth HFP as `AT+VTS` on a phone, a `<Play digits>` redirect on
-  Twilio), consult the agent (`openclaw_agent_consult`), end the call with a summary, and, when
+  Twilio), consult the agent (`openclaw_agent_consult`), end the call with a TL;DR, and, when
   contacts are allowed, bring a person in on a second line and join the
   lines (`call_party`, `switch_line`, `connect_lines`, `drop_line`).
 - **Hold**: asked to hold, the voice model says "Sure, I'll hold." Holds are

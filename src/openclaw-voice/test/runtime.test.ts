@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { OtaconVoiceRuntime } from "../src/runtime.js";
 import { config, FakeLink, fakeApi, fakeSdk, fakeSecrets, logs, settle } from "./fakes.js";
 
 const ALLOWED = "+15555550102";
 
-function setup(extra: Record<string, unknown> = {}) {
+function setup(extra: Record<string, unknown> = {}, transcriptsDir?: string) {
   const link = new FakeLink();
   const { sdk, sessions, consults } = fakeSdk();
   const { api, events, wakes } = fakeApi();
@@ -24,8 +27,23 @@ function setup(extra: Record<string, unknown> = {}) {
   const rt = new OtaconVoiceRuntime(api, config({ inboundPolicy: "allowlist", allowFrom: [ALLOWED], ...extra }), sdk, {
     links: { sim: link },
     createDetector: async () => null,
+    transcriptsDir,
   });
   return { rt, link, sdk, sessions, events, wakes, consults };
+}
+
+/** Place a call to Luigi's, hear one line, and let it end. */
+async function oneCall(s: ReturnType<typeof setup>, heard: string) {
+  const { missionId } = await s.rt.startCall({ to: "+15555550100", name: "Luigi's", brief: "Book a table", agentId: "main", requesterSessionKey: "agent:main:chat-1" });
+  await settle();
+  s.link.call("call.state", { id: "o1", number: "+15555550100", state: "active" });
+  await settle();
+  s.sessions.at(-1)!.transcript("user", heard);
+  s.link.call("call.ended", { id: "o1" }, "remote");
+  await settle();
+  s.sessions.at(-1)!.transcript("user", "Bye!"); // the last words the mission waits for
+  await settle();
+  return missionId;
 }
 
 test("inbound: callers not on the allowlist are left ringing", async () => {
@@ -173,5 +191,65 @@ test("lines: calls go out on the default line or the one named, one call per lin
     sim.call("call.ended", { id: "s1" }, "failed");
     other.call("call.ended", { id: "o1" }, "failed");
     await settle();
+  }
+});
+
+test("transcripts: each finished call is saved whole, and the report says where", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "otacon-voice-calls-"));
+  try {
+    const s = setup({}, join(dir, "calls"));
+    await s.rt.start();
+    const id = await oneCall(s, "Yes, a table for two at 7:30.");
+    const files = readdirSync(join(dir, "calls"));
+    assert.deepEqual(files, [`${new Date().toISOString().slice(0, 10)}-${id}.txt`]);
+    const saved = readFileSync(join(dir, "calls", files[0]), "utf8");
+    assert.match(saved, /TL;DR: none/);
+    assert.match(saved, /Luigi's: Yes, a table for two at 7:30\./);
+    assert.doesNotMatch(saved, /otacon_call_log/, "the saved copy doesn't point at itself");
+    assert.match(s.events[0].text, new RegExp(`Full transcript: otacon_call_log with callId ${id} \\(saved at ${join(dir, "calls", files[0]).replace(/[.]/g, "\\.")}\\)`));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("transcripts: otacon_call_log reads a call by id, or the latest, and after a restart", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "otacon-voice-calls-"));
+  try {
+    const s = setup({}, dir);
+    await s.rt.start();
+    const first = await oneCall(s, "First call.");
+    const second = await oneCall(s, "Second call.");
+    assert.match(s.rt.callLog(first)!.transcript, /First call\./);
+    assert.equal(s.rt.callLog()!.callId, second, "no id: the latest call");
+    assert.equal(s.rt.callLog("oc_00000000"), null);
+    s.rt.stop();
+
+    // A new runtime (the gateway restarted) has nothing in memory, only the files.
+    const again = setup({}, dir);
+    await again.rt.start();
+    const log = again.rt.callLog(first)!;
+    assert.match(log.transcript, /First call\./);
+    assert.ok(log.savedAt?.startsWith(dir));
+    again.rt.stop();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("transcripts: when saving fails, the call is still reported, without a file", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "otacon-voice-calls-"));
+  const notADir = join(dir, "file");
+  writeFileSync(notADir, "");
+  try {
+    const s = setup({}, notADir);
+    await s.rt.start();
+    const id = await oneCall(s, "Hello.");
+    assert.equal(s.events.length, 1);
+    assert.match(s.events[0].text, new RegExp(`otacon_call_log with callId ${id}\\.`));
+    assert.doesNotMatch(s.events[0].text, /saved at/);
+    assert.match(s.rt.callLog(id)!.transcript, /Hello\./, "still readable from memory");
+    assert.ok(!existsSync(join(notADir, "x")));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });

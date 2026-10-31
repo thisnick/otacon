@@ -2,6 +2,7 @@ import { definePluginEntry, type PluginApi } from "openclaw/plugin-sdk/plugin-en
 import { jsonResult } from "openclaw/plugin-sdk/tool-results";
 import { isE164, parseConfig, type Contact, type OtaconVoiceConfig } from "./config.js";
 import type { IncomingMessage } from "node:http";
+import { join } from "node:path";
 import { realtimeSdk } from "./realtime.js";
 import { OtaconVoiceRuntime } from "./runtime.js";
 
@@ -128,7 +129,7 @@ export default definePluginEntry({
       name: TOOL_NAME,
       label: "Phone call",
       description:
-        "Place a phone call that a voice assistant carries out on the user's behalf: it navigates phone menus, waits on hold, talks to people, and can bring in one of the given contacts. Returns at once with a callId. The outcome (summary and transcript) is delivered to this session automatically as a system message when the call ends, which can take many minutes: do not poll `status` or sleep waiting for it. Tell the user the call is under way and end your turn.",
+        "Place a phone call that a voice assistant carries out on the user's behalf: it navigates phone menus, waits on hold, talks to people, and can bring in one of the given contacts. Returns at once with a callId. The outcome (a TL;DR and the end of the transcript; otacon_call_log has all of it) is delivered to this session automatically as a system message when the call ends, which can take many minutes: do not poll `status` or sleep waiting for it. Tell the user the call is under way and end your turn.",
       parameters: toolParameters(config),
       async execute(_id: string, p: any) {
         try {
@@ -179,6 +180,30 @@ export default definePluginEntry({
     api.registerGatewayMethod(
       "otaconvoice.status",
       ({ params, respond }) => respond(true, runtime?.status(params?.callId) ?? null),
+      { scope: "operator.read" },
+    );
+
+    // The whole report of a finished call: the session gets a TL;DR and the
+    // end of the log; this has everything.
+    api.registerTool(() => ({
+      name: "otacon_call_log",
+      label: "Phone call transcript",
+      description:
+        "The full transcript of a finished phone call made or answered with otacon_call: its TL;DR, goal and the whole call log, both sides, timestamped. The report a session gets when a call ends is shortened to a TL;DR and the end of the call; use this for the rest, or when asked for a call's transcript. Without callId, the most recent call.",
+      parameters: {
+        type: "object",
+        additionalProperties: false,
+        properties: { callId: { type: "string", description: "the call id from otacon_call or the call report, e.g. oc_1234abcd" } },
+      },
+      async execute(_id: string, p: any) {
+        if (!runtime) return jsonResult({ error: "otacon-voice is not running in this process" });
+        const log = runtime.callLog(p?.callId || undefined);
+        return jsonResult(log ?? { error: p?.callId ? `no saved transcript for ${p.callId}` : "no finished call yet" });
+      },
+    }));
+    api.registerGatewayMethod(
+      "otaconvoice.log",
+      ({ params, respond }) => respond(true, runtime?.callLog(params?.callId || undefined) ?? null),
       { scope: "operator.read" },
     );
 
@@ -258,7 +283,8 @@ export default definePluginEntry({
       async start(ctx) {
         if (api.registrationMode !== "full") return;
         if (process.env.OPENCLAW_CLI === "1" && !process.argv.includes("gateway")) return;
-        runtime = new OtaconVoiceRuntime(api, config, realtimeSdk);
+        // OpenClaw's state directory (~/.openclaw): finished calls are saved there.
+        runtime = new OtaconVoiceRuntime(api, config, realtimeSdk, { transcriptsDir: join(ctx.stateDir, "otacon-voice", "calls") });
         try {
           await runtime.start();
           api.logger.info(`[otacon-voice] running on ${runtime.lines.map((l) => l.label).join(", ")}`);
