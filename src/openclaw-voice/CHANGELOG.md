@@ -1,5 +1,17 @@
 # @otacon-fleet/openclaw-otacon-voice
 
+## 3.4.0
+
+### Minor Changes
+
+- 755ad85: otacon-voice: when the owner calls, the call's first consult gets their latest messages from the session the call reports to (`consultRecentMessages`, 8 by default). The owner's own incoming calls are now reported as a note without waking the agent, so a wake-up turn no longer replaces the chat's CLI conversation.
+- 6dc38fb: otacon-voice: support GPT-Live voice models. GPT-Live can't call tools, so with `realtime.providers.openai.model: "gpt-live-1"` the voice model asks the agent for actions, and the agent acts on that call with the new `otacon_line` tool (keypad, end call, contacts, switching, joining and dropping lines). Ending and joining wait until the voice model has spoken the agent's reply, and silence is skipped while playback is behind. Realtime models behave as before.
+- dbb2419: otacon-voice: `realtime.recentContext: { enabled: true }` starts each call with a recap of the last three calls with the same number (their TL;DR, or how they ended) and, when the caller is the owner, the latest messages of the session the call reports to.
+
+### Patch Changes
+
+- 35cef50: otacon-voice: keep consults working after a config reload. Calls ran in an async context captured when the plugin started; after a hot config reload that context belonged to the reload, which OpenClaw releases when it finishes, so every consult failed with "GatewayDrainingError: Gateway is temporarily unavailable" until the gateway restarted. Calls, listen-in and each consult now run in OpenClaw's background context for the plugin instance.
+
 ## 3.3.0
 
 ### Minor Changes
