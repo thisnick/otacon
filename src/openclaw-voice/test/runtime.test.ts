@@ -29,7 +29,7 @@ function setup(extra: Record<string, unknown> = {}, transcriptsDir?: string) {
     createDetector: async () => null,
     transcriptsDir,
   });
-  return { rt, link, sdk, sessions, events, wakes, consults };
+  return { rt, link, sdk, sessions, events, wakes, consults, api };
 }
 
 /** Place a call to Luigi's, hear one line, and let it end. */
@@ -113,6 +113,33 @@ test("outbound: a call placed from an agent turn outlives the turn's async scope
     assert.deepEqual(r.result, { text: "Nick prefers 7:30." });
   } finally {
     link.call("call.ended", { id: "o1" }, "remote"); // or its timers keep the test process alive
+    await settle();
+  }
+});
+
+test("after a config reload, calls consult in the plugin's background context, not the finished reload's", async () => {
+  // OpenClaw starts the service inside a reload's work scope and releases it
+  // when the reload ends; agent runs started from that scope are refused.
+  const reload = new AsyncLocalStorage<{ closed: boolean }>();
+  const { rt, link, sdk, sessions, api } = setup();
+  api.lifecycle = { runInBackgroundContext: <T>(fn: () => T) => reload.exit(fn) };
+  const consult = sdk.consult;
+  sdk.consult = async (p) => {
+    if (reload.getStore()?.closed) throw new Error("GatewayDrainingError: Gateway is temporarily unavailable");
+    return consult(p);
+  };
+  const scope = { closed: false };
+  await reload.run(scope, () => rt.start());
+  scope.closed = true; // the reload finished
+  await rt.startCall({ to: "+15555550100", brief: "Is the prescription ready?", agentId: "main", requesterSessionKey: "agent:main:main" });
+  await settle();
+  link.call("call.state", { id: "o1", number: "+15555550100", state: "active" });
+  await settle();
+  try {
+    const r = await sessions[0].tool("openclaw_agent_consult", { question: "What's Nick's date of birth?" });
+    assert.deepEqual(r.result, { text: "Nick prefers 7:30." });
+  } finally {
+    link.call("call.ended", { id: "o1" }, "remote");
     await settle();
   }
 });
