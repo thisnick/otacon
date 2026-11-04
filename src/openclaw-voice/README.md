@@ -77,6 +77,27 @@ the first line.
 The realtime API key comes from `realtime.providers.openai.apiKey` (a
 SecretRef), an OpenAI auth profile, or `OPENAI_API_KEY`.
 
+## GPT-Live models
+
+`realtime.providers.openai.model: "gpt-live-1"` uses OpenAI's GPT-Live, which
+listens while it talks and handles interruptions itself. GPT-Live can't call
+tools; it hands requests to the OpenClaw agent in words. otacon-voice detects
+this from the provider's capabilities and then:
+
+- gives the voice model no tools, and tells it to ask the agent for actions;
+- lets that consult act on the call with `otacon_line`: keypad keys, ending
+  the call, calling a contact, and switching, joining or dropping lines.
+  The tool works only on the call the consult belongs to;
+- ends the call, or joins the lines, once the voice model has spoken the
+  agent's reply (the goodbye, or the announcement);
+- skips silence from the model while playback is behind, so a stall doesn't
+  leave the rest of the call delayed.
+
+Every action takes an agent turn, and the navigator's notes don't reach the
+voice model, so realtime models such as `gpt-realtime-2.1` remain the better
+fit for calls that press keys or hand off. `gpt-live-1-codex` (the ChatGPT
+sign-in route) ignores the agent's persona.
+
 Each call runs in an OpenClaw session, where its consults happen, chosen as
 the stock voice-call plugin chooses it. With `sessionScope: "per-phone"`
 (the default), that's `agent:<agentId>:voice:<digits>`: every call with the

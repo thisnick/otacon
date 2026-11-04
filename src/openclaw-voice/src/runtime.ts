@@ -257,6 +257,13 @@ export class OtaconVoiceRuntime {
     return { listening: true, note: `Calling ${this.config.ownerName} to listen in. Hanging up ends only the listening call.` };
   }
 
+  /** For otacon_line: an action on the call a live consult is bound to. */
+  async lineAction(missionId: string, action: string, args: Record<string, unknown>): Promise<unknown> {
+    const m = this.live().find((x) => x.id === missionId);
+    if (!m) return { error: `call ${missionId} isn't in progress` };
+    return m.lineAction(action, args);
+  }
+
   endCall(missionId?: string) {
     const live = this.live();
     const m = missionId ? live.find((x) => x.id === missionId) : live.length === 1 ? live[0] : undefined;

@@ -87,6 +87,26 @@ const CONSULT_SYSTEM_PROMPT = [
   "Do not print secret values.",
 ].join(" ");
 
+/** The tool a GPT-Live call's consult uses to act on that call. */
+export const LINE_TOOL_NAME = "otacon_line";
+/** toolBindings key carrying the call a consult may act on. */
+export const LINE_BINDING = "otacon-voice";
+
+// GPT-Live can't call tools: it delegates in words, and the agent acts with
+// otacon_line on the call it's bound to.
+const LIVE_CONSULT_PROMPT = [
+  `The assistant can't act on the call itself. When its request is to press keypad keys, end the call, or bring in, switch, join or drop lines, do it with ${LINE_TOOL_NAME}, which acts only on this call.`,
+  "To end the call, pass an outcome and a TL;DR summary, then reply with a short goodbye for the assistant to say.",
+].join(" ");
+const LIVE_INSTRUCTIONS = [
+  "In this call you can't use tools yourself: every action goes through the OpenClaw agent.",
+  "To press keypad keys, end the call (after your goodbye), or bring in, switch, join or drop lines, ask the agent in plain words, for example: \"press 1 2 3 #\", or \"end the call: outcome done; summary: ...\". Where these instructions name a tool, ask the agent for that action instead.",
+].join(" ");
+// A model chunk this loud carries speech; GPT-Live streams silence between turns.
+const SPEECH_PEAK = 64;
+// Above this playback lead, silent model audio is skipped so the line catches up.
+const LIVE_TARGET_LEAD_MS = 250;
+
 export type Outcome =
   | "completed"
   | "no_answer"
@@ -204,6 +224,12 @@ export class CallMission {
   private endNotes?: { text: string; line: number }[];
   private onHeard?: () => void;
   private pendingMerge?: () => void;
+  /** GPT-Live: the model delegates instead of calling tools, and streams audio continuously */
+  private live = false;
+  /** When the model last sent audio with speech in it */
+  private speechAt = 0;
+  /** GPT-Live: runs once the model has spoken the agent's current answer */
+  private afterAnswer?: () => void;
 
   constructor(private o: MissionOptions) {
     this.sessionKey = callSessionKey(o.sdk.sessionKeys, {
@@ -484,6 +510,7 @@ export class CallMission {
         "To bring someone in: first tell the current party you're putting them on hold briefly, then call call_party. You'll then be talking to that person on a new line while the first party waits on hold. Use switch_line to move between lines, connect_lines to join everyone into one call (you leave the call after that), and drop_line to hang up one line. If the person doesn't answer or declines, go back to the first party, tell them, and ask how to proceed.",
       );
     }
+    if (this.live) lines.push("", LIVE_INSTRUCTIONS);
     if (config.realtime.instructions) lines.push("", config.realtime.instructions);
     if (agentContext) lines.push("", agentContext);
     return lines.join("\n");
@@ -529,6 +556,8 @@ export class CallMission {
       surface: "gateway-relay",
       useProviderDefaultModel: true,
     });
+    const caps = (resolved.capabilities ?? {}) as { handlesAgentConsult?: boolean; supportsToolCalls?: boolean };
+    this.live = caps.handlesAgentConsult === true && caps.supportsToolCalls !== true;
     const agentContext = await buildAgentContext(this.o.sdk.agentContext, {
       config: config.realtime.agentContext,
       cfg: api.config,
@@ -546,7 +575,7 @@ export class CallMission {
       agentId: this.o.agentId,
       audioFormat: this.o.sdk.audioFormat,
       instructions: this.instructions(agentContext),
-      tools: this.tools(),
+      tools: this.live ? [] : this.tools(),
       markStrategy: "transport",
       audioSink: {
         isOpen: () => !this.ended && !this.detached,
@@ -592,7 +621,7 @@ export class CallMission {
       },
     });
     await this.session.connect();
-    this.debug(`realtime session up (${resolved.provider.id})`);
+    this.debug(`realtime session up (${resolved.provider.id}${this.live ? ", live: actions go through the agent" : ""})`);
     if (this.o.menu && this.o.direction === "outbound") this.startNavigator(this.o.menu);
     if (this.o.direction === "inbound" && config.inboundGreeting) {
       // We picked up: speak first, as voice-call does.
@@ -777,9 +806,16 @@ export class CallMission {
 
   private onModelAudio(audio: Buffer, itemId?: string) {
     if (this.detached || this.ended) return;
-    const pcm = this.down.process(audio);
     const now = Date.now();
     const id = itemId ?? "item";
+    const speech = hasSpeech(audio);
+    if (speech) this.speechAt = now;
+    // A continuous stream arrives as fast as it plays, so a lead left by a
+    // provider stall never shrinks by itself: drop silence until caught up.
+    if (this.live && !speech && this.playing?.itemId === id && this.playing.sentMs - (now - this.playing.firstAt) > LIVE_TARGET_LEAD_MS) {
+      return;
+    }
+    const pcm = this.down.process(audio);
     if (!this.playing || this.playing.itemId !== id) this.playing = { itemId: id, firstAt: now, sentMs: 0 };
     this.playing.sentMs += (audio.length / 2 / MODEL_RATE) * 1000;
     this.o.link.sendAudio(pcm);
@@ -803,15 +839,11 @@ export class CallMission {
     try {
       switch (ev.name) {
         case "send_dtmf": {
-          const r = await this.o.link.cmd("dtmf", { digits: String(args.digits ?? "") });
-          this.note(`pressed ${r.digits ?? args.digits}`);
-          this.navigator?.pressed("assistant", String(r.digits ?? args.digits));
-          return reply({ pressed: r.digits, note: "Pressed. Stay quiet and listen to what the system says next." }, true);
+          const r = await this.pressKeys(String(args.digits ?? ""));
+          return reply({ ...r, note: "Pressed. Stay quiet and listen to what the system says next." }, true);
         }
         case "end_call": {
-          this.summary = String(args.summary ?? "");
-          this.note(`the assistant ended the call (${args.outcome})`);
-          this.outcome = args.outcome === "done" ? "completed" : args.outcome === "voicemail" ? "completed" : "failed";
+          this.setEnding(args.outcome, args.summary);
           reply({ status: "ending" }, true);
           // Let the goodbye finish playing first.
           await Promise.race([this.o.link.mark(), new Promise((r) => setTimeout(r, 8000))]);
@@ -823,7 +855,9 @@ export class CallMission {
           if (working) await session.submitToolResult(callId, working, { willContinue: true });
           const r = (await this.consult(args)) as { text: string };
           this.note(`the agent answered: ${r.text.slice(0, 500)}`);
-          return reply(r);
+          const sent = reply(r);
+          if (this.live) this.afterSpokenAnswer();
+          return sent;
         }
         case "call_party":
           return reply(await this.callParty(String(args.contact ?? ""), String(args.reason ?? "")));
@@ -839,8 +873,83 @@ export class CallMission {
     } catch (err) {
       const msg = err instanceof LineError ? err.message : String(err);
       this.debug(`tool ${ev.name} failed: ${msg}`);
-      return reply({ error: msg });
+      const sent = reply({ error: msg });
+      if (this.live && ev.name === this.o.sdk.consultToolName) this.afterSpokenAnswer();
+      return sent;
     }
+  }
+
+  private async pressKeys(digits: string): Promise<{ pressed?: string }> {
+    const r = await this.o.link.cmd("dtmf", { digits });
+    this.note(`pressed ${r.digits ?? digits}`);
+    this.navigator?.pressed("assistant", String(r.digits ?? digits));
+    return { pressed: r.digits };
+  }
+
+  private setEnding(outcome: unknown, summary: unknown) {
+    this.summary = String(summary ?? "");
+    this.note(`the assistant ended the call (${outcome})`);
+    this.outcome = outcome === "done" || outcome === "voicemail" ? "completed" : "failed";
+  }
+
+  /**
+   * Line actions for the agent, when the voice model can't call tools
+   * (GPT-Live). Ending and joining wait until the model has spoken the
+   * agent's answer: the goodbye, or the announcement to the other line.
+   */
+  async lineAction(action: string, args: Record<string, unknown>): Promise<unknown> {
+    if (this.ended || this.detached) return { error: "the call has ended" };
+    this.debug(`line action ${action} ${JSON.stringify(args).slice(0, 200)}`);
+    try {
+      switch (action) {
+        case "send_dtmf":
+          return { ...(await this.pressKeys(String(args.digits ?? ""))), note: "Pressed." };
+        case "end_call":
+          this.setEnding(args.outcome, args.summary);
+          this.afterAnswer = () => {
+            void Promise.race([this.o.link.mark(), new Promise((r) => setTimeout(r, 8000))]).then(() => {
+              if (!this.ended) this.finish(this.outcome, this.summary, { lastWords: true });
+            });
+          };
+          return { status: "ending", note: "The call ends once the assistant has said your reply. Reply with a short goodbye for it to say." };
+        case "call_party":
+          return await this.callParty(String(args.contact ?? ""), String(args.reason ?? ""));
+        case "switch_line":
+          return await this.switchLine(Number(args.line));
+        case "connect_lines":
+          return await this.connectLines();
+        case "drop_line":
+          return await this.dropLine(Number(args.line));
+        default:
+          return { error: `unknown action ${action}` };
+      }
+    } catch (err) {
+      const msg = err instanceof LineError ? err.message : String(err);
+      this.debug(`line action ${action} failed: ${msg}`);
+      return { error: msg };
+    }
+  }
+
+  /** GPT-Live: run what waits on the agent's answer once the model has said it. */
+  private afterSpokenAnswer() {
+    const action = this.afterAnswer ?? this.pendingMerge;
+    this.afterAnswer = undefined;
+    this.pendingMerge = undefined;
+    if (!action) return;
+    const since = Date.now();
+    const deadline = since + 15_000;
+    const poll = () => {
+      if (this.ended || this.detached) return;
+      const spoke = this.speechAt > since;
+      if ((spoke && Date.now() - this.speechAt > 1200) || Date.now() > deadline) return action();
+      this.timers.push(setTimeout(poll, 200));
+    };
+    poll();
+  }
+
+  private consultTools(): string[] | undefined {
+    const allow = this.o.sdk.consultToolsAllow(this.o.config.toolPolicy);
+    return this.live && allow ? [...allow, LINE_TOOL_NAME] : allow;
   }
 
   private async consult(args: any): Promise<unknown> {
@@ -875,8 +984,9 @@ export class CallMission {
       timeoutMs: config.responseTimeoutMs,
       spawnedBy: this.o.requesterSessionKey,
       contextMode: this.o.requesterSessionKey ? "fork" : undefined,
-      toolsAllow: this.o.sdk.consultToolsAllow(config.toolPolicy),
-      extraSystemPrompt: CONSULT_SYSTEM_PROMPT,
+      toolsAllow: this.consultTools(),
+      extraSystemPrompt: this.live ? `${CONSULT_SYSTEM_PROMPT} ${LIVE_CONSULT_PROMPT}` : CONSULT_SYSTEM_PROMPT,
+      ...(this.live ? { toolBindings: { [LINE_BINDING]: { callId: this.id } } } : {}),
     });
     return { text: result.text };
   }
@@ -1004,4 +1114,9 @@ export class CallMission {
       this.debug("merged call finished");
     }
   }
+}
+
+function hasSpeech(pcm: Buffer): boolean {
+  for (let i = 0; i + 1 < pcm.length; i += 2) if (Math.abs(pcm.readInt16LE(i)) > SPEECH_PEAK) return true;
+  return false;
 }

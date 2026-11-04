@@ -10,11 +10,16 @@ const NICK: Contact = { id: "nick", name: "Nick", number: "+15555550101" };
 beforeEach(() => mock.timers.enable({ apis: ["setTimeout", "setInterval", "Date"] }));
 afterEach(() => mock.timers.reset());
 
-function setup(o: { direction?: "outbound" | "inbound"; contacts?: Contact[]; cfg?: Record<string, unknown>; menu?: boolean; holdLimitSeconds?: number } = {}) {
+function setup(o: { direction?: "outbound" | "inbound"; contacts?: Contact[]; cfg?: Record<string, unknown>; menu?: boolean; holdLimitSeconds?: number; live?: boolean } = {}) {
   const link = new FakeLink();
   const decisions = new FakeDecisions();
   const transcriber = new FakeTranscriber();
   const { sdk, sessions, consults } = fakeSdk();
+  if (o.live) {
+    // GPT-Live: the model delegates to the agent and can't call tools.
+    sdk.resolveProvider = () => ({ provider: { id: "openai" }, providerConfig: {}, capabilities: { handlesAgentConsult: true, supportsToolCalls: false } }) as any;
+    sdk.consultToolsAllow = () => ["read", "memory_search"];
+  }
   const { api } = fakeApi();
   const detector = new FakeDetector();
   const reports: MissionReport[] = [];
@@ -208,6 +213,69 @@ test("hand-off: hold, call the person, announce, merge after the announcement, l
   link.call("call.ended", { id: "c1" }, "remote");
   await settle();
   assert.deepEqual(link.cmds.at(-1), { type: "hangup", fields: { call: "c2" } });
+});
+
+/** 20 ms of model audio (24 kHz pcm16): speech or silence. */
+const modelAudio = (loud: boolean) => Buffer.alloc(960, loud ? 0x30 : 0);
+
+test("live (GPT-Live): the model gets no tools, and its consults may act on this call", async () => {
+  const { s, consults, m } = await connected({ live: true, contacts: [NICK] });
+  assert.deepEqual(s.params.tools, []);
+  assert.match(s.params.instructions, /every action goes through the OpenClaw agent/);
+  await s.tool("openclaw_agent_consult", { question: "Press 1 for appointments" });
+  assert.deepEqual(consults[0].toolBindings, { "otacon-voice": { callId: m.id } });
+  assert.deepEqual(consults[0].toolsAllow, ["read", "memory_search", "otacon_line"]);
+  assert.match(consults[0].extraSystemPrompt, /otacon_line/);
+});
+
+test("live: the agent presses keys, and ends the call once the model has said goodbye", async () => {
+  const { link, s, m, reports } = await connected({ live: true });
+  assert.deepEqual(await m.lineAction("send_dtmf", { digits: "12#" }), { pressed: "12#", note: "Pressed." });
+  assert.deepEqual(link.cmds.at(-1), { type: "dtmf", fields: { digits: "12#" } });
+  // The agent ends the call inside a consult; the model then says the goodbye.
+  assert.equal(((await m.lineAction("end_call", { outcome: "done", summary: "Booked Thursday" })) as any).status, "ending");
+  await s.tool("openclaw_agent_consult", { question: "Thanks, that's all" });
+  mock.timers.tick(100);
+  for (let i = 0; i < 25; i++) s.params.audioSink.sendAudio(modelAudio(true));
+  mock.timers.tick(600);
+  await settle();
+  assert.equal(link.types().includes("hangup"), false, "not while the goodbye plays");
+  mock.timers.tick(1000);
+  await settle();
+  mock.timers.tick(10_000);
+  await settle();
+  assert.deepEqual(link.cmds.at(-1), { type: "hangup", fields: { call: "c1" } });
+  assert.equal(reports[0].outcome, "completed");
+  assert.equal(reports[0].summary, "Booked Thursday");
+});
+
+test("live: joining lines merges once the model has announced it", async () => {
+  const { link, s, m, reports } = await connected({ live: true, contacts: [NICK] });
+  const pending = m.lineAction("call_party", { contact: "nick" });
+  await settle();
+  link.call("call.state", { id: "c1", state: "held" });
+  link.call("call.state", { id: "c2", state: "active" });
+  assert.equal(((await pending) as any).status, "connected");
+  assert.equal(((await m.lineAction("connect_lines", {})) as any).status, "announce");
+  await s.tool("openclaw_agent_consult", { question: "Join them" });
+  mock.timers.tick(100);
+  for (let i = 0; i < 25; i++) s.params.audioSink.sendAudio(modelAudio(true));
+  mock.timers.tick(1600);
+  await settle();
+  assert.equal(link.types().at(-1), "merge");
+  assert.equal(reports[0].outcome, "handed_off");
+});
+
+test("live: silence is skipped while playback is behind, speech never is", async () => {
+  const { link, s } = await connected({ live: true });
+  const before = link.sent.length;
+  // A stalled provider catches up with a second of speech at once.
+  for (let i = 0; i < 50; i++) s.params.audioSink.sendAudio(modelAudio(true));
+  for (let i = 0; i < 10; i++) s.params.audioSink.sendAudio(modelAudio(false));
+  assert.equal(link.sent.length - before, 50, "the silence behind it is dropped");
+  mock.timers.tick(2000);
+  s.params.audioSink.sendAudio(modelAudio(false));
+  assert.equal(link.sent.length - before, 51, "silence plays again once caught up");
 });
 
 test("hand-off: the person doesn't answer, so back to the first party", async () => {

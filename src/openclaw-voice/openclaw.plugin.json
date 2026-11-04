@@ -10,7 +10,8 @@
     "tools": [
       "otacon_call",
       "otacon_listen",
-      "otacon_call_log"
+      "otacon_call_log",
+      "otacon_line"
     ]
   },
   "configContracts": {
