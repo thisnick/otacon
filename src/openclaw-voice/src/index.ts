@@ -5,6 +5,7 @@ import type { IncomingMessage } from "node:http";
 import { join } from "node:path";
 import { realtimeSdk } from "./realtime.js";
 import { OtaconVoiceRuntime } from "./runtime.js";
+import { LINE_BINDING } from "./call.js";
 
 const TOOL_NAME = "otacon_call";
 
@@ -182,6 +183,37 @@ export default definePluginEntry({
       ({ params, respond }) => respond(true, runtime?.status(params?.callId) ?? null),
       { scope: "operator.read" },
     );
+
+    // GPT-Live can't call tools: it delegates in words, and the consult it
+    // starts acts on that call with this. Bound per consult via toolBindings.
+    api.registerTool((ctx) => ({
+      name: "otacon_line",
+      label: "Phone call line control",
+      description:
+        "Act on the phone call whose assistant asked you this: press keypad keys, end the call, or bring in, switch, join or drop lines. Works only inside that call's consult.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["send_dtmf", "end_call", "call_party", "switch_line", "connect_lines", "drop_line"] },
+          digits: { type: "string", description: "send_dtmf: keys to press, e.g. \"1\" or \"1234#\"; 'w' waits half a second" },
+          outcome: { type: "string", enum: ["done", "failed", "voicemail"], description: "end_call: whether the goal was achieved" },
+          summary: { type: "string", description: "end_call: a TL;DR of the call: how it turned out, what was agreed or learned, anything left open" },
+          contact: { type: "string", description: "call_party: the contact id to call" },
+          reason: { type: "string", description: "call_party: why, in a few words" },
+          line: { type: "integer", description: "switch_line / drop_line: the line number" },
+        },
+        required: ["action"],
+      },
+      async execute(_id: string, p: any) {
+        const binding = ctx.toolBindings?.[LINE_BINDING] as { callId?: unknown } | undefined;
+        if (typeof binding?.callId !== "string") return jsonResult({ error: "otacon_line works only inside a live phone call's consult" });
+        try {
+          return jsonResult(await (runtime?.lineAction(binding.callId, String(p.action ?? ""), p ?? {}) ?? { error: "otacon-voice isn't running" }));
+        } catch (err) {
+          return jsonResult({ error: err instanceof Error ? err.message : String(err) });
+        }
+      },
+    }));
 
     // The whole report of a finished call: the session gets a TL;DR and the
     // end of the log; this has everything.

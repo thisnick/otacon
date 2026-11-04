@@ -15,6 +15,8 @@ declare module "openclaw/plugin-sdk/plugin-entry" {
     agentId?: string;
     senderIsOwner?: boolean;
     messageChannel?: string;
+    /** Out-of-band plugin-owned bindings attached by the run initiator. */
+    toolBindings?: Readonly<Record<string, unknown>>;
   }
   export interface AgentToolResult {
     content: { type: "text"; text: string }[];
