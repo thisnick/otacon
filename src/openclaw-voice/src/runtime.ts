@@ -113,13 +113,24 @@ export class OtaconVoiceRuntime {
       slot.link = await this.createLink(slot.config);
       if (!slot.link) continue;
       slot.link.screen = (number) => this.takes(slot, number);
-      const home = this.home;
-      if (slot.link.runIn) slot.link.runIn = (fn) => home.runInAsyncScope(fn);
+      if (slot.link.runIn) slot.link.runIn = (fn) => this.run(fn);
       slot.link.on("call", (msg) => this.onCall(slot, msg));
       slot.link.start();
     }
     if ([...this.slots.values()].some((s) => !s.detector))
       this.api.logger.warn("[otacon-voice] speech detector unavailable (onnxruntime-node); the phone-menu navigator won't time holds");
+  }
+
+  /**
+   * Run detached work for this plugin instance in OpenClaw's background
+   * context when the host has one. A context captured in start() can belong
+   * to a config reload whose work OpenClaw has since released; agent runs
+   * started from it are refused with GatewayDrainingError.
+   */
+  private run<T>(fn: () => T): T {
+    const lifecycle = this.api.lifecycle;
+    if (lifecycle?.runInBackgroundContext) return lifecycle.runInBackgroundContext(fn);
+    return this.home ? this.home.runInAsyncScope(fn) : fn();
   }
 
   /** The lines, for logs and the tool description. */
@@ -230,7 +241,7 @@ export class OtaconVoiceRuntime {
         req.holdLimitSeconds === undefined ? undefined : Math.min(Math.max(10, Math.round(req.holdLimitSeconds)), this.config.maxCallSeconds),
       menu: this.menu,
     });
-    this.home ? this.home.runInAsyncScope(() => mission.start()) : mission.start();
+    this.run(() => mission.start());
     return { missionId: mission.id };
   }
 
@@ -252,7 +263,7 @@ export class OtaconVoiceRuntime {
     if (!slot?.link?.listen) throw new Error("no line can place the listening call right now");
     const status = m.status;
     const intro = `Listening to the call with ${status.party.name}.`;
-    const listener = await (this.home ? this.home.runInAsyncScope(() => slot.link!.listen!(cfg.to, intro)) : slot.link.listen(cfg.to, intro));
+    const listener = await this.run(() => slot.link!.listen!(cfg.to, intro));
     m.addListener(this.config.ownerName, listener);
     return { listening: true, note: `Calling ${this.config.ownerName} to listen in. Hanging up ends only the listening call.` };
   }
@@ -293,6 +304,7 @@ export class OtaconVoiceRuntime {
       detector: slot.detector,
       ...o,
       onEnd: (report) => this.onMissionEnd(report),
+      runInBackground: (fn) => this.run(fn),
     });
     slot.mission = mission;
     return mission;

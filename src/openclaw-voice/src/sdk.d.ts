@@ -60,6 +60,8 @@ declare module "openclaw/plugin-sdk/plugin-entry" {
     pluginConfig: unknown;
     runtime: PluginRuntime;
     logger: PluginLogger;
+    /** The managed plugin instance's lifecycle; absent on hosts without one. */
+    lifecycle?: { runInBackgroundContext?<T>(run: () => T): T };
     registerTool(factory: AgentTool | ((ctx: ToolContext) => AgentTool | AgentTool[] | null)): void;
     registerGatewayMethod(
       method: string,

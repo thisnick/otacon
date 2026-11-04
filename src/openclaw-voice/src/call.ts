@@ -173,6 +173,8 @@ export interface MissionOptions {
   /** Longest hold before the navigator hangs up, from whoever placed the call (default: config.holdCapSeconds) */
   holdLimitSeconds?: number;
   onEnd(report: MissionReport): void;
+  /** Runs work in the plugin's background context (fresh for each consult) */
+  runInBackground?: <T>(fn: () => T) => T;
 }
 
 const tool = (name: string, description: string, properties: Record<string, unknown> = {}, required: string[] = []): RealtimeToolSpec => ({
@@ -959,7 +961,10 @@ export class CallMission {
     const slash = modelRef.indexOf("/");
     const provider = slash === -1 ? agentRuntime.defaults.provider : modelRef.slice(0, slash);
     const model = slash === -1 ? modelRef : modelRef.slice(slash + 1);
-    const result = await this.o.sdk.consult({
+    // The call's own context can outlive the host work it started in; each
+    // consult enters the plugin's background context afresh.
+    const run = this.o.runInBackground ?? (<T>(fn: () => T) => fn());
+    const result = await run(() => this.o.sdk.consult({
       cfg: api.config,
       agentRuntime,
       logger: api.logger,
@@ -987,7 +992,7 @@ export class CallMission {
       toolsAllow: this.consultTools(),
       extraSystemPrompt: this.live ? `${CONSULT_SYSTEM_PROMPT} ${LIVE_CONSULT_PROMPT}` : CONSULT_SYSTEM_PROMPT,
       ...(this.live ? { toolBindings: { [LINE_BINDING]: { callId: this.id } } } : {}),
-    });
+    }));
     return { text: result.text };
   }
 
