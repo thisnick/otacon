@@ -23,6 +23,7 @@ import type {
 } from "openclaw/plugin-sdk/realtime-voice";
 import type { Contact, OtaconVoiceConfig } from "./config.js";
 import { buildAgentContext, type AgentContextSdk } from "./context.js";
+import type { SessionText } from "./recent.js";
 import { MenuNavigator, type DecisionClient, type HangUpReason } from "./navigator.js";
 import { callSessionKey, type SessionKeySdk } from "./session.js";
 import type { Transcriber } from "./transcriber.js";
@@ -42,6 +43,8 @@ export interface RealtimeSdk {
   sessionKeys: SessionKeySdk;
   resolveSecretRefs(refs: unknown[], options: { config: unknown }): Promise<Map<string, unknown>>;
   agentContext: AgentContextSdk;
+  /** A session's latest user and assistant messages, oldest first (recent.ts) */
+  recentSessionText?(p: { agentId: string; sessionKey: string; limit: number }): Promise<SessionText[]>;
 }
 
 /** The phone-menu navigator's parts for one call (runtime.ts builds them). */
@@ -79,6 +82,8 @@ const MUTE_AFTER_SECONDS = 10;
 const PREROLL_MS = 2000;
 /** After a hang-up, the longest wait for the voice model's last transcript */
 const LAST_WORDS_MS = 10_000;
+/** The longest a call waits for its recent context before going on without it */
+const RECENT_CONTEXT_WAIT_MS = 2_000;
 
 const CONSULT_SYSTEM_PROMPT = [
   "You are the configured OpenClaw agent receiving delegated requests from a live phone call your assistant is on.",
@@ -175,6 +180,8 @@ export interface MissionOptions {
   onEnd(report: MissionReport): void;
   /** Runs work in the plugin's background context (fresh for each consult) */
   runInBackground?: <T>(fn: () => T) => T;
+  /** Earlier calls and recent messages for the voice instructions, when enabled (runtime.ts) */
+  recentContext?: () => Promise<string | undefined>;
 }
 
 const tool = (name: string, description: string, properties: Record<string, unknown> = {}, required: string[] = []): RealtimeToolSpec => ({
@@ -267,6 +274,25 @@ export class CallMission {
 
   private debug(msg: string) {
     this.o.api.logger.info(`[otacon-voice] ${this.id} ${msg}`);
+  }
+
+  /** The recap of earlier calls and recent messages; never holds the call up for long. */
+  private async recentContext(): Promise<string | undefined> {
+    if (!this.o.recentContext) return undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        this.o.recentContext(),
+        new Promise<undefined>((resolve) => {
+          timer = setTimeout(() => resolve(undefined), RECENT_CONTEXT_WAIT_MS);
+        }),
+      ]);
+    } catch (err) {
+      this.debug(`recent context unavailable: ${err instanceof Error ? err.message : String(err)}`);
+      return undefined;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   // ---- lifecycle ----
@@ -479,7 +505,7 @@ export class CallMission {
 
   // ---- realtime model ----
 
-  private instructions(agentContext?: string): string {
+  private instructions(agentContext?: string, recentContext?: string): string {
     const { config, party, direction, brief, contacts } = this.o;
     const lines = [
       `You are ${config.assistantName}, speaking on a live phone call on behalf of ${config.ownerName}.`,
@@ -515,6 +541,7 @@ export class CallMission {
     if (this.live) lines.push("", LIVE_INSTRUCTIONS);
     if (config.realtime.instructions) lines.push("", config.realtime.instructions);
     if (agentContext) lines.push("", agentContext);
+    if (recentContext) lines.push("", recentContext);
     return lines.join("\n");
   }
 
@@ -560,15 +587,18 @@ export class CallMission {
     });
     const caps = (resolved.capabilities ?? {}) as { handlesAgentConsult?: boolean; supportsToolCalls?: boolean };
     this.live = caps.handlesAgentConsult === true && caps.supportsToolCalls !== true;
-    const agentContext = await buildAgentContext(this.o.sdk.agentContext, {
-      config: config.realtime.agentContext,
-      cfg: api.config,
-      agentId: this.o.agentId,
-      consultToolName: this.o.sdk.consultToolName,
-    }).catch((err) => {
-      this.debug(`agent context unavailable: ${err instanceof Error ? err.message : String(err)}`);
-      return undefined;
-    });
+    const [agentContext, recentContext] = await Promise.all([
+      buildAgentContext(this.o.sdk.agentContext, {
+        config: config.realtime.agentContext,
+        cfg: api.config,
+        agentId: this.o.agentId,
+        consultToolName: this.o.sdk.consultToolName,
+      }).catch((err) => {
+        this.debug(`agent context unavailable: ${err instanceof Error ? err.message : String(err)}`);
+        return undefined;
+      }),
+      this.recentContext(),
+    ]);
     this.session = this.o.sdk.createSession({
       provider: resolved.provider,
       providerConfig: resolved.providerConfig,
@@ -576,7 +606,7 @@ export class CallMission {
       cfg: api.config,
       agentId: this.o.agentId,
       audioFormat: this.o.sdk.audioFormat,
-      instructions: this.instructions(agentContext),
+      instructions: this.instructions(agentContext, recentContext),
       tools: this.live ? [] : this.tools(),
       markStrategy: "transport",
       audioSink: {

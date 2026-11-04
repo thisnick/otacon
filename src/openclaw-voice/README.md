@@ -124,6 +124,22 @@ plugin builds it:
 The voice model then knows who it is and who it works for. It's off unless
 enabled.
 
+## Recent context
+
+`realtime.recentContext: { enabled: true }` starts each call with a short
+recap in the voice model's instructions, so it knows what was said last time:
+- the last three calls with the same number, newest first: the TL;DR when the
+  assistant ended the call, otherwise the last few things said (read back
+  from the saved transcripts);
+- when the caller is the owner (their number is in `commands.ownerAllowFrom`,
+  for example `whatsapp:+15550002222`), the latest `maxMessages` (8) messages
+  of the session the call reports to (`inboundSessionKey`, or the session that
+  placed the call). Other callers never get these.
+
+The recap is cut to about 3,000 characters and goes to the realtime provider
+with the rest of the instructions. A call waits at most 2 seconds for it.
+It's off unless enabled.
+
 ## Phone menus
 
 On calls an agent places, a phone-menu navigator listens alongside the voice

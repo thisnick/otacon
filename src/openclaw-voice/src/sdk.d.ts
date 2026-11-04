@@ -117,6 +117,12 @@ declare module "openclaw/plugin-sdk/secret-ref-runtime" {
 
 declare module "openclaw/plugin-sdk/session-store-runtime" {
   export function canonicalizeMainSessionAlias(p: { cfg: unknown; agentId: string; sessionKey: string }): string;
+  export function readRecentUserAssistantTextForSession(p: {
+    agentId: string;
+    sessionKey: string;
+    limit?: number;
+    preferUpstreamUserText?: boolean;
+  }): Promise<Array<{ role: "user" | "assistant"; text: string; timestamp?: number }>>;
 }
 
 declare module "openclaw/plugin-sdk/tool-results" {

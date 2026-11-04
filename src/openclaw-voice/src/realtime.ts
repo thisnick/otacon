@@ -16,7 +16,7 @@ import { normalizeAgentId, parseAgentSessionKey } from "openclaw/plugin-sdk/rout
 import { resolveAgentIdentity, resolveAgentWorkspaceDir } from "openclaw/plugin-sdk/agent-runtime";
 import { resolveSecretRefValues } from "openclaw/plugin-sdk/secret-ref-runtime";
 import { root } from "openclaw/plugin-sdk/security-runtime";
-import { canonicalizeMainSessionAlias } from "openclaw/plugin-sdk/session-store-runtime";
+import { canonicalizeMainSessionAlias, readRecentUserAssistantTextForSession } from "openclaw/plugin-sdk/session-store-runtime";
 import type { RealtimeSdk } from "./call.js";
 
 export const realtimeSdk: RealtimeSdk = {
@@ -31,4 +31,5 @@ export const realtimeSdk: RealtimeSdk = {
   sessionKeys: { normalizeAgentId, parseAgentSessionKey, canonicalizeMainSessionAlias },
   resolveSecretRefs: resolveSecretRefValues,
   agentContext: { resolveAgentIdentity, resolveAgentWorkspaceDir, workspaceRoot: (dir) => root(dir) },
+  recentSessionText: (p) => readRecentUserAssistantTextForSession({ ...p, preferUpstreamUserText: true }),
 };

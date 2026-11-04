@@ -280,3 +280,64 @@ test("transcripts: when saving fails, the call is still reported, without a file
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("recent context: a call starts with how earlier calls with the number went, and the owner's latest messages", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "otacon-voice-calls-"));
+  try {
+    const chat = "agent:main:whatsapp:direct:+15555550102";
+    const s = setup({ inboundSessionKey: chat, ownerName: "Nick", realtime: { recentContext: { enabled: true, maxMessages: 3 } } }, dir);
+    s.api.config = { commands: { ownerAllowFrom: ["whatsapp:+15555550102"] } };
+    const reads: unknown[] = [];
+    s.sdk.recentSessionText = async (p) => {
+      reads.push(p);
+      return [
+        { role: "user", text: 'Conversation info: ⟦openclaw:ctx⟧\n```json\n{"message_id":"1"}\n```\n\nRemind me to call Luigi\'s', timestamp: Date.now() - 3_600_000 },
+        { role: "assistant", text: "Will do.", timestamp: Date.now() - 3_480_000 },
+      ];
+    };
+    await s.rt.start();
+    s.link.call("call.incoming", { id: "i1", number: ALLOWED, direction: "incoming", state: "incoming" });
+    await settle();
+    assert.deepEqual(reads, [{ agentId: "main", sessionKey: chat, limit: 3 }]);
+    const first = s.sessions[0].params.instructions as string;
+    assert.match(first, /Your latest messages with Nick, oldest first:\n- \(1 h ago\) Nick: Remind me to call Luigi's\n- \(58 min ago\) You: Will do\./);
+    assert.doesNotMatch(first, /Earlier calls|openclaw:ctx|message_id/);
+    s.sessions[0].transcript("user", "Book Friday please");
+    s.link.call("call.ended", { id: "i1" }, "remote");
+    await settle();
+    s.sessions[0].transcript("user", "Bye!");
+    await settle();
+
+    // The next call knows how that one ended, read back from its saved report.
+    s.link.call("call.incoming", { id: "i2", number: ALLOWED, direction: "incoming", state: "incoming" });
+    for (let i = 0; i < 50 && !s.sessions[1]; i++) await settle(); // reading saved reports takes a few turns
+    assert.match(
+      s.sessions[1].params.instructions,
+      /Earlier calls with this number, newest first:\n- just now, they called \(\d+ s\); it ended with:\n {4}\+15555550102: Book Friday please\n {4}\+15555550102: Bye!/,
+    );
+    s.rt.stop();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("recent context: off by default, and a caller who isn't the owner never gets the owner's messages", async () => {
+  const off = setup();
+  let reads = 0;
+  off.sdk.recentSessionText = async () => (reads++, [{ role: "user", text: "private" }]);
+  await off.rt.start();
+  off.link.call("call.incoming", { id: "i1", number: ALLOWED, direction: "incoming", state: "incoming" });
+  await settle();
+  assert.doesNotMatch(off.sessions[0].params.instructions, /Recent context/);
+  off.rt.stop();
+
+  const other = setup({ inboundSessionKey: "agent:main:whatsapp:direct:+15555550101", realtime: { recentContext: { enabled: true } } });
+  other.api.config = { commands: { ownerAllowFrom: ["whatsapp:+15555550101"] } };
+  other.sdk.recentSessionText = off.sdk.recentSessionText;
+  await other.rt.start();
+  other.link.call("call.incoming", { id: "i1", number: ALLOWED, direction: "incoming", state: "incoming" });
+  await settle();
+  assert.equal(reads, 0);
+  assert.doesNotMatch(other.sessions[0].params.instructions, /private|Recent context/);
+  other.rt.stop();
+});

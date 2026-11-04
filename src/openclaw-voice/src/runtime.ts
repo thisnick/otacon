@@ -5,6 +5,7 @@
 
 import { AsyncResource } from "node:async_hooks";
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { PluginApi } from "openclaw/plugin-sdk/plugin-entry";
 import { CallMission, type MenuDeps, type MissionReport, type Party, type RealtimeSdk, type SpeechDetectorLike } from "./call.js";
@@ -14,6 +15,7 @@ import { OtaconLink } from "./otacon.js";
 import { TwilioLine } from "./twilio.js";
 import { openRouterDecisions } from "./navigator.js";
 import { formatReport, formatSavedReport } from "./report.js";
+import { earlierCallFromReport, earlierCallFromSaved, formatRecentContext, isOwnerNumber, type EarlierCall, type SessionText } from "./recent.js";
 import { openAiLiveTranscriber } from "./transcriber.js";
 import { SpeechDetector } from "./vad.js";
 
@@ -305,9 +307,46 @@ export class OtaconVoiceRuntime {
       ...o,
       onEnd: (report) => this.onMissionEnd(report),
       runInBackground: (fn) => this.run(fn),
+      recentContext: () => this.recentContext(o.party, o.agentId, o.requesterSessionKey),
     });
     slot.mission = mission;
     return mission;
+  }
+
+  /**
+   * The recap a call starts with (recent.ts): earlier calls with the number
+   * and, when the caller is the owner, the latest messages of the session the
+   * call reports to. Other callers never see the owner's messages.
+   */
+  private async recentContext(party: Party, agentId: string, requesterSessionKey?: string): Promise<string | undefined> {
+    const settings = this.config.realtime.recentContext;
+    if (!settings.enabled || !party.number) return undefined;
+    const owner = isOwnerNumber(this.api.config, party.number);
+    const [calls, messages] = await Promise.all([
+      this.earlierCalls(party.number),
+      owner && requesterSessionKey && this.sdk.recentSessionText
+        ? this.sdk.recentSessionText({ agentId, sessionKey: requesterSessionKey, limit: settings.maxMessages }).catch((): SessionText[] => [])
+        : Promise.resolve([] as SessionText[]),
+    ]);
+    return formatRecentContext({ calls, messages, ownerName: this.config.ownerName, now: Date.now() });
+  }
+
+  /** The last three calls with a number, newest first: from the saved reports, else from memory. */
+  private async earlierCalls(number: string): Promise<EarlierCall[]> {
+    const dir = this.deps.transcriptsDir;
+    if (!dir) return this.recent.filter((r) => r.party.number === number).slice(0, 3).map(earlierCallFromReport);
+    const names = (await readdir(dir).catch(() => [] as string[])).filter((f) => /^\d{4}-\d{2}-\d{2}-oc_[0-9a-f]+\.txt$/.test(f));
+    const files = await Promise.all(
+      names.map(async (f) => ({ f, t: await stat(join(dir, f)).then((s) => s.mtimeMs, () => 0) })),
+    );
+    const calls: EarlierCall[] = [];
+    // The newest reports only: a recap is about the last few calls.
+    for (const { f, t } of files.sort((a, b) => b.t - a.t).slice(0, 40)) {
+      const call = earlierCallFromSaved(await readFile(join(dir, f), "utf8").catch(() => ""), t, number);
+      if (call) calls.push(call);
+      if (calls.length === 3) break;
+    }
+    return calls;
   }
 
   /** Whether a line takes an incoming call now. */

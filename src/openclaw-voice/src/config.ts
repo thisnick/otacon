@@ -104,6 +104,8 @@ export interface OtaconVoiceConfig {
     instructions?: string;
     /** The agent's identity and workspace files in the voice model's instructions (context.ts) */
     agentContext: AgentContextConfig;
+    /** Earlier calls with the number, and the owner's latest messages, in the voice model's instructions (recent.ts) */
+    recentContext: { enabled: boolean; maxMessages: number };
   };
   /** People the assistant may call during a call (hand-off) */
   contacts: Contact[];
@@ -233,6 +235,7 @@ export function parseConfig(raw: unknown): { config?: OtaconVoiceConfig; errors:
 
   const realtime = obj(c.realtime);
   const agentContext = obj(realtime.agentContext);
+  const recentContext = obj(realtime.recentContext);
   const providers: Record<string, Record<string, unknown>> = {};
   for (const [k, v] of Object.entries(obj(realtime.providers))) providers[k] = obj(v);
   // A configured model avoids the provider's GPT-Live default, which can't
@@ -280,6 +283,10 @@ export function parseConfig(raw: unknown): { config?: OtaconVoiceConfig; errors:
             ? agentContext.files.filter((f): f is string => typeof f === "string" && Boolean(f.trim()))
             : AGENT_CONTEXT_DEFAULTS.files,
           maxChars: Math.round(num(agentContext.maxChars, AGENT_CONTEXT_DEFAULTS.maxChars, 0, 50_000)),
+        },
+        recentContext: {
+          enabled: recentContext.enabled === true,
+          maxMessages: Math.round(num(recentContext.maxMessages, 8, 1, 30)),
         },
       },
       contacts,
