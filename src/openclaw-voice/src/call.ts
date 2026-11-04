@@ -155,6 +155,11 @@ export interface MissionReport {
   line: { id: string; number?: string };
 }
 
+export interface CallContext {
+  voice?: string;
+  consult?: string;
+}
+
 export interface MissionOptions {
   api: PluginApi;
   config: OtaconVoiceConfig;
@@ -180,8 +185,9 @@ export interface MissionOptions {
   onEnd(report: MissionReport): void;
   /** Runs work in the plugin's background context (fresh for each consult) */
   runInBackground?: <T>(fn: () => T) => T;
-  /** Earlier calls and recent messages for the voice instructions, when enabled (runtime.ts) */
-  recentContext?: () => Promise<string | undefined>;
+  /** What the call starts with (runtime.ts): a recap for the voice instructions, and the
+   * owner's latest messages for the first consult */
+  callContext?: () => Promise<CallContext>;
 }
 
 const tool = (name: string, description: string, properties: Record<string, unknown> = {}, required: string[] = []): RealtimeToolSpec => ({
@@ -239,6 +245,8 @@ export class CallMission {
   private speechAt = 0;
   /** GPT-Live: runs once the model has spoken the agent's current answer */
   private afterAnswer?: () => void;
+  /** The owner's latest messages, sent with the call's first consult that succeeds */
+  private consultContext?: string;
 
   constructor(private o: MissionOptions) {
     this.sessionKey = callSessionKey(o.sdk.sessionKeys, {
@@ -276,20 +284,20 @@ export class CallMission {
     this.o.api.logger.info(`[otacon-voice] ${this.id} ${msg}`);
   }
 
-  /** The recap of earlier calls and recent messages; never holds the call up for long. */
-  private async recentContext(): Promise<string | undefined> {
-    if (!this.o.recentContext) return undefined;
+  /** The recap and the first consult's context; never holds the call up for long. */
+  private async callContext(): Promise<CallContext> {
+    if (!this.o.callContext) return {};
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       return await Promise.race([
-        this.o.recentContext(),
-        new Promise<undefined>((resolve) => {
-          timer = setTimeout(() => resolve(undefined), RECENT_CONTEXT_WAIT_MS);
+        this.o.callContext(),
+        new Promise<CallContext>((resolve) => {
+          timer = setTimeout(() => resolve({}), RECENT_CONTEXT_WAIT_MS);
         }),
       ]);
     } catch (err) {
-      this.debug(`recent context unavailable: ${err instanceof Error ? err.message : String(err)}`);
-      return undefined;
+      this.debug(`call context unavailable: ${err instanceof Error ? err.message : String(err)}`);
+      return {};
     } finally {
       clearTimeout(timer);
     }
@@ -587,7 +595,7 @@ export class CallMission {
     });
     const caps = (resolved.capabilities ?? {}) as { handlesAgentConsult?: boolean; supportsToolCalls?: boolean };
     this.live = caps.handlesAgentConsult === true && caps.supportsToolCalls !== true;
-    const [agentContext, recentContext] = await Promise.all([
+    const [agentContext, context] = await Promise.all([
       buildAgentContext(this.o.sdk.agentContext, {
         config: config.realtime.agentContext,
         cfg: api.config,
@@ -597,8 +605,9 @@ export class CallMission {
         this.debug(`agent context unavailable: ${err instanceof Error ? err.message : String(err)}`);
         return undefined;
       }),
-      this.recentContext(),
+      this.callContext(),
     ]);
+    this.consultContext = context.consult;
     this.session = this.o.sdk.createSession({
       provider: resolved.provider,
       providerConfig: resolved.providerConfig,
@@ -606,7 +615,7 @@ export class CallMission {
       cfg: api.config,
       agentId: this.o.agentId,
       audioFormat: this.o.sdk.audioFormat,
-      instructions: this.instructions(agentContext, recentContext),
+      instructions: this.instructions(agentContext, context.voice),
       tools: this.live ? [] : this.tools(),
       markStrategy: "transport",
       audioSink: {
@@ -994,6 +1003,8 @@ export class CallMission {
     // The call's own context can outlive the host work it started in; each
     // consult enters the plugin's background context afresh.
     const run = this.o.runInBackground ?? (<T>(fn: () => T) => fn());
+    const extra = this.consultContext;
+    if (extra) args = { ...args, context: [typeof args?.context === "string" ? args.context : undefined, extra].filter(Boolean).join("\n\n") };
     const result = await run(() => this.o.sdk.consult({
       cfg: api.config,
       agentRuntime,
@@ -1023,6 +1034,7 @@ export class CallMission {
       extraSystemPrompt: this.live ? `${CONSULT_SYSTEM_PROMPT} ${LIVE_CONSULT_PROMPT}` : CONSULT_SYSTEM_PROMPT,
       ...(this.live ? { toolBindings: { [LINE_BINDING]: { callId: this.id } } } : {}),
     }));
+    if (extra && this.consultContext === extra) this.consultContext = undefined;
     return { text: result.text };
   }
 

@@ -298,7 +298,8 @@ test("recent context: a call starts with how earlier calls with the number went,
     await s.rt.start();
     s.link.call("call.incoming", { id: "i1", number: ALLOWED, direction: "incoming", state: "incoming" });
     await settle();
-    assert.deepEqual(reads, [{ agentId: "main", sessionKey: chat, limit: 3 }]);
+    // One read serves the recap (3 messages) and the first consult (8 by default).
+    assert.deepEqual(reads, [{ agentId: "main", sessionKey: chat, limit: 8 }]);
     const first = s.sessions[0].params.instructions as string;
     assert.match(first, /Your latest messages with Nick, oldest first:\n- \(1 h ago\) Nick: Remind me to call Luigi's\n- \(58 min ago\) You: Will do\./);
     assert.doesNotMatch(first, /Earlier calls|openclaw:ctx|message_id/);
@@ -340,4 +341,27 @@ test("recent context: off by default, and a caller who isn't the owner never get
   assert.equal(reads, 0);
   assert.doesNotMatch(other.sessions[0].params.instructions, /private|Recent context/);
   other.rt.stop();
+});
+
+test("the owner's call: the first consult gets their latest messages, and the call is noted without waking the agent", async () => {
+  const chat = "agent:main:whatsapp:direct:+15555550102";
+  const s = setup({ inboundSessionKey: chat, ownerName: "Nick" });
+  s.api.config = { commands: { ownerAllowFrom: ["whatsapp:+15555550102"] } };
+  s.sdk.recentSessionText = async () => [{ role: "user", text: "Remind me to call Luigi's", timestamp: Date.now() - 600_000 }];
+  await s.rt.start();
+  s.link.call("call.incoming", { id: "i1", number: ALLOWED, direction: "incoming", state: "incoming" });
+  await settle();
+  assert.doesNotMatch(s.sessions[0].params.instructions, /Recent context/, "the voice recap stays off");
+  await s.sessions[0].tool("openclaw_agent_consult", { question: "What did I ask you to do?", context: "The caller sounds rushed." });
+  await s.sessions[0].tool("openclaw_agent_consult", { question: "Anything else?" });
+  assert.equal(s.consults[0].args.context, "The caller sounds rushed.\n\nYour latest messages with Nick, oldest first, for context:\n- (10 min ago) Nick: Remind me to call Luigi's");
+  assert.equal(s.consults[1].args.context, undefined, "only the first consult");
+  s.link.call("call.ended", { id: "i1" }, "remote");
+  await settle();
+  s.sessions[0].transcript("user", "Bye!");
+  await settle();
+  assert.equal(s.events.length, 1);
+  assert.equal(s.events[0].sessionKey, chat);
+  assert.equal(s.wakes.length, 0, "the owner was on the call; the note waits for the chat's next turn");
+  s.rt.stop();
 });
