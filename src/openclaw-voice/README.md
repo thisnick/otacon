@@ -112,6 +112,13 @@ see that conversation. With `session.dmScope` giving each chat its own
 session, set it to the owner's chat (for example
 `agent:main:whatsapp:direct:+15550002222`) so call reports reach them.
 
+The report wakes the agent so it can tell the user how the call went, except
+after the owner's own incoming call (their number is in
+`commands.ownerAllowFrom`): they were on it, so the report waits as a note for
+that chat's next turn. A wake-up runs its own turn, and with a CLI runtime such
+as `claude-cli` a turn with different tools can replace the chat's CLI
+conversation.
+
 ## Agent context
 
 `realtime.agentContext: { enabled: true }` adds the agent's voice context to
@@ -139,6 +146,10 @@ recap in the voice model's instructions, so it knows what was said last time:
 The recap is cut to about 3,000 characters and goes to the realtime provider
 with the rest of the instructions. A call waits at most 2 seconds for it.
 It's off unless enabled.
+
+Separately, when the caller is the owner, the call's first consult gets the
+latest `consultRecentMessages` (8; 0 turns it off) messages of that same
+session as context, so the agent answers knowing the recent chat.
 
 ## Phone menus
 

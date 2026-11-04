@@ -96,6 +96,8 @@ export interface OtaconVoiceConfig {
   consultThinkingLevel?: ThinkingLevel;
   /** Run consults in the provider's fast mode */
   consultFastMode?: boolean;
+  /** How many of the owner's latest messages a call's first consult gets (0: none) */
+  consultRecentMessages: number;
   responseTimeoutMs: number;
   realtime: {
     provider?: string;
@@ -270,6 +272,7 @@ export function parseConfig(raw: unknown): { config?: OtaconVoiceConfig; errors:
       responseModel: str(c.responseModel),
       consultThinkingLevel: c.consultThinkingLevel as ThinkingLevel | undefined,
       consultFastMode: typeof c.consultFastMode === "boolean" ? c.consultFastMode : undefined,
+      consultRecentMessages: Math.round(num(c.consultRecentMessages, 8, 0, 30)),
       responseTimeoutMs: num(c.responseTimeoutMs, 60_000, 5_000, 600_000),
       realtime: {
         provider: str(realtime.provider),

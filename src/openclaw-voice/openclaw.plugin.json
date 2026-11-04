@@ -204,6 +204,11 @@
       "consultFastMode": {
         "type": "boolean"
       },
+      "consultRecentMessages": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 30
+      },
       "responseTimeoutMs": {
         "type": "number"
       },

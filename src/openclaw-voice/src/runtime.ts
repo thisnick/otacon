@@ -8,14 +8,14 @@ import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "n
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { PluginApi } from "openclaw/plugin-sdk/plugin-entry";
-import { CallMission, type MenuDeps, type MissionReport, type Party, type RealtimeSdk, type SpeechDetectorLike } from "./call.js";
+import { CallMission, type CallContext, type MenuDeps, type MissionReport, type Party, type RealtimeSdk, type SpeechDetectorLike } from "./call.js";
 import { isE164, type Contact, type LineConfig, type OtaconVoiceConfig } from "./config.js";
 import type { LineLink } from "./line.js";
 import { OtaconLink } from "./otacon.js";
 import { TwilioLine } from "./twilio.js";
 import { openRouterDecisions } from "./navigator.js";
 import { formatReport, formatSavedReport } from "./report.js";
-import { earlierCallFromReport, earlierCallFromSaved, formatRecentContext, isOwnerNumber, type EarlierCall, type SessionText } from "./recent.js";
+import { earlierCallFromReport, earlierCallFromSaved, formatConsultContext, formatRecentContext, isOwnerNumber, type EarlierCall, type SessionText } from "./recent.js";
 import { openAiLiveTranscriber } from "./transcriber.js";
 import { SpeechDetector } from "./vad.js";
 
@@ -307,28 +307,36 @@ export class OtaconVoiceRuntime {
       ...o,
       onEnd: (report) => this.onMissionEnd(report),
       runInBackground: (fn) => this.run(fn),
-      recentContext: () => this.recentContext(o.party, o.agentId, o.requesterSessionKey),
+      callContext: () => this.callContext(o.party, o.agentId, o.requesterSessionKey),
     });
     slot.mission = mission;
     return mission;
   }
 
   /**
-   * The recap a call starts with (recent.ts): earlier calls with the number
-   * and, when the caller is the owner, the latest messages of the session the
-   * call reports to. Other callers never see the owner's messages.
+   * What a call starts with (recent.ts). The voice recap: earlier calls with
+   * the number and, when the caller is the owner, the latest messages of the
+   * session the call reports to. The first consult gets those messages too.
+   * Other callers never see the owner's messages. One read serves both.
    */
-  private async recentContext(party: Party, agentId: string, requesterSessionKey?: string): Promise<string | undefined> {
-    const settings = this.config.realtime.recentContext;
-    if (!settings.enabled || !party.number) return undefined;
+  private async callContext(party: Party, agentId: string, requesterSessionKey?: string): Promise<CallContext> {
+    const voice = this.config.realtime.recentContext;
+    const consulting = this.config.toolPolicy !== "none" ? this.config.consultRecentMessages : 0;
+    if (!party.number || (!voice.enabled && !consulting)) return {};
     const owner = isOwnerNumber(this.api.config, party.number);
+    const limit = Math.max(voice.enabled ? voice.maxMessages : 0, consulting);
     const [calls, messages] = await Promise.all([
-      this.earlierCalls(party.number),
-      owner && requesterSessionKey && this.sdk.recentSessionText
-        ? this.sdk.recentSessionText({ agentId, sessionKey: requesterSessionKey, limit: settings.maxMessages }).catch((): SessionText[] => [])
+      voice.enabled ? this.earlierCalls(party.number) : Promise.resolve([] as EarlierCall[]),
+      owner && requesterSessionKey && limit && this.sdk.recentSessionText
+        ? this.sdk.recentSessionText({ agentId, sessionKey: requesterSessionKey, limit }).catch((): SessionText[] => [])
         : Promise.resolve([] as SessionText[]),
     ]);
-    return formatRecentContext({ calls, messages, ownerName: this.config.ownerName, now: Date.now() });
+    const now = Date.now();
+    const { ownerName } = this.config;
+    return {
+      voice: voice.enabled ? formatRecentContext({ calls, messages: messages.slice(-voice.maxMessages), ownerName, now }) : undefined,
+      consult: consulting ? formatConsultContext({ messages: messages.slice(-consulting), ownerName, now }) : undefined,
+    };
   }
 
   /** The last three calls with a number, newest first: from the saved reports, else from memory. */
@@ -439,9 +447,13 @@ export class OtaconVoiceRuntime {
     this.api.logger.info(
       `[otacon-voice] ${report.missionId} reported to ${sessionKey}: ${report.outcome}; ${report.log.length} log entries; ${text.length} chars${savedAt ? `; saved at ${savedAt}` : ""}`,
     );
+    // The owner's own incoming call is only noted: they were on it. A wake-up
+    // runs a turn with its own tools, which can replace a CLI runtime's
+    // conversation for the chat; the note waits for the chat's next turn.
+    const wake = !(report.direction === "inbound" && report.party.number && isOwnerNumber(this.api.config, report.party.number));
     try {
       this.api.runtime.system.enqueueSystemEvent(text, { sessionKey, contextKey: `otacon-voice:${report.missionId}` });
-      this.api.runtime.system.requestHeartbeatNow({ sessionKey, agentId: report.agentId, reason: "otacon-voice call ended", source: "other" });
+      if (wake) this.api.runtime.system.requestHeartbeatNow({ sessionKey, agentId: report.agentId, reason: "otacon-voice call ended", source: "other" });
     } catch (err) {
       this.api.logger.warn(`[otacon-voice] could not report call ${report.missionId}: ${String(err)}`);
     }

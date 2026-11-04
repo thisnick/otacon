@@ -98,6 +98,28 @@ function duration(seconds: number): string {
   return seconds < 60 ? `${seconds} s` : `${Math.floor(seconds / 60)} min ${seconds % 60} s`;
 }
 
+function messageLines(messages: SessionText[], ownerName: string, now: number): string[] {
+  return messages.flatMap((m) => {
+    const text = cleanSessionText(m.text);
+    if (!text) return [];
+    const when = m.timestamp ? `(${ago(m.timestamp, now)}) ` : "";
+    return [`- ${when}${m.role === "user" ? ownerName : "You"}: ${text}`];
+  });
+}
+
+/** The owner's latest messages for a call's first consult, oldest first, as many as fit. */
+export function formatConsultContext(o: { messages: SessionText[]; ownerName: string; now: number }): string | undefined {
+  const chat = messageLines(o.messages, o.ownerName, o.now);
+  if (!chat.length) return undefined;
+  const build = () => `Your latest messages with ${o.ownerName}, oldest first, for context:\n${chat.join("\n")}`;
+  let text = build();
+  while (text.length > MAX_CONTEXT_CHARS && chat.length > 1) {
+    chat.shift();
+    text = build();
+  }
+  return text.slice(0, MAX_CONTEXT_CHARS);
+}
+
 /**
  * The recent-context section of the voice instructions. `calls` is newest
  * first; `messages` oldest first, as the SDK returns them.
@@ -108,12 +130,7 @@ export function formatRecentContext(o: { calls: EarlierCall[]; messages: Session
     if (c.summary) return `- ${when}: ${clip(c.summary, 600)}`;
     return c.lastLines.length ? `- ${when}; it ended with:\n${c.lastLines.map((l) => `    ${l}`).join("\n")}` : `- ${when}`;
   });
-  const chat = o.messages.flatMap((m) => {
-    const text = cleanSessionText(m.text);
-    if (!text) return [];
-    const when = m.timestamp ? `(${ago(m.timestamp, o.now)}) ` : "";
-    return [`- ${when}${m.role === "user" ? o.ownerName : "You"}: ${text}`];
-  });
+  const chat = messageLines(o.messages, o.ownerName, o.now);
   if (!calls.length && !chat.length) return undefined;
   const build = () =>
     [

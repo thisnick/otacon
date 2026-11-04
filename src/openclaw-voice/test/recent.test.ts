@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { cleanSessionText, earlierCallFromSaved, formatRecentContext, isOwnerNumber } from "../src/recent.js";
+import { cleanSessionText, earlierCallFromSaved, formatConsultContext, formatRecentContext, isOwnerNumber } from "../src/recent.js";
 
 const SAVED = [
   "[otacon-voice] The phone call you placed to Luigi's (+15555550100) from sim (+15555550199) has ended (completed, 75s).",
@@ -48,4 +48,15 @@ test("the recap keeps the newest messages that fit", () => {
   assert.match(text, /- yesterday, they called \(30 s\)\n/);
   assert.match(text, /Nick: 29 x+$/);
   assert.doesNotMatch(text, /Nick: 0 x/);
+});
+
+test("the consult context keeps the owner's newest messages that fit", () => {
+  const now = 10 * 86_400_000;
+  assert.equal(formatConsultContext({ messages: [{ role: "user", text: "   " }], ownerName: "Nick", now }), undefined);
+  const messages = Array.from({ length: 30 }, (_, i) => ({ role: (i % 2 ? "assistant" : "user") as "user" | "assistant", text: `${i} ${"z".repeat(290)}`, timestamp: now - (30 - i) * 60_000 }));
+  const text = formatConsultContext({ messages, ownerName: "Nick", now })!;
+  assert.ok(text.length <= 3000);
+  assert.match(text, /^Your latest messages with Nick, oldest first, for context:\n/);
+  assert.match(text, /- \(1 min ago\) You: 29 z+$/);
+  assert.doesNotMatch(text, /: 0 z/);
 });
