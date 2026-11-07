@@ -11,6 +11,7 @@ from .status import MonitorStatus, StepStatus, HealStatus, now_iso, push_status
 from . import health, heal
 from .. import local_config
 from ..steps import screen, provisioning, snapshot, passcode, wifi
+from ..bluetooth.controller import note_link_ok, recover_if_wedged
 from ..bluetooth.pair import allocate_and_pair_bluetooth, run_pair_dialog_watcher
 from ..registry.identity import gather_identity
 from ..registry.client import (register_with_registry, deregister_from_registry,
@@ -271,6 +272,10 @@ class PhoneAgent:
             elif name == 'bt_connected':
                 heal_ok = heal.heal_bt_connected(self.adapter_mac, self.phone_bt_mac)
                 if not heal_ok:
+                    # A wedged controller can't reconnect a good bond either.
+                    recover_if_wedged(self.adapter_mac, self.adapter_hci, self.phone_bt_mac,
+                                      self.serial, report_error=self._report_error,
+                                      after='reconnect')
                     hs.consecutive_failures += 1
                     if hs.consecutive_failures >= 3:
                         # A failed connection does not mean the bond is gone.
@@ -289,6 +294,7 @@ class PhoneAgent:
                             'bt_connected failed repeatedly but both sides remain bonded '
                             '— keeping the bond and retrying connection')
                 else:
+                    note_link_ok(self.adapter_mac)
                     hs.consecutive_failures = 0
             elif name == 'wifi':
                 if self._wifi_enabled():

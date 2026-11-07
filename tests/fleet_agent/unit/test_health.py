@@ -71,6 +71,19 @@ class TestCheckBtBonded:
                 assert result.phone is True
                 assert result.ok is True
 
+    def test_failed_phone_dump_is_not_a_missing_bond(self):
+        """adb returns '' on a timeout; that must not read as a stale bond."""
+        from fleet_agent.phone.health import check_bt_bonded
+        mock_btctl = MagicMock(stdout='Paired: yes', stderr='', returncode=0)
+        with patch('fleet_agent.phone.health.run_cmd', return_value=mock_btctl), \
+             patch('fleet_agent.phone.health.adb_shell', return_value='') as dump:
+            result = check_bt_bonded('AA:BB:CC:DD:EE:01', '11:22:33:44:55:66',
+                                     serial='SERIAL')
+        assert result.pi is True
+        assert result.phone is True
+        assert result.ok is True
+        assert dump.call_args.kwargs['timeout'] >= 15
+
 
 class TestCheckBtConnected:
     def test_returns_false_when_no_adapter(self):

@@ -11,6 +11,7 @@ import urllib.parse
 
 from ..util.adb import adb_shell, run_cmd
 from ..util.http import http_get, http_post
+from .controller import note_link_ok, recover_if_wedged
 from .dongle import (
     allocate_dongle, enum_dongles, get_cached_bt_mac,
     save_dongle_assignment,
@@ -586,6 +587,14 @@ def allocate_and_pair_bluetooth(serial: str, snapshot_url: str,
     else:
         status = result_data or 'unknown'
     log.info(f'[{serial}] Bluetooth pairing: {status}')
+
+    # A wedged controller fails every pair until it is reset, so check
+    # for that before the next heal tries again.
+    if 'ok=true' in result_data:
+        note_link_ok(adapter_mac)
+    else:
+        recover_if_wedged(adapter_mac, adapter_hci, phone_bt_mac, serial,
+                          report_error=report_error)
 
     # Trust and persist
     if phone_bt_mac and 'ok=true' in (pair_result.get('data', '')):
