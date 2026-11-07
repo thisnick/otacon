@@ -29,6 +29,7 @@ import { callSessionKey, type SessionKeySdk } from "./session.js";
 import type { Transcriber } from "./transcriber.js";
 import { LineError, type LineCall, type LineLink, type Listener } from "./line.js";
 import { CallMix } from "./mix.js";
+import { withCloneableAudioFormat } from "./provider.js";
 
 /** The parts of the realtime-voice SDK a call uses (see realtime.ts); tests pass fakes. */
 export interface RealtimeSdk {
@@ -609,7 +610,8 @@ export class CallMission {
     ]);
     this.consultContext = context.consult;
     this.session = this.o.sdk.createSession({
-      provider: resolved.provider,
+      // GPT-Live sends the request's audio format to a Worker (provider.ts).
+      provider: withCloneableAudioFormat(resolved.provider),
       providerConfig: resolved.providerConfig,
       capabilities: resolved.capabilities,
       cfg: api.config,
