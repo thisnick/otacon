@@ -26,7 +26,11 @@ jobs:
           pnpm --filter @otacon-fleet/otacon-cli run typecheck
           pnpm --filter @otacon-fleet/otacon-cli run build
           (cd src/cli && npm pack --dry-run)
+      - name: OpenClaw SDK for the plugin's regression test
+        run: npm install --prefix "$RUNNER_TEMP/openclaw-sdk" --ignore-scripts --no-audit --no-fund openclaw@2026.11.1
       - name: OpenClaw plugin
+        env:
+          OPENCLAW_TEST_SDK_ROOT: ${{ runner.temp }}/openclaw-sdk/node_modules/openclaw
         run: |
           pnpm --filter @otacon-fleet/openclaw-otacon-voice run test
           pnpm --filter @otacon-fleet/openclaw-otacon-voice run build
