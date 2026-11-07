@@ -85,8 +85,12 @@ def check_bt_bonded(adapter_mac: str | None, phone_bt_mac: str | None,
     phone_bonded = True  # default to True if we can't check (no serial)
     if serial:
         try:
-            bt_dump = adb_shell(serial, 'dumpsys bluetooth_manager', timeout=5)
-            phone_bonded = adapter_mac.upper() in bt_dump.upper()
+            # adb returns '' on a timeout or failure. That says nothing
+            # about the bond, and calling it missing wipes every phone-side
+            # bond (pm clear on Samsung), so keep the default.
+            bt_dump = adb_shell(serial, 'dumpsys bluetooth_manager', timeout=15)
+            if bt_dump:
+                phone_bonded = adapter_mac.upper() in bt_dump.upper()
             if pi_bonded and not phone_bonded:
                 log.warning(f'bt_bonded: Pi paired but phone has no record of {adapter_mac} — stale bond')
         except Exception:
