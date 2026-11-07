@@ -1108,7 +1108,7 @@ dependencies = [
 
 [[package]]
 name = "otacon-server"
-version = "3.2.2"
+version = "3.4.1"
 dependencies = [
  "async-stream",
  "axum",
