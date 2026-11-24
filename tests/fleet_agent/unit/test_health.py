@@ -102,6 +102,80 @@ class TestCheckBtConnected:
         with patch('subprocess.run', return_value=mock_result):
             assert check_bt_connected('AA:BB:CC:DD:EE:01', '11:22:33:44:55:66') is False
 
+    def test_zombie_acl_returns_false_when_phone_reports_disconnected(self):
+        from fleet_agent.phone.health import check_bt_connected
+        btctl = MagicMock(stdout='Connected: yes\n', stderr='', returncode=0)
+        hcitool = MagicMock(
+            stdout='Connections:\n\t< ACL 11:22:33:44:55:66 handle 2048 state 1 lm PERIPHERAL AUTH ENCRYPT\n',
+            stderr='', returncode=0)
+        dump = (
+            '  state: ON\n'
+            '  ConnectionState: STATE_DISCONNECTED\n'
+            '  State: ON\n'
+        )
+        with patch('fleet_agent.phone.health.run_cmd', side_effect=[btctl, hcitool]), \
+             patch('fleet_agent.phone.health.adb_shell', return_value=dump):
+            assert check_bt_connected(
+                'AA:BB:CC:DD:EE:01', '11:22:33:44:55:66',
+                serial='SERIAL', adapter_hci='hci2') is False
+
+    def test_healthy_when_bluez_encrypted_and_phone_connected(self):
+        from fleet_agent.phone.health import check_bt_connected
+        btctl = MagicMock(stdout='Connected: yes\n', stderr='', returncode=0)
+        hcitool = MagicMock(
+            stdout='Connections:\n\t< ACL 11:22:33:44:55:66 handle 2048 state 1 lm CENTRAL AUTH ENCRYPT\n',
+            stderr='', returncode=0)
+        dump = '  ConnectionState: STATE_CONNECTED\n'
+        with patch('fleet_agent.phone.health.run_cmd', side_effect=[btctl, hcitool]), \
+             patch('fleet_agent.phone.health.adb_shell', return_value=dump):
+            assert check_bt_connected(
+                'AA:BB:CC:DD:EE:01', '11:22:33:44:55:66',
+                serial='SERIAL', adapter_hci='hci2') is True
+
+    def test_empty_phone_dump_does_not_false_positive(self):
+        from fleet_agent.phone.health import check_bt_connected
+        btctl = MagicMock(stdout='Connected: yes\n', stderr='', returncode=0)
+        hcitool = MagicMock(
+            stdout='Connections:\n\t< ACL 11:22:33:44:55:66 handle 2048 state 1 lm CENTRAL AUTH ENCRYPT\n',
+            stderr='', returncode=0)
+        with patch('fleet_agent.phone.health.run_cmd', side_effect=[btctl, hcitool]), \
+             patch('fleet_agent.phone.health.adb_shell', return_value=''):
+            assert check_bt_connected(
+                'AA:BB:CC:DD:EE:01', '11:22:33:44:55:66',
+                serial='SERIAL', adapter_hci='hci2') is True
+
+    def test_unencrypted_acl_returns_false(self):
+        """Link-key mismatch brings up a raw unencrypted ACL before dropping with EACCES."""
+        from fleet_agent.phone.health import check_bt_connected
+        btctl = MagicMock(stdout='Connected: yes\n', stderr='', returncode=0)
+        hcitool = MagicMock(
+            stdout='Connections:\n\t< ACL 11:22:33:44:55:66 handle 2048 state 1 lm CENTRAL\n',
+            stderr='', returncode=0)
+        with patch('fleet_agent.phone.health.run_cmd', side_effect=[btctl, hcitool]):
+            assert check_bt_connected(
+                'AA:BB:CC:DD:EE:01', '11:22:33:44:55:66',
+                adapter_hci='hci4') is False
+
+    def test_le_only_connection_returns_false(self):
+        from fleet_agent.phone.health import check_bt_connected
+        btctl = MagicMock(stdout='Connected: yes\n', stderr='', returncode=0)
+        hcitool = MagicMock(
+            stdout='Connections:\n\t< LE 11:22:33:44:55:66 handle 3840 state 5 lm CENTRAL\n',
+            stderr='', returncode=0)
+        with patch('fleet_agent.phone.health.run_cmd', side_effect=[btctl, hcitool]):
+            assert check_bt_connected(
+                'AA:BB:CC:DD:EE:01', '11:22:33:44:55:66',
+                adapter_hci='hci0') is False
+
+    def test_hcitool_error_does_not_fail_check(self):
+        from fleet_agent.phone.health import check_bt_connected
+        btctl = MagicMock(stdout='Connected: yes\n', stderr='', returncode=0)
+        hcitool = MagicMock(stdout='', stderr='No such device', returncode=1)
+        with patch('fleet_agent.phone.health.run_cmd', side_effect=[btctl, hcitool]):
+            assert check_bt_connected(
+                'AA:BB:CC:DD:EE:01', '11:22:33:44:55:66',
+                adapter_hci='hci4') is True
+
 
 class TestCheckWifiConnected:
     def test_returns_true_when_no_ssid_configured(self):

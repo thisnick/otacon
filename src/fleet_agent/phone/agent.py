@@ -11,7 +11,7 @@ from .status import MonitorStatus, StepStatus, HealStatus, now_iso, push_status
 from . import health, heal
 from .. import local_config
 from ..steps import screen, provisioning, snapshot, passcode, wifi
-from ..bluetooth.controller import note_link_ok, recover_if_wedged
+from ..bluetooth.controller import note_link_ok, recover_if_wedged, should_repair_bond
 from ..bluetooth.pair import allocate_and_pair_bluetooth, run_pair_dialog_watcher
 from ..registry.identity import gather_identity
 from ..registry.client import (register_with_registry, deregister_from_registry,
@@ -217,7 +217,8 @@ class PhoneAgent:
         checks['bt_bonded'] = lambda: health.check_bt_bonded(
             self.adapter_mac, self.phone_bt_mac, serial=self.serial)
         checks['bt_connected'] = lambda: health.check_bt_connected(
-            self.adapter_mac, self.phone_bt_mac)
+            self.adapter_mac, self.phone_bt_mac,
+            serial=self.serial, adapter_hci=self.adapter_hci)
         checks['wifi'] = lambda: True if not self._wifi_enabled() else health.check_wifi_connected(self.serial)
         checks['device_owner'] = lambda: health.check_device_owner(self.serial)
         checks['restrictions'] = lambda: health.check_restrictions(self.serial)
@@ -226,13 +227,13 @@ class PhoneAgent:
             self.serial, self.snapshot_port, self.internal_port)
         return checks
 
-    def _run_heal(self, name: str):
+    def _run_heal(self, name: str, force_repair: bool = False):
         """Run heal for a given check name."""
         hs = self.status.heals.setdefault(name, HealStatus())
 
         # Rate-limit expensive heals (bt_bonded takes 30-150s per attempt)
         # Only cooldown after a successful heal — failed heals retry immediately
-        if name == 'bt_bonded' and hs.last_at and hs.last_result == 'ok':
+        if name == 'bt_bonded' and not force_repair and hs.last_at and hs.last_result == 'ok':
             from datetime import datetime, timezone
             try:
                 elapsed = (datetime.now(timezone.utc) -
@@ -251,8 +252,11 @@ class PhoneAgent:
             if name == 'bt_silent':
                 heal_ok = heal.heal_bt_silent(self.adapter_mac)
             elif name == 'bt_bonded':
+                kwargs = {'report_error': self._report_error}
+                if force_repair:
+                    kwargs['force_repair'] = True
                 result = heal.heal_bt_bonded(
-                    self.serial, self.snapshot_url, report_error=self._report_error)
+                    self.serial, self.snapshot_url, **kwargs)
                 if result and any(result[:3]):
                     old_mac = self.adapter_mac
                     self.adapter_mac, self.adapter_hci, self.phone_bt_mac, replaced_mac = result
@@ -270,17 +274,21 @@ class PhoneAgent:
                 else:
                     heal_ok = False
             elif name == 'bt_connected':
-                heal_ok = heal.heal_bt_connected(self.adapter_mac, self.phone_bt_mac)
+                heal_ok = heal.heal_bt_connected(
+                    self.adapter_mac, self.phone_bt_mac,
+                    adapter_hci=self.adapter_hci, serial=self.serial)
                 if not heal_ok:
                     # A wedged controller can't reconnect a good bond either.
-                    recover_if_wedged(self.adapter_mac, self.adapter_hci, self.phone_bt_mac,
-                                      self.serial, report_error=self._report_error,
-                                      after='reconnect')
+                    was_reset = recover_if_wedged(
+                        self.adapter_mac, self.adapter_hci, self.phone_bt_mac,
+                        self.serial, report_error=self._report_error,
+                        after='reconnect')
                     hs.consecutive_failures += 1
                     if hs.consecutive_failures >= 3:
                         # A failed connection does not mean the bond is gone.
-                        # Only re-pair when a fresh check finds a missing side;
-                        # otherwise keep retrying without Android visibility UI.
+                        # Only re-pair when a fresh check finds a missing side,
+                        # or when reconnect keeps failing after an adapter reset
+                        # while the phone still answers l2ping (mismatched key).
                         detail = health.check_bt_bonded(
                             self.adapter_mac, self.phone_bt_mac, serial=self.serial)
                         if not detail.ok:
@@ -289,6 +297,15 @@ class PhoneAgent:
                                 '— healing bt_bonded')
                             hs.consecutive_failures = 0
                             self._run_heal('bt_bonded')
+                            return
+                        if not was_reset and should_repair_bond(
+                                self.adapter_mac, self.adapter_hci, self.phone_bt_mac,
+                                self.serial, report_error=self._report_error):
+                            self.log.warning(
+                                'bt_connected still failing after adapter reset while '
+                                'phone answers l2ping — forcing bt_bonded re-pair')
+                            hs.consecutive_failures = 0
+                            self._run_heal('bt_bonded', force_repair=True)
                             return
                         self.log.warning(
                             'bt_connected failed repeatedly but both sides remain bonded '

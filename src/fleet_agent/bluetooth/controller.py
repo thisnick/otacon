@@ -25,10 +25,64 @@ WEDGED_ERROR = 'Operation already in progress'
 RESET_COOLDOWN_SECONDS = 600
 # Without the wedge signature, reset after this many failures in a row.
 RESET_AFTER_FAILURES = 5
+# After an adapter reset, if reconnect still fails this many times in a row
+# while the phone answers l2ping, the link keys on both sides disagree.
+POST_RESET_REPAIR_FAILURES = 3
+# Force-repair a mismatched bond at most this often per adapter.
+BOND_REPAIR_COOLDOWN_SECONDS = 1800
 
 _lock = threading.Lock()
 _failures: dict[str, int] = {}
 _last_reset: dict[str, float] = {}
+_reset_since_ok: set[str] = set()
+_post_reset_failures: dict[str, int] = {}
+_last_bond_repair: dict[str, float] = {}
+
+
+def is_phone_reachable(adapter_hci: str, phone_bt_mac: str) -> bool:
+    """Return True if the phone answers an L2CAP echo from this adapter."""
+    try:
+        r = run_cmd(['l2ping', '-i', adapter_hci, '-c', '1', '-t', '3', phone_bt_mac],
+                    timeout=10)
+    except Exception:
+        return False
+    return r.returncode == 0
+
+
+def teardown_stale_link(adapter_mac: str, adapter_hci: str | None,
+                        phone_bt_mac: str) -> None:
+    """Tear down a zombie or unencrypted ACL link before reconnecting.
+
+    When a dongle holds a half-open ACL handle after the phone disconnects,
+    BlueZ still reports Connected=yes and `bluetoothctl connect` becomes a
+    no-op. Disconnecting via bluetoothctl, poking with l2ping (which forces
+    the kernel to drop a dead handle with ECONNRESET), and resetting the
+    controller as a last resort clears the stale link.
+    """
+    log.warning(f'Tearing down stale BT link to {phone_bt_mac} on {adapter_mac}')
+    try:
+        run_cmd(
+            ['bluetoothctl'],
+            input=f'select {adapter_mac}\ndisconnect {phone_bt_mac}\n',
+            timeout=10,
+        )
+    except Exception:
+        pass
+
+    if not adapter_hci or not _has_connection(adapter_hci, phone_bt_mac):
+        return
+
+    # Poking a zombie ACL with l2ping forces the kernel to tear down the dead
+    # handle (Recv failed: Connection reset by peer) when bluetoothctl cannot.
+    try:
+        run_cmd(['l2ping', '-i', adapter_hci, '-c', '1', '-t', '3', phone_bt_mac],
+                timeout=10)
+    except Exception:
+        pass
+
+    if _has_connection(adapter_hci, phone_bt_mac):
+        log.warning(f'Stale ACL handle for {phone_bt_mac} stuck on {adapter_hci}; resetting adapter')
+        reset_adapter(adapter_hci)
 
 
 def _l2ping_wedged(adapter_hci: str, phone_bt_mac: str) -> bool:
@@ -73,8 +127,13 @@ def reset_adapter(adapter_hci: str) -> bool:
 
 
 def note_link_ok(adapter_mac: str):
+    if not adapter_mac:
+        return
+    key = adapter_mac.upper()
     with _lock:
-        _failures.pop(adapter_mac.upper(), None)
+        _failures.pop(key, None)
+        _reset_since_ok.discard(key)
+        _post_reset_failures.pop(key, None)
 
 
 def recover_if_wedged(adapter_mac: str, adapter_hci: str | None,
@@ -110,6 +169,8 @@ def recover_if_wedged(adapter_mac: str, adapter_hci: str | None,
         _last_reset[key] = time.monotonic()
         if ok:
             _failures[key] = 0
+            _reset_since_ok.add(key)
+            _post_reset_failures[key] = 0
     if report_error:
         report_error('bluetooth.adapter_reset',
                      f'Reset {adapter_hci} ({adapter_mac}) after a failed {after}: {reason}'
@@ -117,3 +178,49 @@ def recover_if_wedged(adapter_mac: str, adapter_hci: str | None,
                      {'adapter_mac': adapter_mac, 'adapter_hci': adapter_hci,
                       'reason': reason, 'reset_ok': ok})
     return ok
+
+
+def should_repair_bond(adapter_mac: str | None, adapter_hci: str | None,
+                       phone_bt_mac: str | None, serial: str,
+                       report_error=None) -> bool:
+    """Return True when post-reset reconnect failures prove a mismatched link key.
+
+    A disconnected link is never enough to replace a bond on its own. We only
+    escalate to a forced re-pair when ALL of these hold:
+    1. The controller was already reset during this failure streak (ruling out
+       a wedged dongle).
+    2. Reconnect has still failed POST_RESET_REPAIR_FAILURES times since the
+       reset.
+    3. We are outside BOND_REPAIR_COOLDOWN_SECONDS since the last forced repair.
+    4. The phone answers l2ping from this adapter (proving both radios talk
+       L2CAP and the phone is neither off nor out of range).
+    """
+    if not adapter_mac or not adapter_hci or not phone_bt_mac:
+        return False
+    key = adapter_mac.upper()
+    with _lock:
+        if key not in _reset_since_ok:
+            return False
+        post = _post_reset_failures.get(key, 0) + 1
+        _post_reset_failures[key] = post
+        last = _last_bond_repair.get(key)
+    if post < POST_RESET_REPAIR_FAILURES:
+        return False
+    if last is not None and time.monotonic() - last < BOND_REPAIR_COOLDOWN_SECONDS:
+        return False
+    if not is_phone_reachable(adapter_hci, phone_bt_mac):
+        return False
+
+    reason = (f'{post} reconnect failures after resetting {adapter_hci} while '
+              f'{phone_bt_mac} answers l2ping (likely link-key mismatch)')
+    log.warning(f'[{serial}] {reason}; forcing bond re-pair')
+    with _lock:
+        _last_bond_repair[key] = time.monotonic()
+        _post_reset_failures[key] = 0
+        _reset_since_ok.discard(key)
+    if report_error:
+        report_error('bluetooth.bond_repair',
+                     f'Forcing re-pair on {adapter_hci} ({adapter_mac}): {reason}',
+                     {'adapter_mac': adapter_mac, 'adapter_hci': adapter_hci,
+                      'phone_bt_mac': phone_bt_mac, 'reason': reason})
+    return True

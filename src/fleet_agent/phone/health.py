@@ -99,8 +99,61 @@ def check_bt_bonded(adapter_mac: str | None, phone_bt_mac: str | None,
     return BtBondedDetail(pi=pi_bonded, phone=phone_bonded)
 
 
-def check_bt_connected(adapter_mac: str | None, phone_bt_mac: str | None) -> bool:
-    """BT link is active (D-Bus Connected=true)."""
+def _acl_is_encrypted(adapter_hci: str, phone_bt_mac: str) -> bool | None:
+    """Check `hcitool -i hciN con` for an authenticated, encrypted BR/EDR ACL.
+
+    Returns True when an ACL line for phone_bt_mac has both AUTH and ENCRYPT,
+    False when the adapter reports Connections: without an encrypted ACL for
+    this phone (e.g. unencrypted link during a link-key mismatch or LE-only),
+    or None if hcitool failed or returned unusable output.
+    """
+    try:
+        result = run_cmd(['hcitool', '-i', adapter_hci, 'con'], timeout=5)
+    except Exception:
+        return None
+    if result.returncode != 0:
+        return None
+    stdout = result.stdout or ''
+    if 'Connections:' not in stdout:
+        return None
+    mac_upper = phone_bt_mac.upper()
+    for line in stdout.splitlines():
+        upper = line.upper()
+        if 'ACL' in upper and mac_upper in upper:
+            return 'AUTH' in upper and 'ENCRYPT' in upper
+    return False
+
+
+def _phone_bt_disconnected(serial: str) -> bool:
+    """Return True only when Android dumpsys explicitly reports STATE_DISCONNECTED.
+
+    An empty/timed-out dump returns False so transient adb errors never trigger
+    false teardowns. Inspects the AdapterService ConnectionState line, which is
+    STATE_DISCONNECTED on both Samsung and Pixel when no audio/BT profile is
+    active (even when an LE accessory like Samsung S-Pen is connected).
+    """
+    try:
+        bt_dump = adb_shell(serial, 'dumpsys bluetooth_manager', timeout=15)
+    except Exception:
+        return False
+    if not bt_dump:
+        return False
+    for line in bt_dump.splitlines():
+        stripped = line.strip()
+        if stripped.startswith('ConnectionState:'):
+            return stripped == 'ConnectionState: STATE_DISCONNECTED'
+    return False
+
+
+def check_bt_connected(adapter_mac: str | None, phone_bt_mac: str | None,
+                       serial: str | None = None,
+                       adapter_hci: str | None = None) -> bool:
+    """BT link is active, encrypted, and agreed on by the phone.
+
+    BlueZ alone can keep reporting Connected=yes on a zombie half-open ACL
+    handle after the phone disconnects, or briefly during an unencrypted
+    link-key-mismatch connect before AVDTP/HFP rejects it with EACCES.
+    """
     if not adapter_mac or not phone_bt_mac:
         return False
     try:
@@ -109,9 +162,23 @@ def check_bt_connected(adapter_mac: str | None, phone_bt_mac: str | None) -> boo
             input=f'select {adapter_mac}\ninfo {phone_bt_mac}\n',
             timeout=10,
         )
-        return 'Connected: yes' in (result.stdout or '')
+        if 'Connected: yes' not in (result.stdout or ''):
+            return False
     except Exception:
         return False
+
+    if adapter_hci and _acl_is_encrypted(adapter_hci, phone_bt_mac) is False:
+        log.warning(f'bt_connected: {phone_bt_mac} on {adapter_hci} has no '
+                    f'authenticated/encrypted ACL — treating as disconnected')
+        return False
+
+    if serial and _phone_bt_disconnected(serial):
+        log.warning(f'bt_connected: BlueZ reports Connected=yes for {phone_bt_mac} '
+                    f'on {adapter_mac}, but phone {serial} reports STATE_DISCONNECTED '
+                    f'(zombie ACL)')
+        return False
+
+    return True
 
 
 def check_wifi_connected(serial: str) -> bool:

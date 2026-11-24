@@ -25,22 +25,28 @@ RESET_OK = MagicMock(returncode=0, stdout='', stderr='')
 
 
 class FakeHost:
-    """Answers run_cmd like the Pi: l2ping, hcitool con, hciconfig reset."""
+    """Answers run_cmd like the Pi: l2ping, hcitool con, hciconfig reset, bluetoothctl."""
 
-    def __init__(self, l2ping=WEDGED, con=NO_CONN, reset=RESET_OK):
-        # l2ping: one answer for every probe, or a list answered in order
+    def __init__(self, l2ping=WEDGED, con=NO_CONN, reset=RESET_OK, btctl=None):
+        # l2ping / con: one answer for every probe, or a list answered in order
         self.l2ping = l2ping if isinstance(l2ping, list) else [l2ping]
-        self.con, self.reset = con, reset
+        self.con = con if isinstance(con, list) else [con]
+        self.reset = reset
+        self.btctl = btctl if btctl is not None else MagicMock(returncode=0, stdout='', stderr='')
         self.calls = []
+        self.inputs = []
 
     def __call__(self, args, input=None, timeout=10):
         self.calls.append(args)
+        self.inputs.append(input)
         if args[0] == 'l2ping':
             return self.l2ping.pop(0) if len(self.l2ping) > 1 else self.l2ping[0]
         if args[0] == 'hcitool':
-            return self.con
+            return self.con.pop(0) if len(self.con) > 1 else self.con[0]
         if args[:3] == ['hciconfig', HCI, 'reset']:
             return self.reset
+        if args[0] == 'bluetoothctl':
+            return self.btctl
         raise AssertionError(f'unexpected command {args}')
 
     @property
@@ -52,10 +58,16 @@ class FakeHost:
 def clean_state():
     ctl._failures.clear()
     ctl._last_reset.clear()
+    ctl._reset_since_ok.clear()
+    ctl._post_reset_failures.clear()
+    ctl._last_bond_repair.clear()
     with patch.object(ctl.time, 'sleep'):
         yield
     ctl._failures.clear()
     ctl._last_reset.clear()
+    ctl._reset_since_ok.clear()
+    ctl._post_reset_failures.clear()
+    ctl._last_bond_repair.clear()
 
 
 def run(host, **kw):
@@ -230,3 +242,179 @@ class TestReconnectHealHook:
 
         ok.assert_called_once_with(phone_agent.adapter_mac)
         recover.assert_not_called()
+
+
+class TestTeardownStaleLink:
+    def test_disconnect_clears_handle_without_l2ping_or_reset(self):
+        host = FakeHost(con=[NO_CONN])
+        with patch.object(ctl, 'run_cmd', side_effect=host):
+            ctl.teardown_stale_link(ADAPTER, HCI, PHONE_BT)
+
+        assert host.calls == [['bluetoothctl'], ['hcitool', '-i', HCI, 'con']]
+        assert f'disconnect {PHONE_BT}' in host.inputs[0]
+        assert host.resets == []
+
+    def test_lingering_zombie_acl_poked_with_l2ping(self):
+        conn_reset = MagicMock(returncode=1, stdout='', stderr='Recv failed: Connection reset by peer\n')
+        host = FakeHost(l2ping=conn_reset, con=[CONN, NO_CONN])
+        with patch.object(ctl, 'run_cmd', side_effect=host):
+            ctl.teardown_stale_link(ADAPTER, HCI, PHONE_BT)
+
+        assert ['l2ping', '-i', HCI, '-c', '1', '-t', '3', PHONE_BT] in host.calls
+        assert host.resets == []
+
+    def test_stuck_acl_after_l2ping_resets_adapter(self):
+        host = FakeHost(l2ping=WEDGED, con=[CONN, CONN])
+        with patch.object(ctl, 'run_cmd', side_effect=host):
+            ctl.teardown_stale_link(ADAPTER, HCI, PHONE_BT)
+
+        assert host.resets == [['hciconfig', HCI, 'reset']]
+
+
+class TestShouldRepairBond:
+    def test_never_repairs_before_adapter_reset(self):
+        host = FakeHost(l2ping=PONG)
+        with patch.object(ctl, 'run_cmd', side_effect=host):
+            for _ in range(10):
+                assert ctl.should_repair_bond(ADAPTER, HCI, PHONE_BT, 'SER') is False
+        assert host.calls == []
+
+    def test_repairs_after_post_reset_failures_when_phone_answers_l2ping(self):
+        # First trigger an adapter reset (wedged or 5 failures).
+        reset_host = FakeHost(l2ping=WEDGED, con=NO_CONN)
+        assert run(reset_host) is True
+
+        # Now adapter works (l2ping gets PONG) but reconnect still fails.
+        host = FakeHost(l2ping=PONG)
+        report = MagicMock()
+        with patch.object(ctl, 'run_cmd', side_effect=host):
+            results = [
+                ctl.should_repair_bond(ADAPTER, HCI, PHONE_BT, 'SER', report_error=report)
+                for _ in range(ctl.POST_RESET_REPAIR_FAILURES)
+            ]
+
+        assert results == [False] * (ctl.POST_RESET_REPAIR_FAILURES - 1) + [True]
+        category, message, data = report.call_args[0]
+        assert category == 'bluetooth.bond_repair'
+        assert HCI in message and 'l2ping' in message
+        assert data['phone_bt_mac'] == PHONE_BT
+
+    def test_does_not_repair_when_phone_unreachable(self):
+        reset_host = FakeHost(l2ping=WEDGED, con=NO_CONN)
+        assert run(reset_host) is True
+
+        host = FakeHost(l2ping=HOST_DOWN)
+        report = MagicMock()
+        with patch.object(ctl, 'run_cmd', side_effect=host):
+            for _ in range(ctl.POST_RESET_REPAIR_FAILURES + 2):
+                assert ctl.should_repair_bond(
+                    ADAPTER, HCI, PHONE_BT, 'SER', report_error=report) is False
+        report.assert_not_called()
+
+    def test_respects_bond_repair_cooldown(self):
+        now = [1000.0]
+        with patch.object(ctl.time, 'monotonic', side_effect=lambda: now[0]):
+            assert run(FakeHost(l2ping=WEDGED, con=NO_CONN)) is True
+            with patch.object(ctl, 'run_cmd', side_effect=FakeHost(l2ping=PONG)):
+                for _ in range(ctl.POST_RESET_REPAIR_FAILURES - 1):
+                    assert ctl.should_repair_bond(ADAPTER, HCI, PHONE_BT, 'SER') is False
+                assert ctl.should_repair_bond(ADAPTER, HCI, PHONE_BT, 'SER') is True
+
+            # Even after another adapter reset, bond repair waits out cooldown.
+            now[0] += ctl.RESET_COOLDOWN_SECONDS + 1
+            assert run(FakeHost(l2ping=WEDGED, con=NO_CONN)) is True
+            with patch.object(ctl, 'run_cmd', side_effect=FakeHost(l2ping=PONG)):
+                for _ in range(ctl.POST_RESET_REPAIR_FAILURES):
+                    assert ctl.should_repair_bond(ADAPTER, HCI, PHONE_BT, 'SER') is False
+
+            # Past bond repair cooldown, a new escalation can proceed.
+            now[0] += ctl.BOND_REPAIR_COOLDOWN_SECONDS
+            with patch.object(ctl, 'run_cmd', side_effect=FakeHost(l2ping=PONG)):
+                assert ctl.should_repair_bond(ADAPTER, HCI, PHONE_BT, 'SER') is True
+
+    def test_note_link_ok_clears_reset_and_post_reset_state(self):
+        assert run(FakeHost(l2ping=WEDGED, con=NO_CONN)) is True
+        ctl.note_link_ok(ADAPTER.lower())
+        with patch.object(ctl, 'run_cmd', side_effect=FakeHost(l2ping=PONG)):
+            for _ in range(ctl.POST_RESET_REPAIR_FAILURES + 1):
+                assert ctl.should_repair_bond(ADAPTER, HCI, PHONE_BT, 'SER') is False
+
+
+class TestHealBtConnected:
+    def test_tears_down_stale_connected_link_before_reconnecting(self):
+        from fleet_agent.phone import heal as heal_mod
+        calls = []
+
+        def fake_run_cmd(args, input=None, timeout=10):
+            calls.append((args, input))
+            if args[0] == 'bluetoothctl' and 'info ' in (input or ''):
+                return MagicMock(returncode=0, stdout='Connected: yes\n', stderr='')
+            return MagicMock(returncode=0, stdout='', stderr='')
+
+        with patch.object(heal_mod, 'run_cmd', side_effect=fake_run_cmd), \
+             patch.object(heal_mod, 'teardown_stale_link') as teardown, \
+             patch.object(heal_mod.health, 'check_bt_connected', return_value=True) as check, \
+             patch.object(heal_mod.time, 'sleep'):
+            ok = heal_mod.heal_bt_connected(ADAPTER, PHONE_BT, adapter_hci=HCI, serial='SER')
+
+        assert ok is True
+        teardown.assert_called_once_with(ADAPTER, HCI, PHONE_BT)
+        assert any('connect ' in (inp or '') for _, inp in calls)
+        check.assert_called_once_with(ADAPTER, PHONE_BT, serial='SER', adapter_hci=HCI)
+
+    def test_returns_false_when_post_connect_check_fails(self):
+        from fleet_agent.phone import heal as heal_mod
+        with patch.object(heal_mod, 'run_cmd',
+                          return_value=MagicMock(returncode=0, stdout='Connected: no\n', stderr='')), \
+             patch.object(heal_mod, 'teardown_stale_link') as teardown, \
+             patch.object(heal_mod.health, 'check_bt_connected', return_value=False), \
+             patch.object(heal_mod.time, 'sleep'):
+            ok = heal_mod.heal_bt_connected(ADAPTER, PHONE_BT, adapter_hci=HCI, serial='SER')
+
+        assert ok is False
+        teardown.assert_not_called()
+
+
+class TestLinkKeyMismatchEscalation:
+    def test_forces_repair_after_post_reset_failures_when_phone_reachable(self, phone_agent):
+        from fleet_agent.phone.health import BtBondedDetail
+        phone_agent.adapter_hci = HCI
+        phone_agent.adapter_mac = ADAPTER
+        phone_agent.phone_bt_mac = PHONE_BT
+
+        # Simulate: first 5 failures trigger reset on #5 (l2ping returns PONG so
+        # is_wedged is False, RESET_AFTER_FAILURES=5 triggers reset), then 3 more
+        # post-reset failures trigger force_repair=True.
+        host = FakeHost(l2ping=PONG, con=NO_CONN)
+        with patch('fleet_agent.phone.agent.heal.heal_bt_connected', return_value=False), \
+             patch('fleet_agent.phone.agent.health.check_bt_bonded',
+                   return_value=BtBondedDetail(pi=True, phone=True)), \
+             patch('fleet_agent.phone.agent.heal.heal_bt_bonded',
+                   return_value=(ADAPTER, HCI, PHONE_BT, None)) as repair, \
+             patch('fleet_agent.phone.agent.register_with_server'), \
+             patch.object(ctl, 'run_cmd', side_effect=host):
+            for _ in range(ctl.RESET_AFTER_FAILURES + ctl.POST_RESET_REPAIR_FAILURES):
+                phone_agent._run_heal('bt_connected')
+
+        assert host.resets == [['hciconfig', HCI, 'reset']]
+        repair.assert_called_once_with(
+            phone_agent.serial, phone_agent.snapshot_url,
+            report_error=phone_agent._report_error, force_repair=True)
+
+    def test_does_not_force_repair_when_phone_unreachable_after_reset(self, phone_agent):
+        from fleet_agent.phone.health import BtBondedDetail
+        phone_agent.adapter_hci = HCI
+        phone_agent.adapter_mac = ADAPTER
+        phone_agent.phone_bt_mac = PHONE_BT
+
+        host = FakeHost(l2ping=HOST_DOWN, con=NO_CONN)
+        with patch('fleet_agent.phone.agent.heal.heal_bt_connected', return_value=False), \
+             patch('fleet_agent.phone.agent.health.check_bt_bonded',
+                   return_value=BtBondedDetail(pi=True, phone=True)), \
+             patch('fleet_agent.phone.agent.heal.heal_bt_bonded') as repair, \
+             patch.object(ctl, 'run_cmd', side_effect=host):
+            for _ in range(ctl.RESET_AFTER_FAILURES + ctl.POST_RESET_REPAIR_FAILURES + 2):
+                phone_agent._run_heal('bt_connected')
+
+        assert host.resets == [['hciconfig', HCI, 'reset']]
+        repair.assert_not_called()

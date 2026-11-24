@@ -154,11 +154,18 @@ observation generates events to bring the registry into agreement.
   The shared key is `adb_serial`. Resolver matches by adb_serial.
 - **Built-in BT (hci0)** is allocatable as a dongle — no exclusion. Pi onboard
   BT is treated like a USB dongle.
-- **Wedged dongles reset themselves.** A controller can stop making
-  connections (phone-side pairs fail in seconds; l2ping from it says
-  "Operation already in progress" with no connection). fleet-agent checks
-  after every failed pair or reconnect and runs `hciconfig hciN reset`
-  (`bluetooth/controller.py`). Look for `bluetooth.adapter_reset` events.
+- **Wedged dongles, zombie ACLs, and mismatched link keys self-heal.** A
+  controller can stop making connections (phone-side pairs fail in seconds;
+  l2ping from it says "Operation already in progress" with no connection) or
+  keep a half-open zombie ACL handle (`bluetoothctl` says `Connected: yes`
+  while the phone reports `STATE_DISCONNECTED`). `check_bt_connected`
+  cross-checks `hcitool con` (`AUTH ENCRYPT`) and phone `dumpsys
+  bluetooth_manager`; `heal_bt_connected` tears down stale links before
+  reconnecting; `bluetooth/controller.py` resets wedged adapters
+  (`bluetooth.adapter_reset`) and forces a re-pair (`bluetooth.bond_repair`,
+  30m cooldown) only if reconnect keeps failing *after* an adapter reset while
+  the phone still answers `l2ping` (proving a link-key mismatch rather than an
+  unreachable phone).
 - **Watchtower can revert containers** to the ghcr.io image if local builds
   aren't pushed. `make registry-deploy` and `make push` handle the push.
 - **Admin token recovery is hard** — bootstrap token only printed once on
